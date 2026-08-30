@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "xxl-whisper 系统架构",
+    "locale": "zh-CN",
+    "output": "docs/architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "voice-path",
+        "label": "语音主链路",
+        "focus": ["hotkey", "detector", "recorder", "recognizer", "emit", "target"],
+        "note": "按住 CapsLock 到文字上屏的完整通路。"
+      },
+      {
+        "id": "offline-model",
+        "label": "离线模型",
+        "focus": ["downloader", "model", "recognizer"],
+        "note": "首启自动下载，之后全程断网可用。"
+      },
+      {
+        "id": "user-surface",
+        "label": "交互面",
+        "focus": ["tray", "indicator", "orchestrator"],
+        "note": "托盘菜单与永不抢焦点的状态条。"
+      }
+    ]
+  },
+  "components": [
+    { "id": "entry", "type": "backend", "label": "run.py / main.py", "sublabel": "日志 · 单实例 · 配置", "pos": [40, 110], "size": [120, 64] },
+    { "id": "orchestrator", "type": "backend", "label": "DictationApp", "sublabel": "单 worker 消息队列", "pos": [260, 110], "size": [170, 64], "tag": "核心编排" },
+    { "id": "indicator", "type": "frontend", "label": "Indicator 状态条", "sublabel": "Tk 无激活置顶", "pos": [530, 110], "size": [170, 64] },
+    { "id": "tray", "type": "frontend", "label": "Tray 托盘", "sublabel": "pystray 菜单", "pos": [830, 110], "size": [140, 64] },
+    { "id": "hotkey", "type": "security", "label": "HotkeyHook", "sublabel": "WH_KEYBOARD_LL", "pos": [40, 320], "size": [120, 64] },
+    { "id": "detector", "type": "backend", "label": "HoldClickDetector", "sublabel": "按住 / 单击 250ms", "pos": [260, 320], "size": [120, 64] },
+    { "id": "recorder", "type": "backend", "label": "Recorder", "sublabel": "16 kHz 门控", "pos": [480, 320], "size": [120, 64] },
+    { "id": "recognizer", "type": "backend", "label": "Recognizer", "sublabel": "SenseVoice", "pos": [700, 320], "size": [120, 64] },
+    { "id": "emit", "type": "backend", "label": "Emit 上屏链", "sublabel": "三通道", "pos": [920, 320], "size": [130, 64] },
+    { "id": "target", "type": "external", "label": "目标应用", "sublabel": "前台窗口", "pos": [1150, 320], "size": [130, 64] },
+    { "id": "downloader", "type": "backend", "label": "Downloader", "sublabel": "hf-mirror 直链", "pos": [700, 530], "size": [120, 64] },
+    { "id": "model", "type": "database", "label": "SenseVoice 模型", "sublabel": "INT8 · 230MB", "pos": [930, 530], "size": [130, 64] }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "xxl-whisper 单进程（Python · 5 线程 · 全离线）",
+      "wraps": ["entry", "orchestrator", "hotkey", "detector", "recorder", "recognizer", "emit", "tray", "indicator", "downloader", "model"]
+    }
+  ],
+  "connections": [
+    { "id": "boot", "from": "entry", "to": "orchestrator", "label": "启动装配" },
+    { "id": "key-events", "from": "hotkey", "to": "detector", "label": "按下 / 释放" },
+    { "id": "gate-audio", "from": "detector", "to": "recorder", "label": "StartHold 门控" },
+    { "id": "samples", "from": "recorder", "to": "recognizer", "label": "16 kHz 采样" },
+    { "id": "text-out", "from": "recognizer", "to": "emit", "label": "识别文本" },
+    { "id": "deliver", "from": "emit", "to": "target", "label": "Ctrl+V / WM_PASTE", "variant": "emphasis", "labelDy": 56 },
+    { "id": "install-hook", "from": "orchestrator", "to": "hotkey", "label": "安装钩子", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "tray-cmd", "from": "tray", "to": "orchestrator", "label": "暂停 / 换麦 / 退出", "variant": "dashed", "fromSide": "top", "toSide": "top" },
+    { "id": "status", "from": "orchestrator", "to": "indicator", "label": "状态指令", "variant": "dashed" },
+    { "id": "fetch", "from": "downloader", "to": "model", "label": "下载校验" },
+    { "id": "load-model", "from": "model", "to": "recognizer", "label": "加载推理", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "语音主链路",
+      "items": [
+        "按住 CapsLock：钩子门控录音，单击仍切换大小写",
+        "SenseVoice 离线识别（CPU 约 25× 实时，中英混说）",
+        "三通道上屏：注入 Ctrl+V → WM_PASTE → 剪贴板提示"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "完全离线",
+      "items": [
+        "首启从 hf-mirror 直链下载 230MB 模型，无需网盘",
+        "之后断网全功能可用，无任何云依赖"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "交互与韧性",
+      "items": [
+        "托盘控制：暂停热键 / 选麦克风 / 开机自启",
+        "状态条永不抢焦点，跟随前台显示器，全屏可见"
+      ]
+    }
+  ]
+}
