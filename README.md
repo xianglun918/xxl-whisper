@@ -6,11 +6,11 @@ Windows 托盘常驻的离线语音听写工具：**按住 CapsLock 说话，松
 
 ## 系统架构
 
-[![xxl-whisper 架构图](docs/architecture.visual-check.1440x900.light.png)](docs/architecture.html)
+[![xxl-whisper 架构图](docs/architecture.visual-check.1440x900.light.png)](https://xianglun918.github.io/xxl-whisper/architecture.html)
 
 **主链路**：HotkeyHook（CapsLock 拦截）→ HoldClickDetector（按住/单击判定）→ Recorder（16 kHz 门控录音）→ Recognizer（SenseVoice 离线识别）→ Emit（三通道上屏：注入 Ctrl+V → WM_PASTE → 剪贴板提示）→ 目标应用光标处。
 
-👆 点击图片打开**交互式架构图**（`docs/architecture.html`，支持明暗主题、缩放、聚焦与导出；JSON 源在 `docs/architecture.json`）。
+👆 点击图片打开**交互式架构图**（明暗主题、缩放、聚焦、导出；JSON 源在 `docs/architecture.json`）。
 
 - 纯本地识别（SenseVoice-Small，CPU 实时 25 倍速），无网可用，不依赖任何云服务和网盘
 - 中英混说（"开个 PR"、"看下 README"）
@@ -37,7 +37,7 @@ build.bat                   # PyInstaller 打包 -> dist\xxl-whisper.exe
 
 ## 架构
 
-详见上方交互式架构图（`docs/architecture.html`）。线程模型：主线程跑托盘；钩子线程泵
+详见上方交互式架构图（[线上版](https://xianglun918.github.io/xxl-whisper/architecture.html)，GitHub Pages 托管）。线程模型：主线程跑托盘；钩子线程泵
 Win32 消息；PortAudio 回调收音；单一 ASR worker 消费消息队列（热键事件与控制命令共用
 一个 tagged union 队列，无锁竞争）。
 
