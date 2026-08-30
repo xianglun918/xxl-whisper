@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Tool metadata
+.codegraph/
+.omo/
+
+# Local scratch
+*.log
+*.npy

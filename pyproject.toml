@@ -1,0 +1,70 @@
+[project]
+name = "xxl-whisper"
+version = "0.1.0"
+description = "Windows tray push-to-talk dictation: hold CapsLock, speak, release, Chinese text lands at the cursor. Fully offline (SenseVoice-Small via sherpa-onnx)."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "sounddevice>=0.5",
+    "sherpa-onnx>=1.13.6",
+    "sherpa-onnx-core>=1.13.6",
+    "pystray>=0.19",
+    "pillow>=10.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.7",
+    "basedpyright>=1.18",
+    "pyinstaller>=6.10",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "TC001",   # cosy: runtime imports needed by the PyInstaller frozen app
+    "TC002",
+    "TC003",
+    "FBT001",  # bool positional args are idiomatic for key down/up
+    "FBT003",  # dict.get(name, default) with bool defaults is fine here
+    "D203",    # conflicts with D211
+    "D213",    # conflicts with D212
+    "COM812",  # conflicts with formatter
+    "G004",    # f-string logging is fine for a local tray app
+    "CPY001",  # no copyright headers in this private project
+    "RUF001",  # ambiguous-unicode false positives on CJK UI strings
+    "RUF002",
+    "RUF003",
+    "D101",    # frozen dataclasses are self-documenting
+    "D102",    # ditto for their methods
+    "D107",    # ditto for __init__
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "PLR2004", "D", "SLF001", "ARG001", "ANN"]
+"scripts/*" = ["T201", "INP001", "D"]  # dev probes print on purpose
+
+[tool.basedpyright]
+typeCheckingMode = "all"
+reportMissingTypeStubs = false   # pystray/sounddevice ship no stubs
+reportUnknownMemberType = "none" # ctypes / sherpa_onnx are untyped native surfaces
+reportUnknownArgumentType = "none"
+reportUnknownVariableType = "none"
+reportUntypedFunctionDecorator = "none"
+reportOptionalMemberAccess = "warning"
+reportAny = "none"               # ctypes wintypes boundaries
+reportUnannotatedClassAttribute = "none" # ctypes _fields_ structures cannot carry annotations
+reportUnusedCallResult = "none"  # pystray/tk/winreg calls whose results are intentionally dropped
+reportUnnecessaryComparison = "none" # fires on the assert_never exhaustiveness idiom itself
+reportUninitializedInstanceVariable = "none" # Tk widgets are created on their owning thread
+reportUnknownLambdaType = "none" # pystray menu lambdas are structurally typed by the lib
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires downloaded model or hardware"]
