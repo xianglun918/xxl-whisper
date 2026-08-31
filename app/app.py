@@ -99,6 +99,8 @@ class DictationApp:
         self._paused = False
         self._ready = False
         self._skip_hold = False
+        self._holding = False
+        self._hold_confirm_timer: threading.Timer | None = None
         self._stop_event = threading.Event()
         self._tray = Tray(
             callbacks=TrayCallbacks(
@@ -253,21 +255,49 @@ class DictationApp:
                     self._skip_hold = True
                     return
                 self._skip_hold = False
-                self._recorder.start()
-                self._indicator.show("● 正在听…")
-                log.info("hold: recording started")
+                self._holding = True
+                self._recorder.start()  # capture from the first instant
+                self._arm_hold_confirm()  # only a hold past the threshold confirms
+                log.info("press: buffering; hold not yet confirmed")
             case Click():
-                log.info("click: passing through native key")
+                self._cancel_hold_confirm()
+                was_holding = self._holding
+                self._holding = False
+                if was_holding and self._recorder is not None:
+                    self._recorder.stop()  # discard the click's buffer
+                self._indicator.hide()
+                self._skip_hold = False
+                log.info("click: discarded buffer, toggling native key")
                 vk = hotkey_vk(self._config.hotkey)
                 if vk in MOUSE_VKS:
                     winio.tap_mouse_x(vk)
                 else:
                     winio.tap_key(vk)
             case EndHold(duration_ms=duration):
+                self._cancel_hold_confirm()
+                self._holding = False
                 log.info("hold: ended after %d ms", duration)
                 self._finish_hold()
             case unreachable:
                 assert_never(unreachable)
+
+    def _arm_hold_confirm(self) -> None:
+        """Show the recording bar only once the press survives the threshold."""
+        self._hold_confirm_timer = threading.Timer(
+            self._config.hold_threshold_ms / 1000, self._on_hold_confirmed
+        )
+        self._hold_confirm_timer.daemon = True
+        self._hold_confirm_timer.start()
+
+    def _cancel_hold_confirm(self) -> None:
+        if self._hold_confirm_timer is not None:
+            self._hold_confirm_timer.cancel()
+            self._hold_confirm_timer = None
+
+    def _on_hold_confirmed(self) -> None:
+        """Timer thread: a press held past the threshold is a real hold."""
+        if self._holding:
+            self._indicator.show("● 正在听…")
 
     def _finish_hold(self) -> None:
         if self._skip_hold:
@@ -317,6 +347,7 @@ class DictationApp:
     def _teardown(self) -> None:
         log.info("shutting down")
         self._stop_event.set()
+        self._cancel_hold_confirm()
         self._updates.stop()
         if self._hook is not None:
             self._hook.stop()
