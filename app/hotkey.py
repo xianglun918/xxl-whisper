@@ -124,6 +124,15 @@ class HotkeyHook(threading.Thread):
             user32.PostThreadMessageW(self._thread_id, _WM_QUIT, 0, 0)
         self.join(timeout=2)
 
+    def retarget(self, vk: int) -> None:
+        """Watch a different key from now on, without reinstalling the hook.
+
+        Resets the down-state so a key held across the switch cannot leave a
+        dangling press; the old key instantly regains its native behavior.
+        """
+        self._vk = vk
+        self._is_down = False
+
     def _hook_proc(self, ncode: int, wparam: int, lparam: int) -> int:
         if ncode >= 0:  # HC_ACTION
             kb = ctypes.cast(lparam, _LLHOOKPTR).contents

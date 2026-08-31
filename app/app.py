@@ -54,11 +54,16 @@ class SetMic:
 
 
 @dataclass(frozen=True, slots=True)
+class SetHotkey:
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
 class Shutdown:
     pass
 
 
-type WorkerMsg = KeyTransition | SetPaused | SetMic | Shutdown
+type WorkerMsg = KeyTransition | SetPaused | SetMic | SetHotkey | Shutdown
 
 
 class DictationApp:
@@ -85,6 +90,7 @@ class DictationApp:
                 on_check_update=lambda: threading.Thread(
                     target=self._updates.manual_check, daemon=True
                 ).start(),
+                on_select_hotkey=lambda name: self._queue.put(SetHotkey(name=name)),
             ),
             state_provider=self._tray_state,
         )
@@ -137,6 +143,7 @@ class DictationApp:
             paused=self._paused,
             autostart=winutil.autostart_enabled(),
             current_mic=self._config.mic,
+            current_hotkey=self._config.hotkey,
         )
 
     # -- worker thread -------------------------------------------------------
@@ -163,6 +170,8 @@ class DictationApp:
                 log.info("paused=%s", paused)
             case SetMic(name=name):
                 self._swap_mic(name)
+            case SetHotkey(name=name):
+                self._swap_hotkey(name)
             case Shutdown():
                 self._stop_event.set()
                 self._tray.stop()
@@ -247,6 +256,17 @@ class DictationApp:
         self._config = dataclasses.replace(self._config, mic=name)
         save_config(config_path(), self._config)
         log.info("mic switched to %r", name)
+
+    def _swap_hotkey(self, name: str) -> None:
+        """Retarget the live hook to a new key and persist the choice."""
+        if name == self._config.hotkey or name not in HOTKEY_VK:
+            return
+        if self._hook is not None:
+            self._hook.retarget(HOTKEY_VK[name])
+        self._config = dataclasses.replace(self._config, hotkey=name)
+        save_config(config_path(), self._config)
+        self._skip_hold = False  # a half-finished hold cannot survive the switch
+        log.info("hotkey switched to %r", name)
 
     def _teardown(self) -> None:
         log.info("shutting down")

@@ -187,10 +187,16 @@ class Indicator:
     def _place(self) -> None:
         """Show on the ACTIVE monitor, bottom-center, pinned topmost.
 
-        Re-asserts HWND_TOPMOST on every show: borderless-fullscreen apps
-        (terminal F11 etc.) otherwise stack above a bar whose z-order was
-        never re-asserted. Never activates (focus stays on the user's app).
+        Follows the foreground window's monitor (multi-monitor: the bar must
+        appear on the screen the user is looking at), sizes explicitly in the
+        same SetWindowPos call (a withdrawn Tk window has no reliable OS-side
+        size), and bypasses Tk's deiconify path (focus theft). Suppresses
+        itself entirely while an exclusive-fullscreen game or presentation
+        owns the screen — never fight the game for the display.
         """
+        if winio.exclusive_fullscreen_owner_active():
+            self._root.withdraw()
+            return
         self._root.update_idletasks()
         width = self._root.winfo_reqwidth()
         height = self._root.winfo_reqheight()

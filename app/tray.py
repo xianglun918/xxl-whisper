@@ -7,6 +7,16 @@ import pystray
 from PIL import Image, ImageDraw
 
 import app.recorder as recorder_mod
+from app.config import HOTKEY_VK
+
+_HOTKEY_LABELS = {
+    "caps_lock": "CapsLock",
+    "f2": "F2",
+    "f4": "F4",
+    "f6": "F6",
+    "f8": "F8",
+    "scroll_lock": "Scroll Lock",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +26,7 @@ class TrayCallbacks:
     on_select_mic: Callable[[str], None]
     on_toggle_autostart: Callable[[], None]
     on_check_update: Callable[[], None]
+    on_select_hotkey: Callable[[str], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +35,7 @@ class TrayState:
     paused: bool
     autostart: bool
     current_mic: str
+    current_hotkey: str
 
 
 class Tray:
@@ -66,6 +78,10 @@ class Tray:
                 pystray.Menu(self._mic_items),
             ),
             pystray.MenuItem(
+                "热键",
+                pystray.Menu(self._hotkey_items),
+            ),
+            pystray.MenuItem(
                 "开机自启",
                 self._callbacks.on_toggle_autostart,
                 checked=lambda _item: self._state_provider().autostart,
@@ -94,13 +110,25 @@ class Tray:
             )
         return items
 
+    def _hotkey_items(self) -> list[pystray.MenuItem]:
+        """Hotkey choices; pystray re-evaluates this on each menu open."""
+        current = self._state_provider().current_hotkey
+        return [
+            pystray.MenuItem(
+                _HOTKEY_LABELS.get(name, name) + (" ✓" if name == current else ""),
+                lambda name=name: self._callbacks.on_select_hotkey(name),
+            )
+            for name in HOTKEY_VK
+        ]
+
     def _status_text(self, _item: object) -> str:
         state = self._state_provider()
         if not state.ready:
             return "状态：启动中…"
+        label = _HOTKEY_LABELS.get(state.current_hotkey, state.current_hotkey)
         if state.paused:
-            return "状态：已暂停（热键只保留原功能）"
-        return "状态：就绪 — 按住 CapsLock 说话，松开出字"
+            return f"状态：已暂停（{label} 只保留原功能）"
+        return f"状态：就绪 — 按住 {label} 说话，松开出字"
 
 
 def _draw_icon() -> Image.Image:

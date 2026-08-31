@@ -99,6 +99,13 @@ user32.GetForegroundWindow.restype = ctypes.c_void_p
 user32.GetWindowTextW.argtypes = (ctypes.c_void_p, wintypes.LPWSTR, ctypes.c_int)
 user32.GetAsyncKeyState.restype = ctypes.c_short
 user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
+
+shell32 = ctypes.WinDLL("shell32")
+shell32.SHQueryUserNotificationState.argtypes = (ctypes.POINTER(ctypes.c_int),)
+shell32.SHQueryUserNotificationState.restype = ctypes.HRESULT
+
+_QUNS_RUNNING_D3D_FULL_SCREEN: int = 3
+_QUNS_PRESENTATION_MODE: int = 4
 user32.PostMessageW.restype = wintypes.BOOL
 user32.PostMessageW.argtypes = (ctypes.c_void_p, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
@@ -240,6 +247,19 @@ def active_monitor_work_area() -> tuple[int, int, int, int]:
         return (0, 0, user32.GetSystemMetrics(16), user32.GetSystemMetrics(17))
     work = info.rcWork
     return (work.left, work.top, work.right, work.bottom)
+
+
+def exclusive_fullscreen_owner_active() -> bool:
+    """Report whether an exclusive-fullscreen app owns the screen right now.
+
+    Detects fullscreen 3D apps (games) and presentation mode via the OS
+    notification state (the same signal overlays like Discord consult):
+    showing a topmost bar in these modes would fight the game for the
+    screen, so the indicator must stay hidden instead.
+    """
+    state = ctypes.c_int(0)
+    shell32.SHQueryUserNotificationState(ctypes.byref(state))
+    return state.value in (_QUNS_RUNNING_D3D_FULL_SCREEN, _QUNS_PRESENTATION_MODE)
 
 
 def _send_key(vk: int, *, up: bool) -> None:
