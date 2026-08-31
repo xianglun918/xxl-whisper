@@ -101,6 +101,7 @@ class DictationApp:
         self._skip_hold = False
         self._holding = False
         self._hold_confirm_timer: threading.Timer | None = None
+        self._model_downloaded = False
         self._stop_event = threading.Event()
         self._tray = Tray(
             callbacks=TrayCallbacks(
@@ -167,6 +168,9 @@ class DictationApp:
             self._config.mic,
             self._config.model,
         )
+        if self._model_downloaded:
+            self._indicator.flash("模型下载完成，可以开始使用了", 4000)
+            self._tray.notify("模型下载完成，可以开始使用了", title="xxl-whisper")
         try:
             self._tray.run()
         finally:
@@ -180,6 +184,7 @@ class DictationApp:
         )
 
     def _on_model_progress(self, filename: str, downloaded: int, total: int) -> None:
+        self._model_downloaded = True
         pct = downloaded / total if total else 0.0
         self._indicator.progress(pct, f"下载模型 {filename}")
 

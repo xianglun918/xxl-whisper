@@ -100,6 +100,7 @@ user32.GetForegroundWindow.restype = ctypes.c_void_p
 user32.GetWindowTextW.argtypes = (ctypes.c_void_p, wintypes.LPWSTR, ctypes.c_int)
 user32.GetAsyncKeyState.restype = ctypes.c_short
 user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
+user32.keybd_event.argtypes = (ctypes.c_ubyte, ctypes.c_ubyte, wintypes.DWORD, ctypes.c_size_t)
 user32.MapVirtualKeyW.restype = wintypes.UINT
 user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
 user32.GetKeyNameTextW.restype = ctypes.c_int
@@ -200,11 +201,14 @@ def keyboard_injection_alive() -> bool:
 
     Some resident software (uTools/Doubao/ArmouryCrate/G HUB class apps with
     misbehaving WH_KEYBOARD_LL hooks) swallows injected events before the
-    input state updates. Taps harmless F13 and checks the async key state.
+    input state updates. Presses harmless F13 and checks the async down state
+    while still held, then releases.
     """
-    tap_key(_VK_F13)
+    _send_key(_VK_F13, up=False)
     time.sleep(0.01)
-    return bool(user32.GetAsyncKeyState(_VK_F13) & 0x8000)
+    alive = bool(user32.GetAsyncKeyState(_VK_F13) & 0x8000)
+    _send_key(_VK_F13, up=True)
+    return alive
 
 
 def focused_control_hwnd() -> int:
@@ -325,12 +329,13 @@ def focused_control_class() -> str:
 
 
 def _send_key(vk: int, *, up: bool) -> None:
-    entry = _INPUT(type=_INPUT_KEYBOARD)
-    entry.wVk = vk
-    entry.dwFlags = _KEYEVENTF_KEYUP if up else 0
-    sent = user32.SendInput(1, ctypes.byref(entry), ctypes.sizeof(_INPUT))
-    if sent != 1:
-        raise PasteError(api="SendInput", code=ctypes.get_last_error())
+    """Inject one keyboard event via the legacy keybd_event API.
+
+    keybd_event — unlike SendInput — is not filtered by the input-protection
+    hooks that silently drop SendInput on some machines (empirically verified:
+    the async key state updates where SendInput leaves it dead).
+    """
+    user32.keybd_event(vk, 0, _KEYEVENTF_KEYUP if up else 0, 0)
 
 
 def _press_ctrl_v() -> None:
