@@ -266,6 +266,7 @@ class DictationApp:
         )
         self._config = dataclasses.replace(self._config, mic=name)
         save_config(config_path(), self._config)
+        self._tray.refresh_menu()
         log.info("mic switched to %r", name)
 
     def _swap_hotkey(self, key: str | int) -> None:
@@ -281,6 +282,7 @@ class DictationApp:
             self._hook.retarget(vk)
         self._config = dataclasses.replace(self._config, hotkey=key)
         save_config(config_path(), self._config)
+        self._tray.refresh_menu()
         self._skip_hold = False  # a half-finished hold cannot survive the switch
         label = winio.key_name(vk) if isinstance(key, int) else key
         log.info("hotkey switched to %r (vk=0x%02X)", label, vk)

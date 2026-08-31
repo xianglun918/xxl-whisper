@@ -68,6 +68,10 @@ class Tray:
     def notify(self, message: str, title: str = "xxl-whisper") -> None:
         self._icon.notify(message, title)
 
+    def refresh_menu(self) -> None:
+        """Force the native menu to rebuild (dynamic states changed)."""
+        self._icon.update_menu()
+
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
             pystray.MenuItem(
@@ -101,19 +105,28 @@ class Tray:
 
     def _mic_items(self) -> list[pystray.MenuItem]:
         """Return fresh items; pystray re-evaluates this on each menu open."""
-        state = self._state_provider()
         items = [
             pystray.MenuItem(
-                "（系统默认）" + (" ✓" if state.current_mic == "" else ""),
+                "（系统默认）",
                 self._select_mic(""),
+                checked=lambda _item: self._state_provider().current_mic == "",
             )
         ]
-        for device in recorder_mod.list_input_devices():
-            mark = " ✓" if device.name == state.current_mic else ""
-            items.append(
-                pystray.MenuItem(f"{device.name}{mark}", self._select_mic(device.name))
+        items.extend(
+            pystray.MenuItem(
+                device.name,
+                self._select_mic(device.name),
+                checked=self._mic_checked(device.name),
             )
+            for device in recorder_mod.list_input_devices()
+        )
         return items
+
+    def _mic_checked(self, name: str) -> Callable[[object], bool]:
+        def checked(_item: object) -> bool:
+            return self._state_provider().current_mic == name
+
+        return checked
 
     def _select_mic(self, name: str) -> Callable[[], None]:
         """Zero-arg action factory: pystray hands 1-arg actions an Icon, not a name."""
@@ -131,21 +144,26 @@ class Tray:
 
         return action
 
+    def _hotkey_checked(self, key: str | int) -> Callable[[object], bool]:
+        def checked(_item: object) -> bool:
+            return self._state_provider().current_hotkey == key
+
+        return checked
+
     def _hotkey_items(self) -> list[pystray.MenuItem]:
         """Hotkey presets plus a custom-key capture entry; re-evaluated per open."""
-        current = self._state_provider().current_hotkey
-        items = [
+        return [
             pystray.MenuItem(
-                _hotkey_label(name) + (" ✓" if name == current else ""),
+                _hotkey_label(name),
                 self._select_hotkey(name),
+                checked=self._hotkey_checked(name),
+                radio=True,
             )
             for name in HOTKEY_VK
+        ] + [
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("自定义按键…", self._callbacks.on_capture_hotkey),
         ]
-        items.append(pystray.Menu.SEPARATOR)
-        items.append(
-            pystray.MenuItem("自定义按键…", self._callbacks.on_capture_hotkey)
-        )
-        return items
 
     def _status_text(self, _item: object) -> str:
         state = self._state_provider()
