@@ -7,6 +7,7 @@ import pystray
 from PIL import Image, ImageDraw
 
 import app.recorder as recorder_mod
+from app import winio
 from app.config import HOTKEY_VK
 
 _HOTKEY_LABELS = {
@@ -19,6 +20,12 @@ _HOTKEY_LABELS = {
 }
 
 
+def _hotkey_label(hotkey: str | int) -> str:
+    if isinstance(hotkey, int):
+        return winio.key_name(hotkey)
+    return _HOTKEY_LABELS.get(hotkey, hotkey)
+
+
 @dataclass(frozen=True, slots=True)
 class TrayCallbacks:
     on_exit: Callable[[], None]
@@ -26,7 +33,8 @@ class TrayCallbacks:
     on_select_mic: Callable[[str], None]
     on_toggle_autostart: Callable[[], None]
     on_check_update: Callable[[], None]
-    on_select_hotkey: Callable[[str], None]
+    on_select_hotkey: Callable[[str | int], None]
+    on_capture_hotkey: Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +43,7 @@ class TrayState:
     paused: bool
     autostart: bool
     current_mic: str
-    current_hotkey: str
+    current_hotkey: str | int
 
 
 class Tray:
@@ -97,35 +105,53 @@ class Tray:
         items = [
             pystray.MenuItem(
                 "（系统默认）" + (" ✓" if state.current_mic == "" else ""),
-                lambda: self._callbacks.on_select_mic(""),
+                self._select_mic(""),
             )
         ]
         for device in recorder_mod.list_input_devices():
             mark = " ✓" if device.name == state.current_mic else ""
             items.append(
-                pystray.MenuItem(
-                    f"{device.name}{mark}",
-                    lambda name=device.name: self._callbacks.on_select_mic(name),
-                )
+                pystray.MenuItem(f"{device.name}{mark}", self._select_mic(device.name))
             )
         return items
 
+    def _select_mic(self, name: str) -> Callable[[], None]:
+        """Zero-arg action factory: pystray hands 1-arg actions an Icon, not a name."""
+
+        def action() -> None:
+            self._callbacks.on_select_mic(name)
+
+        return action
+
+    def _select_hotkey(self, key: str | int) -> Callable[[], None]:
+        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
+
+        def action() -> None:
+            self._callbacks.on_select_hotkey(key)
+
+        return action
+
     def _hotkey_items(self) -> list[pystray.MenuItem]:
-        """Hotkey choices; pystray re-evaluates this on each menu open."""
+        """Hotkey presets plus a custom-key capture entry; re-evaluated per open."""
         current = self._state_provider().current_hotkey
-        return [
+        items = [
             pystray.MenuItem(
-                _HOTKEY_LABELS.get(name, name) + (" ✓" if name == current else ""),
-                lambda name=name: self._callbacks.on_select_hotkey(name),
+                _hotkey_label(name) + (" ✓" if name == current else ""),
+                self._select_hotkey(name),
             )
             for name in HOTKEY_VK
         ]
+        items.append(pystray.Menu.SEPARATOR)
+        items.append(
+            pystray.MenuItem("自定义按键…", self._callbacks.on_capture_hotkey)
+        )
+        return items
 
     def _status_text(self, _item: object) -> str:
         state = self._state_provider()
         if not state.ready:
             return "状态：启动中…"
-        label = _HOTKEY_LABELS.get(state.current_hotkey, state.current_hotkey)
+        label = _hotkey_label(state.current_hotkey)
         if state.paused:
             return f"状态：已暂停（{label} 只保留原功能）"
         return f"状态：就绪 — 按住 {label} 说话，松开出字"

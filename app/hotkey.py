@@ -26,6 +26,10 @@ _WM_SYSKEYUP: int = 0x0105
 _WM_QUIT: int = 0x0012
 _LLKHF_INJECTED: int = 0x10
 _LLKHF_LOWER_IL_INJECTED: int = 0x02
+_VK_ESCAPE: int = 0x1B
+_MODIFIER_VKS: frozenset[int] = frozenset(
+    {0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}
+)  # Shift/Ctrl/Alt/Win (left+right variants)
 
 
 class HotkeyError(Exception):
@@ -94,6 +98,7 @@ class HotkeyHook(threading.Thread):
         self._proc = _HOOKPROC(self._hook_proc)
         self._install_error: HotkeyError | None = None
         self._started = threading.Event()
+        self._capture_cb: Callable[[int], None] | None = None
 
     @override
     def run(self) -> None:
@@ -133,15 +138,41 @@ class HotkeyHook(threading.Thread):
         self._vk = vk
         self._is_down = False
 
+    def arm_capture(self, on_key: Callable[[int], None]) -> None:
+        """One-shot: deliver the next physical key press to ``on_key``.
+
+        The captured key (and Esc as the cancel signal) is suppressed so it
+        never reaches applications. Pure modifiers are ignored — they cannot
+        serve as a hold-to-talk key.
+        """
+        self._capture_cb = on_key
+
     def _hook_proc(self, ncode: int, wparam: int, lparam: int) -> int:
         if ncode >= 0:  # HC_ACTION
             kb = ctypes.cast(lparam, _LLHOOKPTR).contents
             injected = kb.flags & (_LLKHF_INJECTED | _LLKHF_LOWER_IL_INJECTED)
+            if not injected and self._capture_filter(kb.vkCode, wparam):
+                return 1  # swallow the captured key
             if kb.vkCode == self._vk and not injected:
                 pressed = wparam in (_WM_KEYDOWN, _WM_SYSKEYDOWN)
                 self._emit_transition(pressed)
                 return 1  # suppress the native key function
         return user32.CallNextHookEx(None, ncode, wparam, lparam)
+
+    def _capture_filter(self, vk: int, wparam: int) -> bool:
+        """Consume an armed one-shot capture; True when the event is swallowed.
+
+        Pure modifiers never satisfy a capture (they cannot serve as a
+        hold-to-talk key) and are delivered normally.
+        """
+        if self._capture_cb is None or wparam not in (_WM_KEYDOWN, _WM_SYSKEYDOWN):
+            return False
+        if vk in _MODIFIER_VKS:
+            return False
+        callback = self._capture_cb
+        self._capture_cb = None
+        callback(vk)
+        return True
 
     def _emit_transition(self, pressed: bool) -> None:
         if pressed:

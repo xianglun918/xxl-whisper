@@ -17,7 +17,7 @@ import numpy as np
 
 from app import __version__, winio, winutil
 from app.asr import Recognizer
-from app.config import HOTKEY_VK, Config, config_path, model_dir, save_config
+from app.config import Config, config_path, hotkey_vk, model_dir, save_config
 from app.downloader import ensure_model
 from app.hotkey import HotkeyHook
 from app.hotkey_logic import (
@@ -55,7 +55,12 @@ class SetMic:
 
 @dataclass(frozen=True, slots=True)
 class SetHotkey:
-    name: str
+    key: str | int
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureHotkey:
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +68,10 @@ class Shutdown:
     pass
 
 
-type WorkerMsg = KeyTransition | SetPaused | SetMic | SetHotkey | Shutdown
+type WorkerMsg = KeyTransition | SetPaused | SetMic | SetHotkey | CaptureHotkey | Shutdown
+
+
+_VK_ESCAPE: int = 0x1B
 
 
 class DictationApp:
@@ -90,7 +98,8 @@ class DictationApp:
                 on_check_update=lambda: threading.Thread(
                     target=self._updates.manual_check, daemon=True
                 ).start(),
-                on_select_hotkey=lambda name: self._queue.put(SetHotkey(name=name)),
+                on_select_hotkey=lambda key: self._queue.put(SetHotkey(key=key)),
+                on_capture_hotkey=lambda: self._queue.put(CaptureHotkey()),
             ),
             state_provider=self._tray_state,
         )
@@ -109,7 +118,7 @@ class DictationApp:
             on_stream_error=lambda msg: log.warning("%s", msg),
         )
         self._hook = HotkeyHook(
-            vk=HOTKEY_VK[self._config.hotkey],
+            vk=hotkey_vk(self._config.hotkey),
             on_transition=self._on_transition,
         )
         self._hook.start_and_wait()
@@ -170,8 +179,10 @@ class DictationApp:
                 log.info("paused=%s", paused)
             case SetMic(name=name):
                 self._swap_mic(name)
-            case SetHotkey(name=name):
-                self._swap_hotkey(name)
+            case SetHotkey(key=key):
+                self._swap_hotkey(key)
+            case CaptureHotkey():
+                self._start_key_capture()
             case Shutdown():
                 self._stop_event.set()
                 self._tray.stop()
@@ -190,7 +201,7 @@ class DictationApp:
                 log.info("hold: recording started")
             case Click():
                 log.info("click: passing through native key")
-                winio.tap_key(HOTKEY_VK[self._config.hotkey])
+                winio.tap_key(hotkey_vk(self._config.hotkey))
             case EndHold(duration_ms=duration):
                 log.info("hold: ended after %d ms", duration)
                 self._finish_hold()
@@ -257,16 +268,37 @@ class DictationApp:
         save_config(config_path(), self._config)
         log.info("mic switched to %r", name)
 
-    def _swap_hotkey(self, name: str) -> None:
+    def _swap_hotkey(self, key: str | int) -> None:
         """Retarget the live hook to a new key and persist the choice."""
-        if name == self._config.hotkey or name not in HOTKEY_VK:
+        if key == self._config.hotkey:
+            return
+        try:
+            vk = hotkey_vk(key)
+        except (KeyError, TypeError):
+            log.warning("hotkey %r is not a preset or VK integer; ignored", key)
             return
         if self._hook is not None:
-            self._hook.retarget(HOTKEY_VK[name])
-        self._config = dataclasses.replace(self._config, hotkey=name)
+            self._hook.retarget(vk)
+        self._config = dataclasses.replace(self._config, hotkey=key)
         save_config(config_path(), self._config)
         self._skip_hold = False  # a half-finished hold cannot survive the switch
-        log.info("hotkey switched to %r", name)
+        label = winio.key_name(vk) if isinstance(key, int) else key
+        log.info("hotkey switched to %r (vk=0x%02X)", label, vk)
+        self._indicator.flash(f"热键已切换：{label}", 1200)
+
+    def _start_key_capture(self) -> None:
+        """Prompt the user to press an arbitrary key, then switch to it."""
+        if self._hook is None:
+            return
+        self._indicator.show("请按下新的热键（Esc 取消）…")
+        self._hook.arm_capture(self._on_captured_vk)
+
+    def _on_captured_vk(self, vk: int) -> None:
+        """Hook-thread callback: route the captured key through the worker."""
+        if vk == _VK_ESCAPE:  # Esc cancels without changing anything
+            self._indicator.hide()
+            return
+        self._queue.put(SetHotkey(key=vk))
 
     def _teardown(self) -> None:
         log.info("shutting down")

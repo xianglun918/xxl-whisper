@@ -14,8 +14,9 @@ from typing import NoReturn
 
 APP_DIR_NAME: str = "xxl-whisper"
 
-#: Virtual-key codes for hotkeys we allow. Keys that are dangerous to
-#: remap (modifiers, typing keys) are deliberately absent.
+#: Preset hotkey names -> virtual-key codes; any other VK (1..254) is also
+#: accepted as a raw integer for user-defined keys. Keys that are dangerous
+#: to remap (modifiers) are rejected at capture time, not here.
 HOTKEY_VK: Mapping[str, int] = MappingProxyType(
     {
         "caps_lock": 0x14,
@@ -26,6 +27,9 @@ HOTKEY_VK: Mapping[str, int] = MappingProxyType(
         "scroll_lock": 0x91,
     }
 )
+
+_MIN_CUSTOM_VK: int = 1
+_MAX_CUSTOM_VK: int = 254
 
 _LANGUAGES: Mapping[str, None] = MappingProxyType(
     {"zh": None, "auto": None, "en": None, "ja": None, "ko": None, "yue": None}
@@ -43,7 +47,7 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Config:
-    hotkey: str
+    hotkey: str | int
     hold_threshold_ms: int
     mic: str
     num_threads: int
@@ -84,6 +88,13 @@ def model_dir() -> Path:
     return config_dir() / "models" / "sensevoice"
 
 
+def hotkey_vk(hotkey: str | int) -> int:
+    """Resolve a preset name or raw VK into the virtual-key code."""
+    if isinstance(hotkey, int):
+        return hotkey
+    return HOTKEY_VK[hotkey]
+
+
 def load_config(path: Path) -> Config:
     """Parse a config file into a Config; missing file yields defaults."""
     if not path.exists():
@@ -94,7 +105,7 @@ def load_config(path: Path) -> Config:
         raise ConfigError(reason=f"malformed TOML ({exc})", path=path) from exc
     p = _Parser(raw=raw, path=path)
     return Config(
-        hotkey=p.choice("hotkey", "caps_lock", HOTKEY_VK),
+        hotkey=p.hotkey("hotkey", "caps_lock"),
         hold_threshold_ms=p.int_in("hold_threshold_ms", 250, 10, 2_000),
         mic=p.text("mic", ""),
         num_threads=p.int_in("num_threads", 2, 1, 16),
@@ -109,7 +120,7 @@ def save_config(path: Path, config: Config) -> None:
     """Persist a Config as simple key = value TOML."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        f"hotkey = {_quote(config.hotkey)}",
+        f"hotkey = {config.hotkey if isinstance(config.hotkey, int) else _quote(config.hotkey)}",
         f"hold_threshold_ms = {config.hold_threshold_ms}",
         f"mic = {_quote(config.mic)}",
         f"num_threads = {config.num_threads}",
@@ -147,8 +158,20 @@ class _Parser:
     def choice(self, name: str, default: str, choices: Mapping[str, object]) -> str:
         value = self._raw.get(name, default)
         if not isinstance(value, str) or value not in choices:
-            allowed = ", ".join(sorted(choices))
-            self._fail(f"{name} must be one of: {allowed}")
+            self._fail(f"{name} must be one of: {', '.join(sorted(choices))}")
+        return value
+
+    def hotkey(self, name: str, default: str | int) -> str | int:
+        """Accept a preset name or a raw virtual-key code (1..254)."""
+        value = self._raw.get(name, default)
+        if isinstance(value, str):
+            if value not in HOTKEY_VK:
+                self._fail(f"{name} must be a preset name or a VK integer")
+            return value
+        if isinstance(value, bool) or not isinstance(value, int):
+            self._fail(f"{name} must be a preset name or a VK integer")
+        if not _MIN_CUSTOM_VK <= value <= _MAX_CUSTOM_VK:
+            self._fail(f"{name} VK out of range [{_MIN_CUSTOM_VK}, {_MAX_CUSTOM_VK}]")
         return value
 
     def text(self, name: str, default: str) -> str:

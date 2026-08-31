@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from app.config import Config, ConfigError, load_config, save_config
+from app.config import Config, ConfigError, hotkey_vk, load_config, save_config
 
 
 def test_missing_file_returns_defaults(tmp_path: Path) -> None:
@@ -39,6 +39,27 @@ def test_unknown_hotkey_rejected(tmp_path: Path) -> None:
     path.write_text('hotkey = "volume_up"\n', encoding="utf-8")
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+def test_custom_vk_hotkey_roundtrip(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    original = Config(hotkey=0x2B, hold_threshold_ms=250, mic="", num_threads=2,
+                      language="zh", restore_clipboard=True, paste_delay_ms=200,
+                      check_updates=True)
+    save_config(path, original)
+    assert load_config(path) == original
+
+
+def test_custom_vk_hotkey_out_of_range_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("hotkey = 255\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
+def test_hotkey_vk_resolves_names_and_ints() -> None:
+    assert hotkey_vk("caps_lock") == 0x14
+    assert hotkey_vk(0x2B) == 0x2B
 
 
 def test_invalid_language_rejected(tmp_path: Path) -> None:

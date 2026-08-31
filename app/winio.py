@@ -99,7 +99,10 @@ user32.GetForegroundWindow.restype = ctypes.c_void_p
 user32.GetWindowTextW.argtypes = (ctypes.c_void_p, wintypes.LPWSTR, ctypes.c_int)
 user32.GetAsyncKeyState.restype = ctypes.c_short
 user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
-
+user32.MapVirtualKeyW.restype = wintypes.UINT
+user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
+user32.GetKeyNameTextW.restype = ctypes.c_int
+user32.GetKeyNameTextW.argtypes = (wintypes.LPARAM, wintypes.LPWSTR, ctypes.c_int)
 shell32 = ctypes.WinDLL("shell32")
 shell32.SHQueryUserNotificationState.argtypes = (ctypes.POINTER(ctypes.c_int),)
 shell32.SHQueryUserNotificationState.restype = ctypes.HRESULT
@@ -260,6 +263,29 @@ def exclusive_fullscreen_owner_active() -> bool:
     state = ctypes.c_int(0)
     shell32.SHQueryUserNotificationState(ctypes.byref(state))
     return state.value in (_QUNS_RUNNING_D3D_FULL_SCREEN, _QUNS_PRESENTATION_MODE)
+
+
+_MAPVK_VK_TO_VSC_EX: int = 4  # 3 is VSC_TO_VK_EX; do not confuse them
+_EXTENDED_SCAN_PREFIX: int = 0xE000
+#: VKs that are physically extended (E0-prefixed) even when the EX mapping
+#: omits the prefix — needed so arrows don't display as numpad keys.
+_EXTENDED_VKS: frozenset[int] = frozenset(
+    {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2C, 0x2D, 0x2E, 0x5B,
+     0x5C, 0x5D, 0x6F, 0x90, 0xA3, 0xA5}
+)
+
+
+def key_name(vk: int) -> str:
+    """Human-readable key name for a virtual-key code (for menus/logs)."""
+    scan = user32.MapVirtualKeyW(vk, _MAPVK_VK_TO_VSC_EX)
+    lparam = (scan & 0xFF) << 16
+    if (scan & 0xFF00) == _EXTENDED_SCAN_PREFIX or vk in _EXTENDED_VKS:
+        lparam |= 1 << 24
+    buffer = ctypes.create_unicode_buffer(64)
+    written = user32.GetKeyNameTextW(lparam, buffer, 64)
+    if written > 0:
+        return buffer.value
+    return f"VK 0x{vk:02X}"
 
 
 def _send_key(vk: int, *, up: bool) -> None:
