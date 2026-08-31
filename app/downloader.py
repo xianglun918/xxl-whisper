@@ -100,6 +100,29 @@ def ensure_model(kind: str, models_root: Path, progress: ProgressFn) -> ModelFil
     return ModelFiles(kind=kind, directory=model_dir)
 
 
+def manual_download_guide(kind: str, models_root: Path) -> str:
+    """Return copy-paste instructions for fetching a model by hand.
+
+    Intranet / proxy-restricted environments may block the in-app downloader;
+    this guide lists the exact files and URLs the user must place under the
+    model directory so the app proceeds on the next launch.
+    """
+    model_dir = models_root / kind
+    lines = [
+        f"模型 {kind} 自动下载失败。",
+        "",
+        "请手动下载以下文件，按相同目录结构保存到：",
+        str(model_dir),
+        "",
+    ]
+    for url, dest, _size in _MODEL_FILES[kind]:
+        lines.append(f"{dest}  <-  {url}")
+    lines.append("")
+    lines.append("含子目录的文件（如 Qwen3-0.6B/）需先创建对应目录。")
+    lines.append("下载完成后重启 xxl-whisper 即可。")
+    return "\n".join(lines)
+
+
 def _is_complete(spec: _FileSpec) -> bool:
     return spec.dest.exists() and spec.dest.stat().st_size == spec.expected_size
 

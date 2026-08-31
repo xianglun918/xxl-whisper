@@ -21,7 +21,7 @@ from app.config import (
     hotkey_vk,
     save_config,
 )
-from app.downloader import ensure_model
+from app.downloader import DownloadError, ensure_model, manual_download_guide
 from app.emit import is_classic_control
 from app.hotkey import HotkeyHook
 from app.indicator import Indicator
@@ -127,7 +127,14 @@ class Controls:
             pct = done / total if total else 0.0
             self._deps.indicator.progress(pct, f"下载模型 {name}")
 
-        files = ensure_model(kind, self._deps.models_root, _progress)
+        try:
+            files = ensure_model(kind, self._deps.models_root, _progress)
+        except DownloadError as exc:
+            log.warning("model download failed: %s", exc)
+            self._deps.indicator.hide()
+            guide = manual_download_guide(kind, self._deps.models_root)
+            winutil.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
+            return None
         recognizer = Recognizer(
             kind=kind_typed,
             model_dir=files.directory,

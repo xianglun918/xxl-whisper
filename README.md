@@ -45,12 +45,32 @@ Win32 消息；PortAudio 回调收音；单一 ASR worker 消费消息队列（�
 
 ## 模型
 
-- SenseVoice-Small INT8 ONNX（239,233,841 字节）+ tokens.txt（315,894 字节）
-- 来源：`hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17`
-  （主源，国内直连）；GitHub release tar.bz2 兜底
-- 存放：`%LOCALAPPDATA%\xxl-whisper\models\sensevoice\`
+- **SenseVoice-Small**（默认）：INT8 ONNX（239,233,841 字节）+ tokens.txt（315,894 字节）
+- **Fun-ASR-Nano**（可选，推荐新模型，精度更高）：encoder_adaptor / embedding / llm
+  三个 int8 ONNX（约 993MB）+ Qwen3-0.6B 分词器，中英混说与方言表现更优
+- 来源：`hf-mirror.com`（主源，国内直连）→ GitHub release tar.bz2 兜底
+- 存放：`%LOCALAPPDATA%\xxl-whisper\models\<模型名>\`
 - 注意：modelscope 的 iic/SenseVoiceSmall-onnx 与 sherpa-onnx 轮子内置的 onnxruntime
   不兼容（ORT API 版本冲突），不要混用
+
+### 手动下载模型（内网 / 代理受限时）
+
+软件会自动下载模型；若网络受限导致下载失败，程序会弹窗提示。此时可手动访问以下
+URL 下载文件，放入对应目录（**子目录需按路径自行创建**，下载后重启软件即可）：
+
+**SenseVoice-Small** → `%LOCALAPPDATA%\xxl-whisper\models\sensevoice\`
+
+- `model.onnx` ← `https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx`
+- `tokens.txt` ← `https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt`
+
+**Fun-ASR-Nano** → `%LOCALAPPDATA%\xxl-whisper\models\funasr_nano\`
+
+- `encoder_adaptor.int8.onnx` ← `https://hf-mirror.com/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30/resolve/main/encoder_adaptor.int8.onnx`
+- `embedding.int8.onnx` ← `https://hf-mirror.com/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30/resolve/main/embedding.int8.onnx`
+- `llm.int8.onnx` ← `https://hf-mirror.com/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30/resolve/main/llm.int8.onnx`
+- `Qwen3-0.6B/merges.txt` ← `https://hf-mirror.com/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30/resolve/main/Qwen3-0.6B/merges.txt`
+- `Qwen3-0.6B/tokenizer.json` ← `https://hf-mirror.com/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30/resolve/main/Qwen3-0.6B/tokenizer.json`
+- `Qwen3-0.6B/vocab.json` ← `https://hf-mirror.com/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30/resolve/main/Qwen3-0.6B/vocab.json`
 
 ## 已知边界
 

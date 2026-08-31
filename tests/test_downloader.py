@@ -6,7 +6,7 @@ from pathlib import Path
 
 import app.downloader as dl
 import pytest
-from app.downloader import DownloadError, ModelFiles, ensure_model
+from app.downloader import DownloadError, ModelFiles, ensure_model, manual_download_guide
 
 
 def _fake_progress(_name: str, _done: int, _total: int) -> None:
@@ -94,3 +94,10 @@ def test_all_sources_failing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(DownloadError):
         ensure_model("sensevoice", tmp_path, progress=_fake_progress)
+
+def test_manual_download_guide_lists_files_and_urls() -> None:
+    guide = manual_download_guide("funasr_nano", Path("C:/models"))
+    assert "funasr_nano" in guide
+    assert "llm.int8.onnx" in guide
+    assert "Qwen3-0.6B" in guide
+    assert "https://hf-mirror.com/" in guide

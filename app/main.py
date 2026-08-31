@@ -7,7 +7,8 @@ from pathlib import Path
 
 from app import winutil
 from app.app import DictationApp
-from app.config import ConfigError, config_dir, config_path, load_config
+from app.config import ConfigError, config_dir, config_path, load_config, models_root
+from app.downloader import DownloadError, manual_download_guide
 
 
 def entry() -> None:
@@ -20,10 +21,17 @@ def entry() -> None:
         sys.exit(1)
     try:
         config = load_config(config_path())
-        DictationApp(config).run()
     except ConfigError as exc:
         logging.getLogger(__name__).exception("config error")
         winutil.show_error(f"配置文件错误：\n{exc}")
+        sys.exit(1)
+    try:
+        DictationApp(config).run()
+    except DownloadError as exc:
+        logger = logging.getLogger(__name__)
+        logger.exception("model download failed")
+        guide = manual_download_guide(config.model, models_root())
+        winutil.show_error(f"模型自动下载失败：{exc.reason}\n\n{guide}")
         sys.exit(1)
     except Exception:
         logging.getLogger(__name__).exception("fatal error")

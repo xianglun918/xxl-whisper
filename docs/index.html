@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>xxl-whisper — Windows 离线语音听写</title>
+<meta name="description" content="按住 CapsLock，说出中文，松开即上屏。纯本地离线识别、中英混说、文字直达光标的 Windows 托盘听写工具。" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#ffffff; --ink:#171717; --ink2:#4d4d4d; --ink3:#666666; --line:#ebebeb;
+  --ring:rgba(0,0,0,0.08); --ring-soft:rgb(235,235,235);
+  --accent:#0a72ef; --rec:#ff5b4f;
+  --tag-blue-bg:#ebf5ff; --tag-blue-tx:#0068d6; --tag-green-bg:#edf3ec; --tag-green-tx:#346538;
+  --sans:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:"Geist Mono",ui-monospace,"SF Mono","Cascadia Code","Consolas",monospace;
+  --card-shadow:0 0 0 1px rgba(0,0,0,0.08), 0 2px 2px rgba(0,0,0,0.04), 0 0 0 1px #fafafa inset;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;font-size:16px;line-height:1.6;overflow-x:hidden}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1120px;margin:0 auto;padding:0 32px}
+.mono{font-family:var(--mono)}
+::selection{background:rgba(10,114,239,0.14)}
+
+/* ---------- nav ---------- */
+nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 0 0 1px var(--ring)}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px;letter-spacing:-0.01em;color:var(--ink)}
+.brand:hover{text-decoration:none}
+.brand .mark{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:var(--ink);color:#fff}
+.brand .mark svg{width:15px;height:15px}
+.nav-links{display:flex;align-items:center;gap:28px}
+.nav-links a{color:var(--ink2);font-size:14px;font-weight:500}
+.nav-links a:hover{color:var(--ink);text-decoration:none}
+.nav-cta{display:flex;align-items:center;gap:14px}
+.btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--sans);font-size:14px;font-weight:500;border-radius:6px;padding:10px 18px;cursor:pointer;transition:transform .12s ease,background .12s ease,box-shadow .12s ease;border:none}
+.btn:active{transform:scale(0.98)}
+.btn-dark{background:var(--ink);color:#fff}
+.btn-dark:hover{background:#000}
+.btn-ghost{background:#fff;color:var(--ink);box-shadow:0 0 0 1px var(--ring-soft)}
+.btn-ghost:hover{box-shadow:0 0 0 1px rgba(0,0,0,0.22)}
+.btn svg{width:15px;height:15px}
+
+/* ---------- hero ---------- */
+.hero{position:relative;padding:104px 0 72px;text-align:center}
+.hero::before{content:"";position:absolute;inset:0;background:
+  radial-gradient(1100px 460px at 50% -8%,rgba(10,114,239,0.055),transparent 60%),
+  radial-gradient(700px 380px at 82% 6%,rgba(255,91,79,0.035),transparent 60%);
+  pointer-events:none}
+.hero::after{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(0,0,0,0.035) 1px,transparent 1px);background-size:26px 26px;mask-image:radial-gradient(600px 360px at 50% 10%,#000 0%,transparent 70%);-webkit-mask-image:radial-gradient(600px 360px at 50% 10%,#000 0%,transparent 70%);pointer-events:none}
+.hero .inner{position:relative;z-index:1}
+.pill{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:500;color:var(--tag-blue-tx);background:var(--tag-blue-bg);border-radius:9999px;padding:4px 12px;margin-bottom:28px;letter-spacing:0.02em}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--tag-blue-tx)}
+h1{font-size:64px;font-weight:600;line-height:1.08;letter-spacing:-0.03em;margin-bottom:24px;color:var(--ink)}
+h1 .thin{font-weight:400;color:var(--ink2)}
+.hero-sub{font-size:20px;font-weight:400;color:var(--ink2);line-height:1.7;max-width:640px;margin:0 auto 40px}
+.hero-ctas{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-bottom:64px}
+.kbd-row{display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:var(--ink3);margin-bottom:48px}
+kbd{font-family:var(--mono);font-size:12px;font-weight:500;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;background:#f7f6f3;padding:3px 8px;color:var(--ink)}
+
+/* ---------- demo card ---------- */
+.demo{max-width:760px;margin:0 auto;text-align:left}
+.window{border-radius:12px;background:#fff;box-shadow:var(--card-shadow), 0 16px 48px -24px rgba(0,0,0,0.18);overflow:hidden}
+.window-bar{display:flex;align-items:center;gap:8px;padding:12px 16px;box-shadow:0 0 0 1px var(--ring);border-radius:12px 12px 0 0}
+.dot{width:11px;height:11px;border-radius:50%;background:#e5e5e5}
+.dot:nth-child(1){background:#ff5f57}.dot:nth-child(2){background:#febc2e}.dot:nth-child(3){background:#28c840}
+.window-title{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--ink3);letter-spacing:0.04em}
+.window-body{padding:32px}
+.holdline{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+.holdline .label{font-size:14px;color:var(--ink2)}
+.holdline kbd{font-size:13px;padding:6px 12px;background:#fff;box-shadow:0 0 0 1px var(--ring), 0 2px 0 #d9d9d9}
+.wave{display:flex;align-items:center;gap:3px;height:44px;margin-bottom:28px}
+.wave span{width:4px;border-radius:2px;background:var(--accent);height:12px;transform-origin:center;animation:wave 1.1s ease-in-out infinite}
+.wave span:nth-child(4n+1){animation-delay:0s}.wave span:nth-child(4n+2){animation-delay:.15s}
+.wave span:nth-child(4n+3){animation-delay:.3s}.wave span:nth-child(4n+4){animation-delay:.45s}
+@keyframes wave{0%,100%{transform:scaleY(0.5);opacity:.4}50%{transform:scaleY(1);opacity:1}}
+.typed{font-size:18px;color:var(--ink);line-height:1.7}
+.typed .cursor{display:inline-block;width:2px;height:20px;background:var(--rec);vertical-align:-4px;margin-left:2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.status{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;color:var(--ink3);margin-top:24px;padding:6px 12px;border-radius:9999px;background:#fafafa;box-shadow:0 0 0 1px var(--ring)}
+.status .rec-dot{width:7px;height:7px;border-radius:50%;background:var(--rec);animation:blink 1.2s steps(1) infinite}
+
+/* ---------- sections ---------- */
+section{padding:96px 0}
+.sec-label{font-family:var(--mono);font-size:13px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:16px}
+.sec-title{font-size:40px;font-weight:600;letter-spacing:-0.025em;line-height:1.15;margin-bottom:20px}
+.sec-desc{font-size:18px;color:var(--ink2);max-width:620px;margin-bottom:48px}
+
+/* bento */
+.bento{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+.card{grid-column:span 4;background:#fff;border-radius:8px;box-shadow:var(--card-shadow);padding:28px;transition:box-shadow .2s ease}
+.card:hover{box-shadow:0 0 0 1px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.05), 0 0 0 1px #fafafa inset}
+.card.wide{grid-column:span 8}
+.card .ico{display:grid;place-items:center;width:40px;height:40px;border-radius:8px;background:#f7f6f3;box-shadow:0 0 0 1px var(--ring);margin-bottom:20px}
+.card .ico svg{width:20px;height:20px;stroke:var(--ink)}
+.card h3{font-size:20px;font-weight:600;letter-spacing:-0.02em;margin-bottom:8px}
+.card p{font-size:15px;color:var(--ink2);line-height:1.6}
+
+/* pipeline */
+.pipeline{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.step{background:#fff;border-radius:8px;box-shadow:var(--card-shadow);padding:32px}
+.step .num{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--accent);letter-spacing:0.08em;margin-bottom:14px}
+.step h3{font-size:22px;font-weight:600;letter-spacing:-0.02em;margin-bottom:10px}
+.step p{font-size:15px;color:var(--ink2)}
+.step .g{font-family:var(--mono);font-size:12px;color:var(--ink3);display:block;margin-bottom:6px}
+
+/* models */
+.models{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.model{position:relative;background:#fff;border-radius:12px;box-shadow:var(--card-shadow);padding:40px}
+.model.recommended{box-shadow:0 0 0 2px var(--ink), 0 16px 48px -24px rgba(0,0,0,0.2)}
+.model .tag{position:absolute;top:20px;right:20px;font-size:12px;font-weight:500;padding:4px 12px;border-radius:9999px}
+.model .tag.green{background:var(--tag-green-bg);color:var(--tag-green-tx)}
+.model .tag.gray{background:#f5f5f5;color:var(--ink3)}
+.model h3{font-size:26px;font-weight:600;letter-spacing:-0.02em;margin-bottom:8px}
+.model .role{font-family:var(--mono);font-size:13px;color:var(--ink3);margin-bottom:20px}
+.model ul{list-style:none;margin:0}
+.model li{position:relative;padding-left:22px;font-size:15px;color:var(--ink2);margin-bottom:10px}
+.model li::before{content:"";position:absolute;left:0;top:7px;width:8px;height:8px;border-radius:2px;background:var(--ink)}
+
+/* note */
+.note{background:#fafafa;border-radius:8px;box-shadow:0 0 0 1px var(--ring);padding:28px;font-size:15px;color:var(--ink2);line-height:1.7}
+.note code{font-family:var(--mono);font-size:13px;background:#f2f2f2;border-radius:4px;padding:2px 6px;color:var(--ink)}
+
+/* arch cta */
+.arch{display:flex;align-items:center;justify-content:space-between;gap:32px;background:var(--ink);color:#fff;border-radius:12px;padding:48px;flex-wrap:wrap}
+.arch h3{font-size:28px;font-weight:600;letter-spacing:-0.02em;margin-bottom:8px;color:#fff}
+.arch p{color:#b8b8b8;font-size:15px}
+.arch .btn{background:#fff;color:var(--ink)}
+
+/* footer */
+footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
+.foot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;font-size:14px;color:var(--ink3)}
+.foot a{color:var(--ink2)}
+
+/* reveal */
+.reveal{opacity:0;transform:translateY(12px);transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
+.reveal.on{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}.wave span{animation:none}}
+
+/* responsive */
+@media (max-width:900px){
+  h1{font-size:44px}
+  .card,.card.wide{grid-column:span 12}
+  .pipeline{grid-template-columns:1fr}
+  .models{grid-template-columns:1fr}
+  .nav-links{display:none}
+}
+@media (max-width:600px){
+  h1{font-size:34px}
+  .hero{padding:72px 0 48px}
+  section{padding:64px 0}
+  .sec-title{font-size:30px}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="#">
+      <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></span>
+      xxl-whisper
+    </a>
+    <div class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#models">模型</a>
+      <a href="#arch">架构</a>
+    </div>
+    <div class="nav-cta">
+      <a class="btn btn-dark" href="https://github.com/xianglun918/xxl-whisper/releases/latest">下载最新版</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap inner">
+    <span class="pill"><span class="dot"></span>v0.4.2 · 开源 · 全离线</span>
+    <h1>按住 CapsLock，说出中文，<br /><span class="thin">松开即上屏</span></h1>
+    <p class="hero-sub">xxl-whisper 是 Windows 托盘常驻的离线语音听写工具。识别全程在本地完成，无需联网、不依赖任何云服务；中英混说，文字直接落在光标处。</p>
+    <div class="hero-ctas">
+      <a class="btn btn-dark" href="https://github.com/xianglun918/xxl-whisper/releases/latest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+        下载 xxl-whisper.exe
+      </a>
+      <a class="btn btn-ghost" href="architecture.html">查看架构图</a>
+      <a class="btn btn-ghost" href="https://github.com/xianglun918/xxl-whisper">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+        GitHub
+      </a>
+    </div>
+    <div class="kbd-row">
+      <kbd>CapsLock</kbd><span>按住说话</span><span>·</span><kbd>CapsLock</kbd><span>单击切换大小写</span>
+    </div>
+    <div class="demo reveal">
+      <div class="window">
+        <div class="window-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="window-title">dictation — 正在听…</span></div>
+        <div class="window-body">
+          <div class="holdline"><span class="label">按住</span><kbd>CapsLock</kbd><span class="label">说话，松开自动上屏</span></div>
+          <div class="wave">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <div class="typed">今天天气怎么样，我们一起去吃火锅吧。<span class="cursor"></span></div>
+          <div class="status"><span class="rec-dot"></span>SenseVoice-Small · CPU 实时 25×</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">Features</div>
+    <h2 class="sec-title">为“打字慢的人”造的离线听写</h2>
+    <p class="sec-desc">没有账号、没有云、没有延迟到服务器的往返。语音在你的机器上变成文字，直接落到光标处。</p></div>
+    <div class="bento">
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg></div><h3>纯本地离线</h3><p>SenseVoice 本地推理，断网也能用；语音不出本机，隐私无忧。</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h12"/><path d="M9 3v2"/><path d="m10.05 8.5-2.1 5.5M5 5v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5"/></svg></div><h3>中英混说</h3><p>中文为主，英文单词自然穿插——“开个 PR”“看下 README”照单全收。</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div><h3>上屏通道自适应</h3><p>键盘注入 → WM_PASTE → UIA → 剪贴板提示，四级自动降级，兼容各类输入框。</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg></div><h3>热键自由</h3><p>CapsLock、F 键、鼠标侧键、任意自定义键，托盘菜单即时切换。</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><h3>永不抢焦点</h3><p>底部状态条跟随当前显示器，独占全屏游戏自动隐藏，不打断你的工作。</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg></div><h3>一键升级</h3><p>启动静默检查新版本，托盘提示直达下载页，覆盖旧 exe 即完成升级。</p></div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">How it works</div>
+    <h2 class="sec-title">三步，从声音到文字</h2></div>
+    <div class="pipeline">
+      <div class="step reveal"><span class="g">STEP 01</span><span class="num">HOLD</span><h3>按住</h3><p>按住 CapsLock（或自定义键），麦克风开始拾音，底部浮条提示“正在听…”。</p></div>
+      <div class="step reveal"><span class="g">STEP 02</span><span class="num">ASR</span><h3>识别</h3><p>松开瞬间，本地模型离线解码，中文与夹杂的英文单词一并转写。</p></div>
+      <div class="step reveal"><span class="g">STEP 03</span><span class="num">TYPE</span><h3>上屏</h3><p>文字自动注入当前光标处，全程无感，无需手动粘贴。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="models" style="background:#fafafa;box-shadow:0 0 0 1px var(--ring)">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">Models</div>
+    <h2 class="sec-title">两档模型，按需切换</h2>
+    <p class="sec-desc">托盘菜单一键切换，模型按需自动下载。</p></div>
+    <div class="models">
+      <div class="model reveal"><span class="tag gray">默认</span>
+        <h3>SenseVoice-Small</h3><div class="role">快速 · 轻量</div>
+        <ul>
+          <li>约 230MB，下载快、启动快</li>
+          <li>CPU 实时约 25 倍速</li>
+          <li>日常中文听写首选</li>
+        </ul>
+      </div>
+      <div class="model recommended reveal"><span class="tag green">推荐新模型</span>
+        <h3>Fun-ASR-Nano</h3><div class="role">高精度 · LLM 解码</div>
+        <ul>
+          <li>约 1GB，中英混说与方言表现更优</li>
+          <li>LLM 解码器，长句、口音更稳</li>
+          <li>对准确率要求高时切换此模型</li>
+        </ul>
+      </div>
+    </div>
+    <div class="note reveal" style="margin-top:24px">
+      <strong>内网 / 代理受限？</strong> 若自动下载失败，程序会弹窗给出手动下载指引；也可按
+      <a href="https://github.com/xianglun918/xxl-whisper#%E6%89%8B%E5%8A%A8%E4%B8%8B%E8%BD%BD%E6%A8%A1%E5%9E%8B%E5%86%85%E7%BD%91--%E4%BB%A3%E7%90%86%E5%8F%97%E9%99%90%E6%97%B6">README 的手动下载说明</a>
+      访问 hf-mirror 直链，把文件放入对应目录后重启即可。
+    </div>
+  </div>
+</section>
+
+<section id="arch">
+  <div class="wrap">
+    <div class="arch reveal">
+      <div>
+        <h3>想了解它怎么工作？</h3>
+        <p>交互式架构图：钩子 → 录音 → 识别 → 上屏，以及离线模型与交互面。</p>
+      </div>
+      <a class="btn" href="architecture.html">打开架构图 →</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot">
+    <span class="mono">xxl-whisper · v0.4.2 · MIT License</span>
+    <span><a href="https://github.com/xianglun918/xxl-whisper">GitHub</a> · <a href="https://github.com/xianglun918/xxl-whisper/releases/latest">Releases</a> · <a href="architecture.html">架构图</a></span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var els=document.querySelectorAll('.reveal');
+  if(!('IntersectionObserver' in window)){els.forEach(function(e){e.classList.add('on')});return}
+  var io=new IntersectionObserver(function(entries){
+    entries.forEach(function(en){if(en.isIntersecting){en.target.classList.add('on');io.unobserve(en.target)}})
+  },{threshold:0.12});
+  els.forEach(function(e){io.observe(e)});
+})();
+</script>
+</body>
+</html>
