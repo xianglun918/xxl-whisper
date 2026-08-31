@@ -9,11 +9,12 @@ from app.config import Config, ConfigError, hotkey_vk, load_config, save_config
 def test_missing_file_returns_defaults(tmp_path: Path) -> None:
     config = load_config(tmp_path / "absent.toml")
     assert config.hotkey == "caps_lock"
-    assert config.hold_threshold_ms == 250
+    assert config.hold_threshold_ms == 400
     assert config.mic == ""
     assert config.language == "zh"
     assert config.restore_clipboard is True
     assert config.check_updates is True
+    assert config.model == "sensevoice"
 
 
 def test_partial_file_merges_with_defaults(tmp_path: Path) -> None:
@@ -29,7 +30,7 @@ def test_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     original = Config(hotkey="f2", hold_threshold_ms=300, mic="Mic", num_threads=4,
                       language="auto", restore_clipboard=False, paste_delay_ms=100,
-                      check_updates=False)
+                      check_updates=False, model="funasr_nano")
     save_config(path, original)
     assert load_config(path) == original
 
@@ -45,7 +46,7 @@ def test_custom_vk_hotkey_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     original = Config(hotkey=0x2B, hold_threshold_ms=250, mic="", num_threads=2,
                       language="zh", restore_clipboard=True, paste_delay_ms=200,
-                      check_updates=True)
+                      check_updates=True, model="sensevoice")
     save_config(path, original)
     assert load_config(path) == original
 

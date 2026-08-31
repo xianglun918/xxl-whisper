@@ -1,9 +1,8 @@
 """Model acquisition: direct downloads — no cloud-drive dependency.
 
 Primary source is hf-mirror.com (HuggingFace mirror, CN-friendly) serving the
-sherpa-onnx team's SenseVoice export, which is the build paired with the
-sherpa-onnx wheel's bundled onnxruntime. Fallback is the GitHub release
-tarball. Files land under %LOCALAPPDATA%/xxl-whisper/models/sensevoice/.
+sherpa-onnx team's model exports. Fallback is the GitHub release tarballs.
+Each supported model lives in its own directory under the models root.
 """
 
 import tarfile
@@ -13,20 +12,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-_HF_BASE: str = (
+_HF_SENSEVOICE: str = (
     "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
     "/resolve/main"
 )
-_GH_TARBALL: str = (
+_HF_FUNASR_NANO: str = (
+    "https://hf-mirror.com/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30"
+    "/resolve/main"
+)
+_GH_TARBALL_SENSEVOICE: str = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
     "/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2"
 )
-_MODEL_NAME: str = "model.onnx"
-_TOKENS_NAME: str = "tokens.txt"
-
-#: Exact artifact sizes — a truncated download must never look complete.
-MODEL_SIZE: int = 239_233_841  # model.int8.onnx from the sherpa-onnx export
-TOKENS_SIZE: int = 315_894
+_GH_TARBALL_FUNASR_NANO: str = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
+    "/sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2"
+)
 
 ProgressFn = Callable[[str, int, int], None]  # (filename, downloaded_bytes, total_bytes)
 
@@ -42,50 +43,68 @@ class DownloadError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ModelFiles:
-    model: Path
-    tokens: Path
+    """Resolved local artifacts for one model kind."""
+
+    kind: str
+    directory: Path
 
 
 @dataclass(frozen=True, slots=True)
-class _Spec:
+class _FileSpec:
     url: str
     dest: Path
     expected_size: int
 
 
-def ensure_model(model_root: Path, progress: ProgressFn) -> ModelFiles:
-    """Make sure model + tokens exist locally; download what is missing."""
-    model_root.mkdir(parents=True, exist_ok=True)
+#: Exact artifact sizes — a truncated download must never look complete.
+_MODEL_FILES: dict[str, tuple[tuple[str, str, int], ...]] = {
+    "sensevoice": (
+        (f"{_HF_SENSEVOICE}/model.int8.onnx", "model.onnx", 239_233_841),
+        (f"{_HF_SENSEVOICE}/tokens.txt", "tokens.txt", 315_894),
+    ),
+    "funasr_nano": (
+        (f"{_HF_FUNASR_NANO}/encoder_adaptor.int8.onnx", "encoder_adaptor.int8.onnx", 237_792_748),
+        (f"{_HF_FUNASR_NANO}/embedding.int8.onnx", "embedding.int8.onnx", 155_584_380),
+        (f"{_HF_FUNASR_NANO}/llm.int8.onnx", "llm.int8.onnx", 600_356_593),
+        (f"{_HF_FUNASR_NANO}/Qwen3-0.6B/merges.txt", "Qwen3-0.6B/merges.txt", 1_671_853),
+        (f"{_HF_FUNASR_NANO}/Qwen3-0.6B/tokenizer.json", "Qwen3-0.6B/tokenizer.json", 11_422_654),
+        (f"{_HF_FUNASR_NANO}/Qwen3-0.6B/vocab.json", "Qwen3-0.6B/vocab.json", 2_776_833),
+    ),
+}
+
+_MODEL_TARBALLS: dict[str, str] = {
+    "sensevoice": _GH_TARBALL_SENSEVOICE,
+    "funasr_nano": _GH_TARBALL_FUNASR_NANO,
+}
+
+
+def ensure_model(kind: str, models_root: Path, progress: ProgressFn) -> ModelFiles:
+    """Make sure the model's files exist locally; download what is missing."""
+    files = _MODEL_FILES[kind]
+    model_dir = models_root / kind
+    model_dir.mkdir(parents=True, exist_ok=True)
     specs = [
-        _Spec(
-            url=f"{_HF_BASE}/model.int8.onnx",
-            dest=model_root / _MODEL_NAME,
-            expected_size=MODEL_SIZE,
-        ),
-        _Spec(
-            url=f"{_HF_BASE}/tokens.txt",
-            dest=model_root / _TOKENS_NAME,
-            expected_size=TOKENS_SIZE,
-        ),
+        _FileSpec(url=url, dest=model_dir / dest, expected_size=size)
+        for url, dest, size in files
     ]
     try:
         for spec in specs:
             if not _is_complete(spec):
                 _fetch(spec, progress)
     except DownloadError:
-        _fetch_tarball_fallback(model_root, specs, progress)
+        _fetch_tarball_fallback(models_root / kind, specs, progress)
 
     for spec in specs:  # both sources failed for something still missing
         if not _is_complete(spec):
             raise DownloadError(source="all", reason=f"{spec.dest.name} missing")
-    return ModelFiles(model=specs[0].dest, tokens=specs[1].dest)
+    return ModelFiles(kind=kind, directory=model_dir)
 
 
-def _is_complete(spec: _Spec) -> bool:
+def _is_complete(spec: _FileSpec) -> bool:
     return spec.dest.exists() and spec.dest.stat().st_size == spec.expected_size
 
 
-def _fetch(spec: _Spec, progress: ProgressFn) -> None:
+def _fetch(spec: _FileSpec, progress: ProgressFn) -> None:
     _download(
         url=spec.url,
         dest=spec.dest,
@@ -103,6 +122,7 @@ def _download(
     expected_size: int | None,
 ) -> None:
     """Stream one URL to dest via a .part file; verify size when known."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
     try:
         with (
@@ -128,15 +148,19 @@ def _download(
 
 
 def _fetch_tarball_fallback(
-    model_root: Path, specs: list[_Spec], progress: ProgressFn
+    model_dir: Path, specs: list[_FileSpec], progress: ProgressFn
 ) -> None:
-    """Extract the two files from the GitHub release tarball."""
-    wanted = {"model.int8.onnx": specs[0], "tokens.txt": specs[1]}
+    """Extract model files from the GitHub release tarball."""
+    kind = model_dir.name
+    tarball_url = _MODEL_TARBALLS.get(kind)
+    if tarball_url is None:
+        raise DownloadError(source="all", reason=f"no tarball fallback for {kind}")
+    wanted = {spec.dest.name: spec for spec in specs}
     try:
-        with tempfile.TemporaryDirectory(dir=model_root) as tmp:
+        with tempfile.TemporaryDirectory(dir=model_dir) as tmp:
             tar_path = Path(tmp) / "model.tar.bz2"
             _download(
-                url=_GH_TARBALL,
+                url=tarball_url,
                 dest=tar_path,
                 display_name="model.tar.bz2",
                 progress=progress,
@@ -151,12 +175,13 @@ def _fetch_tarball_fallback(
                     if extracted is None:
                         continue
                     data = extracted.read()
+                    spec.dest.parent.mkdir(parents=True, exist_ok=True)
                     spec.dest.write_bytes(data)
                     if spec.dest.stat().st_size != spec.expected_size:
                         spec.dest.unlink(missing_ok=True)
                         raise DownloadError(
-                            source=_GH_TARBALL,
+                            source=tarball_url,
                             reason=f"extracted {spec.dest.name} has wrong size",
                         )
     except (OSError, tarfile.TarError) as exc:
-        raise DownloadError(source=_GH_TARBALL, reason=str(exc)) from exc
+        raise DownloadError(source=tarball_url, reason=str(exc)) from exc

@@ -1,11 +1,11 @@
 """Orchestrator: hotkey → recorder → recognizer → paste, driven by the tray.
 
-Thread map: main thread runs the tray loop; the hook thread pumps Win32
-messages; PortAudio runs its own callback thread; the ASR worker owns the
-detector + recorder state machine so no locks are needed around them.
+Thread map: main thread runs the tray loop; the hook threads (keyboard and
+mouse) pump Win32 messages; PortAudio runs its own callback thread; the ASR
+worker owns the detector + recorder state machine so no locks are needed
+around them. Tray-driven control actions live in app.controls.
 """
 
-import dataclasses
 import logging
 import queue
 import threading
@@ -17,8 +17,10 @@ import numpy as np
 
 from app import __version__, winio, winutil
 from app.asr import Recognizer
-from app.config import Config, config_path, hotkey_vk, model_dir, save_config
+from app.config import MOUSE_VKS, Config, config_path, hotkey_vk, models_root, save_config
+from app.controls import Controls, ControlsDeps
 from app.downloader import ensure_model
+from app.emit import EmitSettings, emit_text
 from app.hotkey import HotkeyHook
 from app.hotkey_logic import (
     Action,
@@ -30,11 +32,15 @@ from app.hotkey_logic import (
     StartHold,
 )
 from app.indicator import Indicator
+from app.mousehook import MouseHook
 from app.recorder import Recorder
 from app.tray import Tray, TrayCallbacks, TrayState
 from app.update_flow import UpdateFlow
 
 log = logging.getLogger(__name__)
+
+_VK_DISABLED: int = 0
+_VK_ESCAPE: int = 0x1B
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,14 +70,18 @@ class CaptureHotkey:
 
 
 @dataclass(frozen=True, slots=True)
+class SetModel:
+    kind: str
+
+
+@dataclass(frozen=True, slots=True)
 class Shutdown:
     pass
 
 
-type WorkerMsg = KeyTransition | SetPaused | SetMic | SetHotkey | CaptureHotkey | Shutdown
-
-
-_VK_ESCAPE: int = 0x1B
+type WorkerMsg = (
+    KeyTransition | SetPaused | SetMic | SetHotkey | CaptureHotkey | SetModel | Shutdown
+)
 
 
 class DictationApp:
@@ -85,6 +95,7 @@ class DictationApp:
         self._recognizer: Recognizer | None = None
         self._recorder: Recorder | None = None
         self._hook: HotkeyHook | None = None
+        self._mouse_hook: MouseHook | None = None
         self._paused = False
         self._ready = False
         self._skip_hold = False
@@ -100,16 +111,32 @@ class DictationApp:
                 ).start(),
                 on_select_hotkey=lambda key: self._queue.put(SetHotkey(key=key)),
                 on_capture_hotkey=lambda: self._queue.put(CaptureHotkey()),
+                on_select_model=lambda kind: self._queue.put(SetModel(kind=kind)),
+                on_show_diagnostics=self._show_diagnostics,
             ),
             state_provider=self._tray_state,
         )
         self._updates = UpdateFlow(tray=self._tray, current_version=__version__)
+        self._controls = Controls(
+            ControlsDeps(
+                indicator=self._indicator,
+                tray=self._tray,
+                get_config=lambda: self._config,
+                set_config=self._set_config,
+                get_hooks=lambda: (self._hook, self._mouse_hook),
+                get_recorder=lambda: self._recorder,
+                rebuild_recorder=self._rebuild_recorder,
+                models_root=models_root(),
+                num_threads=lambda: self._config.num_threads,
+                language=lambda: self._config.language,
+            )
+        )
 
     def run(self) -> None:
-        files = ensure_model(model_dir(), progress=self._on_model_progress)
+        files = ensure_model(self._config.model, models_root(), self._on_model_progress)
         self._recognizer = Recognizer(
-            model=files.model,
-            tokens=files.tokens,
+            kind=self._config.model,
+            model_dir=files.directory,
             num_threads=self._config.num_threads,
             language=self._config.language,
         )
@@ -117,16 +144,27 @@ class DictationApp:
             device_name=self._config.mic,
             on_stream_error=lambda msg: log.warning("%s", msg),
         )
+        vk = hotkey_vk(self._config.hotkey)
         self._hook = HotkeyHook(
-            vk=hotkey_vk(self._config.hotkey),
+            vk=_VK_DISABLED if vk in MOUSE_VKS else vk,
             on_transition=self._on_transition,
         )
         self._hook.start_and_wait()
+        self._mouse_hook = MouseHook(
+            vk=vk if vk in MOUSE_VKS else _VK_DISABLED,
+            on_transition=self._on_transition,
+        )
+        self._mouse_hook.start_and_wait()
         worker = threading.Thread(target=self._worker, daemon=True, name="asr-worker")
         worker.start()
         self._ready = True
         self._updates.start_watcher(self._config.check_updates)
-        log.info("ready: hotkey=%s mic=%r", self._config.hotkey, self._config.mic)
+        log.info(
+            "ready: hotkey=%s mic=%r model=%s",
+            self._config.hotkey,
+            self._config.mic,
+            self._config.model,
+        )
         try:
             self._tray.run()
         finally:
@@ -153,7 +191,23 @@ class DictationApp:
             autostart=winutil.autostart_enabled(),
             current_mic=self._config.mic,
             current_hotkey=self._config.hotkey,
+            current_model=self._config.model,
         )
+
+    def _set_config(self, config: Config) -> None:
+        self._config = config
+        save_config(config_path(), config)
+
+    def _rebuild_recorder(self, name: str) -> Recorder:
+        if self._recorder is not None:
+            self._recorder.close()
+        self._recorder = Recorder(
+            device_name=name, on_stream_error=lambda msg: log.warning("%s", msg)
+        )
+        return self._recorder
+
+    def _show_diagnostics(self) -> None:
+        self._controls.show_diagnostics()
 
     # -- worker thread -------------------------------------------------------
 
@@ -178,11 +232,14 @@ class DictationApp:
                 self._paused = paused
                 log.info("paused=%s", paused)
             case SetMic(name=name):
-                self._swap_mic(name)
+                self._controls.swap_mic(name)
             case SetHotkey(key=key):
-                self._swap_hotkey(key)
+                self._controls.swap_hotkey(key)
+                self._skip_hold = False
             case CaptureHotkey():
-                self._start_key_capture()
+                self._controls.start_key_capture(self._on_captured_vk)
+            case SetModel(kind=kind):
+                self._swap_model(kind)
             case Shutdown():
                 self._stop_event.set()
                 self._tray.stop()
@@ -201,7 +258,11 @@ class DictationApp:
                 log.info("hold: recording started")
             case Click():
                 log.info("click: passing through native key")
-                winio.tap_key(hotkey_vk(self._config.hotkey))
+                vk = hotkey_vk(self._config.hotkey)
+                if vk in MOUSE_VKS:
+                    winio.tap_mouse_x(vk)
+                else:
+                    winio.tap_key(vk)
             case EndHold(duration_ms=duration):
                 log.info("hold: ended after %d ms", duration)
                 self._finish_hold()
@@ -230,74 +291,25 @@ class DictationApp:
         text = recognizer.transcribe(audio)
         log.info("asr: %r", text)
         if text:
-            self._emit_text(text)  # each branch settles the indicator itself
+            emit_text(
+                text,
+                EmitSettings(
+                    restore_clipboard=self._config.restore_clipboard,
+                    paste_delay_ms=self._config.paste_delay_ms,
+                ),
+                self._indicator,
+            )
         else:
             self._indicator.hide()
 
-    def _emit_text(self, text: str) -> None:
-        log.info("emit: target window %r", winio.foreground_window_title())
-        winio.set_clipboard_text(text)  # always staged: manual Ctrl+V also works
-        if winio.keyboard_injection_alive():
-            try:
-                winio.paste_text(
-                    text,
-                    restore_clipboard=self._config.restore_clipboard,
-                    delay_ms=self._config.paste_delay_ms,
-                )
-            except (winio.PasteError, OSError):
-                log.warning("emit: keys path failed, trying WM_PASTE")
-            else:
-                log.info("emit: delivered via injected Ctrl+V")
-                self._indicator.hide()
-                return
-        if winio.post_wm_paste_to_focus():
-            log.info("emit: posted WM_PASTE to focused control")
-            self._indicator.flash("已粘贴（本机拦截键盘注入）", 1200)
-        else:
-            log.warning("emit: no delivery channel — text is on the clipboard")
-            self._indicator.flash("已复制到剪贴板，请手动 Ctrl+V", 2500)
-
-    def _swap_mic(self, name: str) -> None:
-        if self._recorder is None:
-            return
-        self._recorder.close()
-        self._recorder = Recorder(
-            device_name=name, on_stream_error=lambda msg: log.warning("%s", msg)
-        )
-        self._config = dataclasses.replace(self._config, mic=name)
-        save_config(config_path(), self._config)
-        self._tray.refresh_menu()
-        log.info("mic switched to %r", name)
-
-    def _swap_hotkey(self, key: str | int) -> None:
-        """Retarget the live hook to a new key and persist the choice."""
-        if key == self._config.hotkey:
-            return
-        try:
-            vk = hotkey_vk(key)
-        except (KeyError, TypeError):
-            log.warning("hotkey %r is not a preset or VK integer; ignored", key)
-            return
-        if self._hook is not None:
-            self._hook.retarget(vk)
-        self._config = dataclasses.replace(self._config, hotkey=key)
-        save_config(config_path(), self._config)
-        self._tray.refresh_menu()
-        self._skip_hold = False  # a half-finished hold cannot survive the switch
-        label = winio.key_name(vk) if isinstance(key, int) else key
-        log.info("hotkey switched to %r (vk=0x%02X)", label, vk)
-        self._indicator.flash(f"热键已切换：{label}", 1200)
-
-    def _start_key_capture(self) -> None:
-        """Prompt the user to press an arbitrary key, then switch to it."""
-        if self._hook is None:
-            return
-        self._indicator.show("请按下新的热键（Esc 取消）…")
-        self._hook.arm_capture(self._on_captured_vk)
+    def _swap_model(self, kind: str) -> None:
+        recognizer = self._controls.swap_model(kind)
+        if recognizer is not None:
+            self._recognizer = recognizer
 
     def _on_captured_vk(self, vk: int) -> None:
         """Hook-thread callback: route the captured key through the worker."""
-        if vk == _VK_ESCAPE:  # Esc cancels without changing anything
+        if vk == _VK_ESCAPE:
             self._indicator.hide()
             return
         self._queue.put(SetHotkey(key=vk))
@@ -308,6 +320,8 @@ class DictationApp:
         self._updates.stop()
         if self._hook is not None:
             self._hook.stop()
+        if self._mouse_hook is not None:
+            self._mouse_hook.stop()
         if self._recorder is not None:
             self._recorder.close()
         self._indicator.quit()

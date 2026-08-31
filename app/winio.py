@@ -25,6 +25,7 @@ _GMEM_MOVEABLE: int = 0x0002
 _CLIPBOARD_OPEN_RETRIES: int = 20
 _CLIPBOARD_OPEN_RETRY_DELAY_S: float = 0.05
 _UNICODE_EVENTS_PER_CHAR: int = 2  # key down + key up
+_SEND_INPUT_EVENTS_PER_CLICK: int = 2  # button down + button up
 
 
 class PasteError(Exception):
@@ -103,6 +104,8 @@ user32.MapVirtualKeyW.restype = wintypes.UINT
 user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
 user32.GetKeyNameTextW.restype = ctypes.c_int
 user32.GetKeyNameTextW.argtypes = (wintypes.LPARAM, wintypes.LPWSTR, ctypes.c_int)
+user32.GetClassNameW.restype = ctypes.c_int
+user32.GetClassNameW.argtypes = (ctypes.c_void_p, wintypes.LPWSTR, ctypes.c_int)
 shell32 = ctypes.WinDLL("shell32")
 shell32.SHQueryUserNotificationState.argtypes = (ctypes.POINTER(ctypes.c_int),)
 shell32.SHQueryUserNotificationState.restype = ctypes.HRESULT
@@ -286,6 +289,39 @@ def key_name(vk: int) -> str:
     if written > 0:
         return buffer.value
     return f"VK 0x{vk:02X}"
+
+
+_MOUSEEVENTF_XDOWN: int = 0x0080
+_MOUSEEVENTF_XUP: int = 0x0100
+_XBUTTON1_DATA: int = 0x0001
+_XBUTTON2_DATA: int = 0x0002
+
+
+_VK_XBUTTON1: int = 0x05
+
+
+def tap_mouse_x(vk: int) -> None:
+    """Re-synthesize a side-button click (native back/forward) for click passthrough."""
+    data = _XBUTTON1_DATA if vk == _VK_XBUTTON1 else _XBUTTON2_DATA
+    entry = _INPUT(type=0)  # INPUT_MOUSE
+    entry.mi = _MOUSEINPUT(
+        dx=0, dy=0, mouseData=data, dwFlags=_MOUSEEVENTF_XDOWN, time=0, dwExtraInfo=0
+    )
+    sent = user32.SendInput(1, ctypes.byref(entry), ctypes.sizeof(_INPUT))
+    entry.mi.dwFlags = _MOUSEEVENTF_XUP
+    sent += user32.SendInput(1, ctypes.byref(entry), ctypes.sizeof(_INPUT))
+    if sent != _SEND_INPUT_EVENTS_PER_CLICK:
+        raise PasteError(api="SendInput(xbutton)", code=ctypes.get_last_error())
+
+
+def focused_control_class() -> str:
+    """Class name of the focused control (empty when no focus can be resolved)."""
+    focus = focused_control_hwnd()
+    if not focus:
+        return ""
+    buffer = ctypes.create_unicode_buffer(128)
+    written = user32.GetClassNameW(focus, buffer, 128)
+    return buffer.value if written > 0 else ""
 
 
 def _send_key(vk: int, *, up: bool) -> None:

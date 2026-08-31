@@ -13,65 +13,84 @@ def _fake_progress(_name: str, _done: int, _total: int) -> None:
     pass
 
 
+def _spec_map(kind: str) -> dict[str, int]:
+    return {dest: size for _url, dest, size in dl._MODEL_FILES[kind]}
+
+
 def test_ensure_model_reuses_complete_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(dl, "MODEL_SIZE", 4)
-    monkeypatch.setattr(dl, "TOKENS_SIZE", 2)
-    (tmp_path / "model.onnx").write_bytes(b"mode")  # exactly MODEL_SIZE bytes
-    (tmp_path / "tokens.txt").write_bytes(b"tk")
+    model_dir = tmp_path / "sensevoice"
+    model_dir.mkdir()
+    for dest, size in _spec_map("sensevoice").items():
+        p = model_dir / dest
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"x" * size)
+    def _noop_fetch(_spec: dl._FileSpec, _progress: dl.ProgressFn) -> None:
+        pass
 
-    files = ensure_model(tmp_path, progress=_fake_progress)
+    def _forbid_tarball(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("should not fetch tarball")
 
-    assert files == ModelFiles(model=tmp_path / "model.onnx", tokens=tmp_path / "tokens.txt")
+    monkeypatch.setattr(dl, "_fetch", _noop_fetch)
+    monkeypatch.setattr(dl, "_fetch_tarball_fallback", _forbid_tarball)
+    files = ensure_model("sensevoice", tmp_path, progress=_fake_progress)
+    assert files == ModelFiles(kind="sensevoice", directory=model_dir)
 
 
 def test_tarball_fallback_extracts_missing_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    model_bytes = b"M" * 8
-    tokens_bytes = b"T" * 4
+    nano_specs = _spec_map("funasr_nano")
+    contents = {
+        dest: (f"payload-{dest}" * 10).encode()[:size].ljust(size, b"0")
+        for dest, size in nano_specs.items()
+    }
     tar_bytes = io.BytesIO()
     with tarfile.open(fileobj=tar_bytes, mode="w:bz2") as tar:
-        for name, payload in (
-            ("pkg/model.int8.onnx", model_bytes),
-            ("pkg/tokens.txt", tokens_bytes),
-        ):
+        for name, payload in contents.items():
             info = tarfile.TarInfo(name=name)
             info.size = len(payload)
             tar.addfile(info, io.BytesIO(payload))
     synthetic_tar = tmp_path / "synthetic.tar.bz2"
     synthetic_tar.write_bytes(tar_bytes.getvalue())
 
-    monkeypatch.setattr(dl, "MODEL_SIZE", len(model_bytes))
-    monkeypatch.setattr(dl, "TOKENS_SIZE", len(tokens_bytes))
-    monkeypatch.setattr(dl, "_HF_BASE", "https://127.0.0.1:1/nope")  # force direct failure
+    monkeypatch.setattr(
+        dl,
+        "_MODEL_FILES",
+        {
+            "funasr_nano": tuple(
+                (f"https://127.0.0.1:1/{dest}", dest, size)
+                for dest, size in nano_specs.items()
+            )
+        },
+    )
 
     def fake_download(
         url: str, dest: Path, display_name: str, progress: dl.ProgressFn, expected_size: int | None
     ) -> None:
-        if url != dl._GH_TARBALL:
+        if url != dl._MODEL_TARBALLS["funasr_nano"]:
             raise DownloadError(source=url, reason="primary down in test")
         dest.write_bytes(synthetic_tar.read_bytes())
 
     monkeypatch.setattr(dl, "_download", fake_download)
 
-    files = ensure_model(tmp_path, progress=_fake_progress)
+    files = ensure_model("funasr_nano", tmp_path, progress=_fake_progress)
 
-    assert files.model.read_bytes() == model_bytes
-    assert files.tokens.read_bytes() == tokens_bytes
+    for dest, payload in contents.items():
+        assert (files.directory / dest).read_bytes() == payload
 
 
 def test_all_sources_failing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(dl, "MODEL_SIZE", 4)
-    monkeypatch.setattr(dl, "TOKENS_SIZE", 2)
+    def _fail_fetch(spec: dl._FileSpec, _progress: dl.ProgressFn) -> None:
+        raise DownloadError(source=spec.url, reason="down")
 
-    def always_fail(
-        url: str, dest: Path, display_name: str, progress: dl.ProgressFn, expected_size: int | None
-    ) -> None:
-        raise DownloadError(source=url, reason="down")
+    monkeypatch.setattr(dl, "_fetch", _fail_fetch)
 
-    monkeypatch.setattr(dl, "_download", always_fail)
+    def fail_tarball(model_dir: Path, specs: list, progress: dl.ProgressFn) -> None:
+        raise DownloadError(source="tarball", reason="down")
+
+    monkeypatch.setattr(dl, "_fetch_tarball_fallback", fail_tarball)
 
     with pytest.raises(DownloadError):
-        ensure_model(tmp_path, progress=_fake_progress)
+        ensure_model("sensevoice", tmp_path, progress=_fake_progress)

@@ -15,8 +15,9 @@ Windows 托盘常驻的离线语音听写工具：**按住 CapsLock 说话，松
 - 纯本地识别（SenseVoice-Small，CPU 实时 25 倍速），无网可用，不依赖任何云服务和网盘
 - 中英混说（"开个 PR"、"看下 README"）
 - 单击 CapsLock 仍是大小写切换（原功能不破坏）
-- 托盘菜单：暂停热键 / 选麦克风 / **换热键（CapsLock、F2-F8、Scroll Lock，即时生效）** / 开机自启 / 检查更新 / 退出
+- 托盘菜单：暂停热键 / 选麦克风 / **换热键（CapsLock、F2-F8、Scroll Lock、鼠标侧键 X1/X2、自定义任意键）** / 换模型（SenseVoice-Small / FunASR-Nano） / 开机自启 / 检查更新 / 退出
 - 版本升级：启动与每 24 小时静默检查 GitHub Release，新版托盘提示，一键直达下载页（`check_updates` 可关）
+- 上屏通道自动降级：键盘注入 → WM_PASTE → UIA → 剪贴板提示
 
 ## 首次使用（最终用户）
 

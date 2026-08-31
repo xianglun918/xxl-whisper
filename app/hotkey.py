@@ -153,7 +153,7 @@ class HotkeyHook(threading.Thread):
             injected = kb.flags & (_LLKHF_INJECTED | _LLKHF_LOWER_IL_INJECTED)
             if not injected and self._capture_filter(kb.vkCode, wparam):
                 return 1  # swallow the captured key
-            if kb.vkCode == self._vk and not injected:
+            if kb.vkCode == self._vk and self._vk and not injected:
                 pressed = wparam in (_WM_KEYDOWN, _WM_SYSKEYDOWN)
                 self._emit_transition(pressed)
                 return 1  # suppress the native key function

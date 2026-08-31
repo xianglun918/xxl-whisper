@@ -27,12 +27,11 @@ def _load_samples(path: Path) -> np.ndarray:
 
 
 def test_transcribe_known_utterance() -> None:
-    model = model_dir() / "model.onnx"
-    tokens = model_dir() / "tokens.txt"
-    if not model.exists() or not tokens.exists():
+    sense_dir = model_dir()
+    if not (sense_dir / "model.onnx").exists() or not (sense_dir / "tokens.txt").exists():
         pytest.skip("model not downloaded")
 
-    recognizer = Recognizer(model=model, tokens=tokens, num_threads=2, language="zh")
+    recognizer = Recognizer(kind="sensevoice", model_dir=sense_dir, num_threads=2, language="zh")
     samples = _load_samples(Path(__file__).parent / "assets" / "zh_test.wav")
 
     text = recognizer.transcribe(samples)

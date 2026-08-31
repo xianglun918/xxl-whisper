@@ -10,9 +10,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import NoReturn
+from typing import Literal, NoReturn
 
 APP_DIR_NAME: str = "xxl-whisper"
+
+type ModelKind = Literal["sensevoice", "funasr_nano"]
 
 #: Preset hotkey names -> virtual-key codes; any other VK (1..254) is also
 #: accepted as a raw integer for user-defined keys. Keys that are dangerous
@@ -25,7 +27,17 @@ HOTKEY_VK: Mapping[str, int] = MappingProxyType(
         "f6": 0x75,
         "f8": 0x77,
         "scroll_lock": 0x91,
+        "mouse_x1": 0x05,  # VK_XBUTTON1 — mouse side button
+        "mouse_x2": 0x06,  # VK_XBUTTON2
     }
+)
+
+#: Buttons that live on the mouse, watched by the mouse LL hook instead of
+#: the keyboard LL hook.
+MOUSE_VKS: frozenset[int] = frozenset({0x05, 0x06})
+
+_MODELS: Mapping[str, None] = MappingProxyType(
+    {"sensevoice": None, "funasr_nano": None}
 )
 
 _MIN_CUSTOM_VK: int = 1
@@ -55,19 +67,21 @@ class Config:
     restore_clipboard: bool
     paste_delay_ms: int
     check_updates: bool
+    model: ModelKind
 
 
 def default_config() -> Config:
-    """First-run defaults: CapsLock push-to-talk, Chinese, 250 ms click cutoff."""
+    """First-run defaults: CapsLock push-to-talk, Chinese, 400 ms click cutoff."""
     return Config(
         hotkey="caps_lock",
-        hold_threshold_ms=250,
+        hold_threshold_ms=400,
         mic="",
         num_threads=2,
         language="zh",
         restore_clipboard=True,
         paste_delay_ms=200,
         check_updates=True,
+        model="sensevoice",
     )
 
 
@@ -85,7 +99,12 @@ def config_path() -> Path:
 
 def model_dir() -> Path:
     """Where the SenseVoice model artifacts live."""
-    return config_dir() / "models" / "sensevoice"
+    return models_root() / "sensevoice"
+
+
+def models_root() -> Path:
+    """Where model artifacts live (%LOCALAPPDATA%/xxl-whisper/models)."""
+    return config_dir() / "models"
 
 
 def hotkey_vk(hotkey: str | int) -> int:
@@ -113,6 +132,7 @@ def load_config(path: Path) -> Config:
         restore_clipboard=p.bool_flag("restore_clipboard", True),
         paste_delay_ms=p.int_in("paste_delay_ms", 200, 50, 2_000),
         check_updates=p.bool_flag("check_updates", True),
+        model=p.model_kind("model", "sensevoice"),
     )
 
 
@@ -128,6 +148,7 @@ def save_config(path: Path, config: Config) -> None:
         f"restore_clipboard = {str(config.restore_clipboard).lower()}",
         f"paste_delay_ms = {config.paste_delay_ms}",
         f"check_updates = {str(config.check_updates).lower()}",
+        f"model = {_quote(config.model)}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -160,6 +181,14 @@ class _Parser:
         if not isinstance(value, str) or value not in choices:
             self._fail(f"{name} must be one of: {', '.join(sorted(choices))}")
         return value
+
+    def model_kind(self, name: str, default: ModelKind) -> ModelKind:
+        value = self._raw.get(name, default)
+        if not isinstance(value, str) or value not in _MODELS:
+            self._fail(f"{name} must be one of: {', '.join(sorted(_MODELS))}")
+        if value == "sensevoice":
+            return "sensevoice"
+        return "funasr_nano"
 
     def hotkey(self, name: str, default: str | int) -> str | int:
         """Accept a preset name or a raw virtual-key code (1..254)."""

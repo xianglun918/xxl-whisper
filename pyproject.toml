@@ -1,6 +1,6 @@
 [project]
 name = "xxl-whisper"
-version = "0.3.2"
+version = "0.4.0"
 description = "Windows tray push-to-talk dictation: hold CapsLock, speak, release, Chinese text lands at the cursor. Fully offline (SenseVoice-Small via sherpa-onnx)."
 requires-python = ">=3.12"
 dependencies = [
@@ -49,6 +49,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "PLR2004", "D", "SLF001", "ARG001", "ANN"]
 "scripts/*" = ["T201", "INP001", "D"]  # dev probes print on purpose
+"app/uia.py" = ["N802"]  # uiautomation uses Win32-style CamelCase method names
 
 [tool.basedpyright]
 typeCheckingMode = "all"

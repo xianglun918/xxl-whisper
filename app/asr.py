@@ -1,10 +1,13 @@
-"""SenseVoice offline recognition via sherpa-onnx (CPU)."""
+"""SenseVoice / FunASR-Nano offline recognition via sherpa-onnx (CPU)."""
 
 import re
 from pathlib import Path
+from typing import assert_never
 
 import numpy as np
 import sherpa_onnx
+
+from app.config import ModelKind
 
 SAMPLE_RATE: int = 16_000
 
@@ -17,15 +20,33 @@ class Recognizer:
     """Wraps :class:`sherpa_onnx.OfflineRecognizer` for utterance-at-a-time use."""
 
     def __init__(
-        self, model: Path, tokens: Path, num_threads: int = 2, language: str = "zh"
+        self,
+        kind: ModelKind,
+        model_dir: Path,
+        num_threads: int = 2,
+        language: str = "zh",
     ) -> None:
-        self._recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
-            model=str(model),
-            tokens=str(tokens),
-            num_threads=num_threads,
-            language=language,
-            use_itn=True,
-        )
+        self.kind = kind
+        match kind:
+            case "sensevoice":
+                self._recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+                    model=str(model_dir / "model.onnx"),
+                    tokens=str(model_dir / "tokens.txt"),
+                    num_threads=num_threads,
+                    language=language,
+                    use_itn=True,
+                )
+            case "funasr_nano":
+                self._recognizer = sherpa_onnx.OfflineRecognizer.from_funasr_nano(
+                    encoder_adaptor=str(model_dir / "encoder_adaptor.int8.onnx"),
+                    llm=str(model_dir / "llm.int8.onnx"),
+                    embedding=str(model_dir / "embedding.int8.onnx"),
+                    tokenizer=str(model_dir / "Qwen3-0.6B"),
+                    num_threads=num_threads,
+                    language=language,
+                )
+            case unreachable:
+                assert_never(unreachable)
 
     def transcribe(self, samples: np.ndarray) -> str:
         """Decode one utterance of float32 mono samples at 16 kHz."""

@@ -17,6 +17,13 @@ _HOTKEY_LABELS = {
     "f6": "F6",
     "f8": "F8",
     "scroll_lock": "Scroll Lock",
+    "mouse_x1": "鼠标侧键 X1",
+    "mouse_x2": "鼠标侧键 X2",
+}
+
+_MODEL_LABELS = {
+    "sensevoice": "SenseVoice-Small（默认 · 230MB · 快）",
+    "funasr_nano": "FunASR-Nano（更准 · 约 1GB · 首次需下载）",
 }
 
 
@@ -35,6 +42,8 @@ class TrayCallbacks:
     on_check_update: Callable[[], None]
     on_select_hotkey: Callable[[str | int], None]
     on_capture_hotkey: Callable[[], None]
+    on_select_model: Callable[[str], None]
+    on_show_diagnostics: Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +53,7 @@ class TrayState:
     autostart: bool
     current_mic: str
     current_hotkey: str | int
+    current_model: str
 
 
 class Tray:
@@ -94,10 +104,15 @@ class Tray:
                 pystray.Menu(self._hotkey_items),
             ),
             pystray.MenuItem(
+                "模型",
+                pystray.Menu(self._model_items),
+            ),
+            pystray.MenuItem(
                 "开机自启",
                 self._callbacks.on_toggle_autostart,
                 checked=lambda _item: self._state_provider().autostart,
             ),
+            pystray.MenuItem("输入诊断", self._callbacks.on_show_diagnostics),
             pystray.MenuItem("检查更新", self._callbacks.on_check_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", self._callbacks.on_exit),
@@ -149,6 +164,32 @@ class Tray:
             return self._state_provider().current_hotkey == key
 
         return checked
+
+    def _select_model(self, kind: str) -> Callable[[], None]:
+        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
+
+        def action() -> None:
+            self._callbacks.on_select_model(kind)
+
+        return action
+
+    def _model_checked(self, kind: str) -> Callable[[object], bool]:
+        def checked(_item: object) -> bool:
+            return self._state_provider().current_model == kind
+
+        return checked
+
+    def _model_items(self) -> list[pystray.MenuItem]:
+        """Model choices; pystray re-evaluates this on each menu open."""
+        return [
+            pystray.MenuItem(
+                label,
+                self._select_model(kind),
+                checked=self._model_checked(kind),
+                radio=True,
+            )
+            for kind, label in _MODEL_LABELS.items()
+        ]
 
     def _hotkey_items(self) -> list[pystray.MenuItem]:
         """Hotkey presets plus a custom-key capture entry; re-evaluated per open."""
