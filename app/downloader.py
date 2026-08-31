@@ -5,12 +5,15 @@ sherpa-onnx team's model exports. Fallback is the GitHub release tarballs.
 Each supported model lives in its own directory under the models root.
 """
 
+import logging
 import tarfile
 import tempfile
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 _HF_SENSEVOICE: str = (
     "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
@@ -27,6 +30,11 @@ _GH_TARBALL_SENSEVOICE: str = (
 _GH_TARBALL_FUNASR_NANO: str = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
     "/sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2"
+)
+#: Our own backup of the default model, independent of hf-mirror and k2-fsa.
+_GH_BACKUP_SENSEVOICE: str = (
+    "https://github.com/xianglun918/xxl-whisper/releases/download/models"
+    "/sensevoice-backup.tar.bz2"
 )
 
 ProgressFn = Callable[[str, int, int], None]  # (filename, downloaded_bytes, total_bytes)
@@ -72,9 +80,16 @@ _MODEL_FILES: dict[str, tuple[tuple[str, str, int], ...]] = {
     ),
 }
 
-_MODEL_TARBALLS: dict[str, str] = {
-    "sensevoice": _GH_TARBALL_SENSEVOICE,
-    "funasr_nano": _GH_TARBALL_FUNASR_NANO,
+_MODEL_TARBALLS: dict[str, tuple[str, ...]] = {
+    "sensevoice": (_GH_TARBALL_SENSEVOICE, _GH_BACKUP_SENSEVOICE),
+    "funasr_nano": (_GH_TARBALL_FUNASR_NANO,),
+}
+
+#: Tarball member name -> on-disk filename, where upstream tarballs use a
+#: different name than we store (k2-fsa ships model.int8.onnx; we save model.onnx).
+_TARBALL_MEMBER_ALIASES: dict[str, dict[str, str]] = {
+    "sensevoice": {"model.int8.onnx": "model.onnx"},
+    "funasr_nano": {},
 }
 
 
@@ -173,38 +188,66 @@ def _download(
 def _fetch_tarball_fallback(
     model_dir: Path, specs: list[_FileSpec], progress: ProgressFn
 ) -> None:
-    """Extract model files from the GitHub release tarball."""
+    """Extract model files from a release tarball, trying each source in order."""
     kind = model_dir.name
-    tarball_url = _MODEL_TARBALLS.get(kind)
-    if tarball_url is None:
+    tarball_urls = _MODEL_TARBALLS.get(kind)
+    if not tarball_urls:
         raise DownloadError(source="all", reason=f"no tarball fallback for {kind}")
-    wanted = {spec.dest.name: spec for spec in specs}
-    try:
-        with tempfile.TemporaryDirectory(dir=model_dir) as tmp:
-            tar_path = Path(tmp) / "model.tar.bz2"
-            _download(
-                url=tarball_url,
-                dest=tar_path,
-                display_name="model.tar.bz2",
-                progress=progress,
-                expected_size=None,
-            )
-            with tarfile.open(tar_path, "r:bz2") as tar:
-                for member in tar.getmembers():
-                    spec = wanted.get(Path(member.name).name)
-                    if spec is None or _is_complete(spec):
-                        continue
-                    extracted = tar.extractfile(member)
-                    if extracted is None:
-                        continue
-                    data = extracted.read()
-                    spec.dest.parent.mkdir(parents=True, exist_ok=True)
-                    spec.dest.write_bytes(data)
-                    if spec.dest.stat().st_size != spec.expected_size:
-                        spec.dest.unlink(missing_ok=True)
-                        raise DownloadError(
-                            source=tarball_url,
-                            reason=f"extracted {spec.dest.name} has wrong size",
-                        )
-    except (OSError, tarfile.TarError) as exc:
-        raise DownloadError(source=tarball_url, reason=str(exc)) from exc
+    wanted = _member_to_spec(specs, kind)
+    last_error: DownloadError | None = None
+    for tarball_url in tarball_urls:
+        try:
+            _extract_tarball(tarball_url, model_dir, wanted, progress)
+        except (OSError, tarfile.TarError) as exc:
+            last_error = DownloadError(source=tarball_url, reason=str(exc))
+            log.info("tarball source failed, trying next: %s", exc)
+        else:
+            return
+    raise last_error if last_error is not None else DownloadError(
+        source="all", reason=f"no tarball fallback for {kind}"
+    )
+
+
+def _member_to_spec(specs: list[_FileSpec], kind: str) -> dict[str, _FileSpec]:
+    """Map every possible tarball member name to its file spec."""
+    aliases = _TARBALL_MEMBER_ALIASES.get(kind, {})
+    wanted: dict[str, _FileSpec] = {spec.dest.name: spec for spec in specs}
+    for member_name, dest_name in aliases.items():
+        for spec in specs:
+            if spec.dest.name == dest_name:
+                wanted[member_name] = spec
+    return wanted
+
+
+def _extract_tarball(
+    tarball_url: str,
+    model_dir: Path,
+    wanted: dict[str, _FileSpec],
+    progress: ProgressFn,
+) -> None:
+    with tempfile.TemporaryDirectory(dir=model_dir) as tmp:
+        tar_path = Path(tmp) / "model.tar.bz2"
+        _download(
+            url=tarball_url,
+            dest=tar_path,
+            display_name="model.tar.bz2",
+            progress=progress,
+            expected_size=None,
+        )
+        with tarfile.open(tar_path, "r:bz2") as tar:
+            for member in tar.getmembers():
+                spec = wanted.get(Path(member.name).name)
+                if spec is None or _is_complete(spec):
+                    continue
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    continue
+                data = extracted.read()
+                spec.dest.parent.mkdir(parents=True, exist_ok=True)
+                spec.dest.write_bytes(data)
+                if spec.dest.stat().st_size != spec.expected_size:
+                    spec.dest.unlink(missing_ok=True)
+                    raise DownloadError(
+                        source=tarball_url,
+                        reason=f"extracted {spec.dest.name} has wrong size",
+                    )

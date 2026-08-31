@@ -69,7 +69,7 @@ def test_tarball_fallback_extracts_missing_files(
     def fake_download(
         url: str, dest: Path, display_name: str, progress: dl.ProgressFn, expected_size: int | None
     ) -> None:
-        if url != dl._MODEL_TARBALLS["funasr_nano"]:
+        if url not in dl._MODEL_TARBALLS["funasr_nano"]:
             raise DownloadError(source=url, reason="primary down in test")
         dest.write_bytes(synthetic_tar.read_bytes())
 
@@ -101,3 +101,13 @@ def test_manual_download_guide_lists_files_and_urls() -> None:
     assert "llm.int8.onnx" in guide
     assert "Qwen3-0.6B" in guide
     assert "https://hf-mirror.com/" in guide
+
+def test_member_to_spec_handles_sensevoice_alias() -> None:
+    specs = [
+        dl._FileSpec(url="x", dest=Path("model.onnx"), expected_size=1),
+        dl._FileSpec(url="y", dest=Path("tokens.txt"), expected_size=1),
+    ]
+    wanted = dl._member_to_spec(specs, "sensevoice")
+    # k2-fsa ships model.int8.onnx; our backup ships model.onnx — both must map.
+    assert wanted["model.int8.onnx"] is wanted["model.onnx"]
+    assert wanted["tokens.txt"] is specs[1]
