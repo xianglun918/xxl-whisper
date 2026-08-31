@@ -10,6 +10,8 @@ _APP_NAME = "xxl-whisper"
 _MUTEX_NAME = "Local\\xxl-whisper-single-instance"
 _ERROR_ALREADY_EXISTS = 183
 _IDYES = 6
+_MB_SETFOREGROUND = 0x00010000
+_MB_TOPMOST = 0x00040000
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -64,13 +66,15 @@ def show_error(message: str) -> None:
 
 def ask_yes_no(message: str, title: str = "xxl-whisper") -> bool:
     """Non-fatal question dialog; True when the user picks Yes."""
-    result = user32.MessageBoxW(None, message, title, 0x00000024)  # ICONINFO|YESNO
+    flags = 0x00000024 | _MB_SETFOREGROUND | _MB_TOPMOST  # ICONQUESTION|YESNO
+    result = user32.MessageBoxW(None, message, title, flags)
     return result == _IDYES
 
 
 def show_info(message: str, title: str = "xxl-whisper") -> None:
     """Non-fatal informational dialog."""
-    user32.MessageBoxW(None, message, title, 0x00000040)  # MB_ICONINFORMATION
+    flags = 0x00000040 | _MB_SETFOREGROUND | _MB_TOPMOST  # MB_ICONINFORMATION
+    user32.MessageBoxW(None, message, title, flags)
 
 
 def set_dpi_awareness() -> None:

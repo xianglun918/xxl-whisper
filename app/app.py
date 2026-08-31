@@ -115,7 +115,7 @@ class DictationApp:
                 on_select_hotkey=lambda key: self._queue.put(SetHotkey(key=key)),
                 on_capture_hotkey=lambda: self._queue.put(CaptureHotkey()),
                 on_select_model=lambda kind: self._queue.put(SetModel(kind=kind)),
-                on_show_diagnostics=self._show_diagnostics,
+                on_show_diagnostics=self._show_diagnostics_deferred,
             ),
             state_provider=self._tray_state,
         )
@@ -214,6 +214,19 @@ class DictationApp:
         return self._recorder
 
     def _show_diagnostics(self) -> None:
+        self._controls.show_diagnostics()
+
+    def _show_diagnostics_deferred(self) -> None:
+        """Show diagnostics after the tray menu closes.
+
+        A modal MessageBox shown inline from the menu handler races the menu's
+        own popup loop (a Windows reentrancy), leaving the dialog unresponsive
+        to clicks. A short delay on a worker thread sidesteps it.
+        """
+        threading.Thread(target=self._delayed_diagnostics, daemon=True).start()
+
+    def _delayed_diagnostics(self) -> None:
+        time.sleep(0.2)
         self._controls.show_diagnostics()
 
     # -- worker thread -------------------------------------------------------
