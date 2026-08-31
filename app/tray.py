@@ -15,6 +15,7 @@ class TrayCallbacks:
     on_toggle_pause: Callable[[], None]
     on_select_mic: Callable[[str], None]
     on_toggle_autostart: Callable[[], None]
+    on_check_update: Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,8 +45,8 @@ class Tray:
     def stop(self) -> None:
         self._icon.stop()
 
-    def notify(self, message: str) -> None:
-        self._icon.notify(message, title="xxl-whisper")
+    def notify(self, message: str, title: str = "xxl-whisper") -> None:
+        self._icon.notify(message, title)
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
@@ -69,6 +70,7 @@ class Tray:
                 self._callbacks.on_toggle_autostart,
                 checked=lambda _item: self._state_provider().autostart,
             ),
+            pystray.MenuItem("检查更新", self._callbacks.on_check_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", self._callbacks.on_exit),
         )

@@ -15,7 +15,7 @@ from typing import assert_never
 
 import numpy as np
 
-from app import winio, winutil
+from app import __version__, winio, winutil
 from app.asr import Recognizer
 from app.config import HOTKEY_VK, Config, config_path, model_dir, save_config
 from app.downloader import ensure_model
@@ -32,6 +32,7 @@ from app.hotkey_logic import (
 from app.indicator import Indicator
 from app.recorder import Recorder
 from app.tray import Tray, TrayCallbacks, TrayState
+from app.update_flow import UpdateFlow
 
 log = logging.getLogger(__name__)
 
@@ -81,9 +82,13 @@ class DictationApp:
                 on_toggle_pause=lambda: self._queue.put(SetPaused(not self._paused)),
                 on_select_mic=lambda name: self._queue.put(SetMic(name=name)),
                 on_toggle_autostart=self._on_toggle_autostart,
+                on_check_update=lambda: threading.Thread(
+                    target=self._updates.manual_check, daemon=True
+                ).start(),
             ),
             state_provider=self._tray_state,
         )
+        self._updates = UpdateFlow(tray=self._tray, current_version=__version__)
 
     def run(self) -> None:
         files = ensure_model(model_dir(), progress=self._on_model_progress)
@@ -105,6 +110,7 @@ class DictationApp:
         worker = threading.Thread(target=self._worker, daemon=True, name="asr-worker")
         worker.start()
         self._ready = True
+        self._updates.start_watcher(self._config.check_updates)
         log.info("ready: hotkey=%s mic=%r", self._config.hotkey, self._config.mic)
         try:
             self._tray.run()
@@ -245,6 +251,7 @@ class DictationApp:
     def _teardown(self) -> None:
         log.info("shutting down")
         self._stop_event.set()
+        self._updates.stop()
         if self._hook is not None:
             self._hook.stop()
         if self._recorder is not None:

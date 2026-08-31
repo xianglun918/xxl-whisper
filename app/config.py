@@ -50,6 +50,7 @@ class Config:
     language: str
     restore_clipboard: bool
     paste_delay_ms: int
+    check_updates: bool
 
 
 def default_config() -> Config:
@@ -62,6 +63,7 @@ def default_config() -> Config:
         language="zh",
         restore_clipboard=True,
         paste_delay_ms=200,
+        check_updates=True,
     )
 
 
@@ -99,6 +101,7 @@ def load_config(path: Path) -> Config:
         language=p.choice("language", "zh", _LANGUAGES),
         restore_clipboard=p.bool_flag("restore_clipboard", True),
         paste_delay_ms=p.int_in("paste_delay_ms", 200, 50, 2_000),
+        check_updates=p.bool_flag("check_updates", True),
     )
 
 
@@ -113,6 +116,7 @@ def save_config(path: Path, config: Config) -> None:
         f"language = {_quote(config.language)}",
         f"restore_clipboard = {str(config.restore_clipboard).lower()}",
         f"paste_delay_ms = {config.paste_delay_ms}",
+        f"check_updates = {str(config.check_updates).lower()}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

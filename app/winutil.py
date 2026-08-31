@@ -9,13 +9,20 @@ _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _APP_NAME = "xxl-whisper"
 _MUTEX_NAME = "Local\\xxl-whisper-single-instance"
 _ERROR_ALREADY_EXISTS = 183
+_IDYES = 6
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 kernel32.CreateMutexW.restype = wintypes.HANDLE
 kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
-user32.MessageBoxW.argtypes = (wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT)
+user32.MessageBoxW.argtypes = (
+    wintypes.HWND,
+    wintypes.LPCWSTR,
+    wintypes.LPCWSTR,
+    wintypes.UINT,
+)
+user32.MessageBoxW.restype = ctypes.c_int
 
 _mutex_handle: wintypes.HANDLE | None = None  # module-global: keeps the mutex alive
 
@@ -53,6 +60,17 @@ def acquire_single_instance() -> bool:
 def show_error(message: str) -> None:
     """Fatal-error dialog for the process boundary."""
     user32.MessageBoxW(None, message, "xxl-whisper", 0x00000010)  # MB_ICONERROR
+
+
+def ask_yes_no(message: str, title: str = "xxl-whisper") -> bool:
+    """Non-fatal question dialog; True when the user picks Yes."""
+    result = user32.MessageBoxW(None, message, title, 0x00000024)  # ICONINFO|YESNO
+    return result == _IDYES
+
+
+def show_info(message: str, title: str = "xxl-whisper") -> None:
+    """Non-fatal informational dialog."""
+    user32.MessageBoxW(None, message, title, 0x00000040)  # MB_ICONINFORMATION
 
 
 def set_dpi_awareness() -> None:

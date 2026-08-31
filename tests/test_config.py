@@ -13,6 +13,7 @@ def test_missing_file_returns_defaults(tmp_path: Path) -> None:
     assert config.mic == ""
     assert config.language == "zh"
     assert config.restore_clipboard is True
+    assert config.check_updates is True
 
 
 def test_partial_file_merges_with_defaults(tmp_path: Path) -> None:
@@ -27,7 +28,8 @@ def test_partial_file_merges_with_defaults(tmp_path: Path) -> None:
 def test_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     original = Config(hotkey="f2", hold_threshold_ms=300, mic="Mic", num_threads=4,
-                      language="auto", restore_clipboard=False, paste_delay_ms=100)
+                      language="auto", restore_clipboard=False, paste_delay_ms=100,
+                      check_updates=False)
     save_config(path, original)
     assert load_config(path) == original
 
