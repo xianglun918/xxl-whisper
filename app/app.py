@@ -19,7 +19,7 @@ from app import __version__, winio, winutil
 from app.asr import Recognizer
 from app.config import MOUSE_VKS, Config, config_path, hotkey_vk, models_root, save_config
 from app.controls import Controls, ControlsDeps
-from app.downloader import ensure_model
+from app.downloader import DownloadError, ensure_model, manual_download_guide
 from app.emit import EmitSettings, emit_text
 from app.hotkey import HotkeyHook
 from app.hotkey_logic import (
@@ -75,12 +75,12 @@ class SetModel:
 
 
 @dataclass(frozen=True, slots=True)
-class Shutdown:
+class InitModel:
     pass
 
 
 type WorkerMsg = (
-    KeyTransition | SetPaused | SetMic | SetHotkey | CaptureHotkey | SetModel | Shutdown
+    KeyTransition | SetPaused | SetMic | SetHotkey | CaptureHotkey | SetModel | InitModel
 )
 
 
@@ -102,10 +102,11 @@ class DictationApp:
         self._holding = False
         self._hold_confirm_timer: threading.Timer | None = None
         self._model_downloaded = False
+        self._model_ready = False
         self._stop_event = threading.Event()
         self._tray = Tray(
             callbacks=TrayCallbacks(
-                on_exit=lambda: self._queue.put(Shutdown()),
+                on_exit=self._request_exit,
                 on_toggle_pause=lambda: self._queue.put(SetPaused(not self._paused)),
                 on_select_mic=lambda name: self._queue.put(SetMic(name=name)),
                 on_toggle_autostart=self._on_toggle_autostart,
@@ -136,13 +137,6 @@ class DictationApp:
         )
 
     def run(self) -> None:
-        files = ensure_model(self._config.model, models_root(), self._on_model_progress)
-        self._recognizer = Recognizer(
-            kind=self._config.model,
-            model_dir=files.directory,
-            num_threads=self._config.num_threads,
-            language=self._config.language,
-        )
         self._recorder = Recorder(
             device_name=self._config.mic,
             on_stream_error=lambda msg: log.warning("%s", msg),
@@ -160,17 +154,17 @@ class DictationApp:
         self._mouse_hook.start_and_wait()
         worker = threading.Thread(target=self._worker, daemon=True, name="asr-worker")
         worker.start()
+        # Model download + load run on the worker so the tray is responsive
+        # immediately and Exit can abort an in-flight download.
+        self._queue.put(InitModel())
         self._ready = True
         self._updates.start_watcher(self._config.check_updates)
         log.info(
-            "ready: hotkey=%s mic=%r model=%s",
+            "ready: hotkey=%s mic=%r model=%s (loading)",
             self._config.hotkey,
             self._config.mic,
             self._config.model,
         )
-        if self._model_downloaded:
-            self._indicator.flash("模型下载完成，可以开始使用了", 4000)
-            self._tray.notify("模型下载完成，可以开始使用了", title="xxl-whisper")
         try:
             self._tray.run()
         finally:
@@ -190,6 +184,16 @@ class DictationApp:
 
     def _on_toggle_autostart(self) -> None:
         winutil.set_autostart(not winutil.autostart_enabled())
+
+    def _request_exit(self) -> None:
+        """Stop the tray loop immediately; run() then tears the process down.
+
+        Runs on the tray menu thread. Stops the icon directly (rather than
+        routing through the worker, which may be blocked downloading) so Exit
+        always interrupts whatever the app is doing.
+        """
+        self._stop_event.set()
+        self._tray.stop()
 
     def _tray_state(self) -> TrayState:
         return TrayState(
@@ -260,16 +264,15 @@ class DictationApp:
                 self._controls.start_key_capture(self._on_captured_vk)
             case SetModel(kind=kind):
                 self._swap_model(kind)
-            case Shutdown():
-                self._stop_event.set()
-                self._tray.stop()
+            case InitModel():
+                self._init_model()
             case unreachable:
                 assert_never(unreachable)
 
     def _handle(self, action: Action) -> None:
         match action:
             case StartHold():
-                if self._paused or self._recorder is None:
+                if self._paused or self._recorder is None or not self._model_ready:
                     self._skip_hold = True
                     return
                 self._skip_hold = False
@@ -354,6 +357,32 @@ class DictationApp:
         recognizer = self._controls.swap_model(kind)
         if recognizer is not None:
             self._recognizer = recognizer
+
+    def _init_model(self) -> None:
+        """Download (if needed) and load the recognizer on the worker thread."""
+        try:
+            files = ensure_model(
+                self._config.model,
+                models_root(),
+                self._on_model_progress,
+                proxy=self._config.proxy,
+            )
+            self._recognizer = Recognizer(
+                kind=self._config.model,
+                model_dir=files.directory,
+                num_threads=self._config.num_threads,
+                language=self._config.language,
+            )
+        except DownloadError as exc:
+            log.warning("model download failed: %s", exc)
+            guide = manual_download_guide(self._config.model, models_root())
+            winutil.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
+            return
+        self._model_ready = True
+        log.info("model ready: %s", self._config.model)
+        if self._model_downloaded:
+            self._indicator.flash("模型下载完成，可以开始使用了", 4000)
+            self._tray.notify("模型下载完成，可以开始使用了", title="xxl-whisper")
 
     def _on_captured_vk(self, vk: int) -> None:
         """Hook-thread callback: route the captured key through the worker."""
