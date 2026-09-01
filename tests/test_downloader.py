@@ -67,11 +67,11 @@ def test_tarball_fallback_extracts_missing_files(
     )
 
     def fake_download(
-        url: str, dest: Path, display_name: str, progress: dl.ProgressFn, expected_size: int | None
+        spec: dl._FileSpec, progress: dl.ProgressFn, *, proxy: str = ""
     ) -> None:
-        if url not in dl._MODEL_TARBALLS["funasr_nano"]:
-            raise DownloadError(source=url, reason="primary down in test")
-        dest.write_bytes(synthetic_tar.read_bytes())
+        if spec.url not in dl._MODEL_TARBALLS["funasr_nano"]:
+            raise DownloadError(source=spec.url, reason="primary down in test")
+        spec.dest.write_bytes(synthetic_tar.read_bytes())
 
     monkeypatch.setattr(dl, "_download", fake_download)
 
@@ -82,12 +82,14 @@ def test_tarball_fallback_extracts_missing_files(
 
 
 def test_all_sources_failing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def _fail_fetch(spec: dl._FileSpec, _progress: dl.ProgressFn) -> None:
+    def _fail_fetch(spec: dl._FileSpec, _progress: dl.ProgressFn, *, proxy: str = "") -> None:
         raise DownloadError(source=spec.url, reason="down")
 
     monkeypatch.setattr(dl, "_fetch", _fail_fetch)
 
-    def fail_tarball(model_dir: Path, specs: list, progress: dl.ProgressFn) -> None:
+    def fail_tarball(
+        model_dir: Path, specs: list, progress: dl.ProgressFn, *, proxy: str = ""
+    ) -> None:
         raise DownloadError(source="tarball", reason="down")
 
     monkeypatch.setattr(dl, "_fetch_tarball_fallback", fail_tarball)

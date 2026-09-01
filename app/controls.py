@@ -128,7 +128,12 @@ class Controls:
             self._deps.indicator.progress(pct, f"下载模型 {name}")
 
         try:
-            files = ensure_model(kind, self._deps.models_root, _progress)
+            files = ensure_model(
+                kind,
+                self._deps.models_root,
+                _progress,
+                proxy=self._deps.get_config().proxy,
+            )
         except DownloadError as exc:
             log.warning("model download failed: %s", exc)
             self._deps.indicator.hide()

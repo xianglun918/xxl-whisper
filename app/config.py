@@ -68,6 +68,7 @@ class Config:
     paste_delay_ms: int
     check_updates: bool
     model: ModelKind
+    proxy: str
 
 
 def default_config() -> Config:
@@ -82,6 +83,7 @@ def default_config() -> Config:
         paste_delay_ms=200,
         check_updates=True,
         model="sensevoice",
+        proxy="",
     )
 
 
@@ -133,6 +135,7 @@ def load_config(path: Path) -> Config:
         paste_delay_ms=p.int_in("paste_delay_ms", 200, 50, 2_000),
         check_updates=p.bool_flag("check_updates", True),
         model=p.model_kind("model", "sensevoice"),
+        proxy=p.text("proxy", ""),
     )
 
 
@@ -149,6 +152,7 @@ def save_config(path: Path, config: Config) -> None:
         f"paste_delay_ms = {config.paste_delay_ms}",
         f"check_updates = {str(config.check_updates).lower()}",
         f"model = {_quote(config.model)}",
+        f"proxy = {_quote(config.proxy)}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

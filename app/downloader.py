@@ -61,7 +61,7 @@ class ModelFiles:
 class _FileSpec:
     url: str
     dest: Path
-    expected_size: int
+    expected_size: int | None  # None = skip the post-download size check
 
 
 #: Exact artifact sizes — a truncated download must never look complete.
@@ -93,7 +93,9 @@ _TARBALL_MEMBER_ALIASES: dict[str, dict[str, str]] = {
 }
 
 
-def ensure_model(kind: str, models_root: Path, progress: ProgressFn) -> ModelFiles:
+def ensure_model(
+    kind: str, models_root: Path, progress: ProgressFn, *, proxy: str = ""
+) -> ModelFiles:
     """Make sure the model's files exist locally; download what is missing."""
     files = _MODEL_FILES[kind]
     model_dir = models_root / kind
@@ -105,9 +107,9 @@ def ensure_model(kind: str, models_root: Path, progress: ProgressFn) -> ModelFil
     try:
         for spec in specs:
             if not _is_complete(spec):
-                _fetch(spec, progress)
+                _fetch(spec, progress, proxy=proxy)
     except DownloadError:
-        _fetch_tarball_fallback(models_root / kind, specs, progress)
+        _fetch_tarball_fallback(models_root / kind, specs, progress, proxy=proxy)
 
     for spec in specs:  # both sources failed for something still missing
         if not _is_complete(spec):
@@ -142,30 +144,23 @@ def _is_complete(spec: _FileSpec) -> bool:
     return spec.dest.exists() and spec.dest.stat().st_size == spec.expected_size
 
 
-def _fetch(spec: _FileSpec, progress: ProgressFn) -> None:
-    _download(
-        url=spec.url,
-        dest=spec.dest,
-        display_name=spec.dest.name,
-        progress=progress,
-        expected_size=spec.expected_size,
-    )
+def _fetch(spec: _FileSpec, progress: ProgressFn, *, proxy: str = "") -> None:
+    _download(spec, progress, proxy=proxy)
 
 
 def _download(
-    url: str,
-    dest: Path,
-    display_name: str,
-    progress: ProgressFn,
-    expected_size: int | None,
+    spec: _FileSpec, progress: ProgressFn, *, proxy: str = ""
 ) -> None:
     """Stream one URL to dest via a .part file; verify size when known."""
+    url, dest, expected_size = spec.url, spec.dest, spec.expected_size
+    display_name = dest.name
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
+    opener = _build_opener(proxy)
     try:
         with (
             # URLs are module-level https constants, not user input.
-            urllib.request.urlopen(url, timeout=60) as response,  # noqa: S310
+            opener.open(url, timeout=60) as response,
             part.open("wb") as out,
         ):
             header_size = response.headers.get("Content-Length")
@@ -185,8 +180,22 @@ def _download(
     part.replace(dest)
 
 
+def _build_opener(proxy: str) -> urllib.request.OpenerDirector:
+    """Build a urllib opener with an optional HTTP/HTTPS proxy.
+
+    When *proxy* is non-empty, both HTTP and HTTPS requests go through it.
+    Otherwise falls back to the default urllib behaviour (which honours
+    HTTP_PROXY / HTTPS_PROXY env vars if set).
+    """
+    if proxy:
+        handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+    else:
+        handler = urllib.request.ProxyHandler()  # respect env vars
+    return urllib.request.build_opener(handler)
+
+
 def _fetch_tarball_fallback(
-    model_dir: Path, specs: list[_FileSpec], progress: ProgressFn
+    model_dir: Path, specs: list[_FileSpec], progress: ProgressFn, *, proxy: str = ""
 ) -> None:
     """Extract model files from a release tarball, trying each source in order."""
     kind = model_dir.name
@@ -197,7 +206,7 @@ def _fetch_tarball_fallback(
     last_error: DownloadError | None = None
     for tarball_url in tarball_urls:
         try:
-            _extract_tarball(tarball_url, model_dir, wanted, progress)
+            _extract_tarball(tarball_url, model_dir, wanted, progress, proxy=proxy)
         except (OSError, tarfile.TarError) as exc:
             last_error = DownloadError(source=tarball_url, reason=str(exc))
             log.info("tarball source failed, trying next: %s", exc)
@@ -224,15 +233,19 @@ def _extract_tarball(
     model_dir: Path,
     wanted: dict[str, _FileSpec],
     progress: ProgressFn,
+    *,
+    proxy: str = "",
 ) -> None:
     with tempfile.TemporaryDirectory(dir=model_dir) as tmp:
         tar_path = Path(tmp) / "model.tar.bz2"
         _download(
-            url=tarball_url,
-            dest=tar_path,
-            display_name="model.tar.bz2",
-            progress=progress,
-            expected_size=None,
+            _FileSpec(
+                url=tarball_url,
+                dest=tar_path,
+                expected_size=None,
+            ),
+            progress,
+            proxy=proxy,
         )
         with tarfile.open(tar_path, "r:bz2") as tar:
             for member in tar.getmembers():

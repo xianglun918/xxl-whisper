@@ -53,6 +53,17 @@ Win32 消息；PortAudio 回调收音；单一 ASR worker 消费消息队列（�
 - 注意：modelscope 的 iic/SenseVoiceSmall-onnx 与 sherpa-onnx 轮子内置的 onnxruntime
   不兼容（ORT API 版本冲突），不要混用
 
+### 代理配置（内网环境）
+
+若你的网络需要代理才能访问外网，在配置文件中添加 `proxy` 项即可（重启生效）：
+
+```toml
+# %LOCALAPPDATA%\xxl-whisper\config.toml
+proxy = "http://你的代理地址:端口"
+```
+
+也可通过环境变量 `HTTPS_PROXY` / `HTTP_PROXY` 配置；配置文件中的 `proxy` 优先级高于环境变量；留空则使用环境变量/系统代理。
+
 ### 手动下载模型（内网 / 代理受限时）
 
 软件会自动下载模型；若网络受限导致下载失败，程序会弹窗提示。此时可手动访问以下

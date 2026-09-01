@@ -30,7 +30,7 @@ def test_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     original = Config(hotkey="f2", hold_threshold_ms=300, mic="Mic", num_threads=4,
                       language="auto", restore_clipboard=False, paste_delay_ms=100,
-                      check_updates=False, model="funasr_nano")
+                      check_updates=False, model="funasr_nano", proxy="http://proxy:7890")
     save_config(path, original)
     assert load_config(path) == original
 
@@ -46,7 +46,7 @@ def test_custom_vk_hotkey_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     original = Config(hotkey=0x2B, hold_threshold_ms=250, mic="", num_threads=2,
                       language="zh", restore_clipboard=True, paste_delay_ms=200,
-                      check_updates=True, model="sensevoice")
+                      check_updates=True, model="sensevoice", proxy="")
     save_config(path, original)
     assert load_config(path) == original
 
