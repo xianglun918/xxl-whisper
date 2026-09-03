@@ -110,7 +110,7 @@ class Tray:
                 pystray.Menu(self._model_items),
             ),
             pystray.MenuItem(
-                "语义顺滑（去嗯啊语气词）",
+                "语义顺滑",
                 self._callbacks.on_toggle_disfluency,
                 checked=lambda _item: self._state_provider().disfluency == "smooth",
             ),
