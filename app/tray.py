@@ -44,6 +44,7 @@ class TrayCallbacks:
     on_capture_hotkey: Callable[[], None]
     on_select_model: Callable[[str], None]
     on_show_diagnostics: Callable[[], None]
+    on_toggle_disfluency: Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +55,7 @@ class TrayState:
     current_mic: str
     current_hotkey: str | int
     current_model: str
+    disfluency: str
 
 
 class Tray:
@@ -106,6 +108,11 @@ class Tray:
             pystray.MenuItem(
                 "模型",
                 pystray.Menu(self._model_items),
+            ),
+            pystray.MenuItem(
+                "语义顺滑（去嗯啊语气词）",
+                self._callbacks.on_toggle_disfluency,
+                checked=lambda _item: self._state_provider().disfluency == "smooth",
             ),
             pystray.MenuItem(
                 "开机自启",

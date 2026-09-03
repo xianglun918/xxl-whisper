@@ -18,6 +18,7 @@ Windows 托盘常驻的离线语音听写工具：**按住 CapsLock 说话，松
 - 托盘菜单：暂停热键 / 选麦克风 / **换热键（CapsLock、F2-F8、Scroll Lock、鼠标侧键 X1/X2、自定义任意键）** / 换模型（SenseVoice-Small / FunASR-Nano） / 开机自启 / 检查更新 / 退出
 - 版本升级：启动与每 24 小时静默检查 GitHub Release，新版托盘提示，一键直达下载页（`check_updates` 可关）
 - 上屏通道自动降级：键盘注入 → WM_PASTE → UIA → 剪贴板提示
+- 语义顺滑：托盘一键开关，去「嗯/呃/啊」语气词、重复、口误（Fun-ASR-Nano，LLM 解码器原生能力）
 
 ## 首次使用（最终用户）
 
@@ -47,7 +48,8 @@ Win32 消息；PortAudio 回调收音；单一 ASR worker 消费消息队列（�
 
 - **SenseVoice-Small**（默认）：INT8 ONNX（239,233,841 字节）+ tokens.txt（315,894 字节）
 - **Fun-ASR-Nano**（可选，推荐新模型，精度更高）：encoder_adaptor / embedding / llm
-  三个 int8 ONNX（约 993MB）+ Qwen3-0.6B 分词器，中英混说与方言表现更优
+  三个 int8 ONNX（约 993MB）+ Qwen3-0.6B 分词器，中英混说与方言表现更优；
+  因是 LLM 解码器，支持「语义顺滑」（去语气词/重复/口误），托盘可一键开关
 - 来源：`hf-mirror.com`（主源，国内直连）→ GitHub release tar.bz2 兜底
 - 存放：`%LOCALAPPDATA%\xxl-whisper\models\<模型名>\`
 - 注意：modelscope 的 iic/SenseVoiceSmall-onnx 与 sherpa-onnx 轮子内置的 onnxruntime

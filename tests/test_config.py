@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from app.asr import _FUNASR_NANO_PROMPTS
 from app.config import Config, ConfigError, hotkey_vk, load_config, save_config
 
 
@@ -15,6 +16,7 @@ def test_missing_file_returns_defaults(tmp_path: Path) -> None:
     assert config.restore_clipboard is True
     assert config.check_updates is True
     assert config.model == "sensevoice"
+    assert config.disfluency == "verbatim"
 
 
 def test_partial_file_merges_with_defaults(tmp_path: Path) -> None:
@@ -30,7 +32,8 @@ def test_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     original = Config(hotkey="f2", hold_threshold_ms=300, mic="Mic", num_threads=4,
                       language="auto", restore_clipboard=False, paste_delay_ms=100,
-                      check_updates=False, model="funasr_nano", proxy="http://proxy:7890")
+                      check_updates=False, model="funasr_nano", proxy="http://proxy:7890",
+                      disfluency="smooth")
     save_config(path, original)
     assert load_config(path) == original
 
@@ -46,9 +49,16 @@ def test_custom_vk_hotkey_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     original = Config(hotkey=0x2B, hold_threshold_ms=250, mic="", num_threads=2,
                       language="zh", restore_clipboard=True, paste_delay_ms=200,
-                      check_updates=True, model="sensevoice", proxy="")
+                      check_updates=True, model="sensevoice", proxy="", disfluency="verbatim")
     save_config(path, original)
     assert load_config(path) == original
+
+
+def test_invalid_disfluency_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('disfluency = "aggressive"\n', encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(path)
 
 
 def test_custom_vk_hotkey_out_of_range_rejected(tmp_path: Path) -> None:
@@ -82,3 +92,8 @@ def test_malformed_toml_rejected(tmp_path: Path) -> None:
     path.write_text("not toml at all {{{", encoding="utf-8")
     with pytest.raises(ConfigError):
         load_config(path)
+
+def test_funasr_nano_prompts_differ_by_disfluency() -> None:
+    assert _FUNASR_NANO_PROMPTS["verbatim"] == "语音转写:"
+    assert "语气填充词" in _FUNASR_NANO_PROMPTS["smooth"]
+    assert _FUNASR_NANO_PROMPTS["smooth"] != _FUNASR_NANO_PROMPTS["verbatim"]

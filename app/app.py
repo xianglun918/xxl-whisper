@@ -75,12 +75,24 @@ class SetModel:
 
 
 @dataclass(frozen=True, slots=True)
+class SetDisfluency:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class InitModel:
     pass
 
 
 type WorkerMsg = (
-    KeyTransition | SetPaused | SetMic | SetHotkey | CaptureHotkey | SetModel | InitModel
+    KeyTransition
+    | SetPaused
+    | SetMic
+    | SetHotkey
+    | CaptureHotkey
+    | SetModel
+    | SetDisfluency
+    | InitModel
 )
 
 
@@ -117,6 +129,7 @@ class DictationApp:
                 on_capture_hotkey=lambda: self._queue.put(CaptureHotkey()),
                 on_select_model=lambda kind: self._queue.put(SetModel(kind=kind)),
                 on_show_diagnostics=self._show_diagnostics_deferred,
+                on_toggle_disfluency=lambda: self._queue.put(SetDisfluency()),
             ),
             state_provider=self._tray_state,
         )
@@ -203,6 +216,7 @@ class DictationApp:
             current_mic=self._config.mic,
             current_hotkey=self._config.hotkey,
             current_model=self._config.model,
+            disfluency=self._config.disfluency,
         )
 
     def _set_config(self, config: Config) -> None:
@@ -264,6 +278,8 @@ class DictationApp:
                 self._controls.start_key_capture(self._on_captured_vk)
             case SetModel(kind=kind):
                 self._swap_model(kind)
+            case SetDisfluency():
+                self._toggle_disfluency()
             case InitModel():
                 self._init_model()
             case unreachable:
@@ -358,6 +374,11 @@ class DictationApp:
         if recognizer is not None:
             self._recognizer = recognizer
 
+    def _toggle_disfluency(self) -> None:
+        recognizer = self._controls.toggle_disfluency()
+        if recognizer is not None:
+            self._recognizer = recognizer
+
     def _init_model(self) -> None:
         """Download (if needed) and load the recognizer on the worker thread."""
         try:
@@ -372,6 +393,7 @@ class DictationApp:
                 model_dir=files.directory,
                 num_threads=self._config.num_threads,
                 language=self._config.language,
+                disfluency=self._config.disfluency,
             )
         except DownloadError as exc:
             log.warning("model download failed: %s", exc)

@@ -7,13 +7,21 @@ from typing import assert_never
 import numpy as np
 import sherpa_onnx
 
-from app.config import ModelKind
+from app.config import Disfluency, ModelKind
 
 SAMPLE_RATE: int = 16_000
 
 #: SenseVoice emits rich-transcription tags like ``<zh>``, ``<|en|>``, ``</s>``
 #: depending on the language setting; end users should never see them.
 _TAG_RE = re.compile(r"<\|?/?[a-zA-Z_][a-zA-Z0-9_|]*\|?>")
+
+#: Decoder prompts for Fun-ASR-Nano (LLM-decoder ASR). verbatim transcribes
+#: as-is; smooth asks the decoder to strip fillers/repetitions/false starts,
+#: mirroring chat assistants' semantic smoothing (e.g. Doubao's DDC).
+_FUNASR_NANO_PROMPTS: dict[Disfluency, str] = {
+    "verbatim": "语音转写:",
+    "smooth": "语音转写并去除嗯、呃、啊等语气填充词、重复和口误，输出流畅文本:",
+}
 
 
 class Recognizer:
@@ -25,6 +33,7 @@ class Recognizer:
         model_dir: Path,
         num_threads: int = 2,
         language: str = "zh",
+        disfluency: Disfluency = "verbatim",
     ) -> None:
         self.kind = kind
         match kind:
@@ -44,6 +53,7 @@ class Recognizer:
                     tokenizer=str(model_dir / "Qwen3-0.6B"),
                     num_threads=num_threads,
                     language=language,
+                    user_prompt=_FUNASR_NANO_PROMPTS[disfluency],
                 )
             case unreachable:
                 assert_never(unreachable)

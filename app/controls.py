@@ -16,6 +16,7 @@ from app.asr import Recognizer
 from app.config import (
     MOUSE_VKS,
     Config,
+    Disfluency,
     ModelKind,
     config_path,
     hotkey_vk,
@@ -128,7 +129,7 @@ class Controls:
             self._deps.indicator.progress(pct, f"下载模型 {name}")
 
         try:
-            files = ensure_model(
+            ensure_model(
                 kind,
                 self._deps.models_root,
                 _progress,
@@ -140,12 +141,7 @@ class Controls:
             guide = manual_download_guide(kind, self._deps.models_root)
             winutil.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
             return None
-        recognizer = Recognizer(
-            kind=kind_typed,
-            model_dir=files.directory,
-            num_threads=self._deps.num_threads(),
-            language=self._deps.language(),
-        )
+        recognizer = self._build_recognizer(kind_typed)
         config = self._deps.get_config()
         self._deps.set_config(dataclasses.replace(config, model=kind))
         save_config(config_path(), self._deps.get_config())
@@ -153,6 +149,31 @@ class Controls:
         self._deps.indicator.flash("模型已切换", 1200)
         log.info("model switched to %r", kind)
         return recognizer
+
+    def toggle_disfluency(self) -> Recognizer | None:
+        """Flip verbatim/smooth and rebuild the recognizer when it matters.
+
+        Only Fun-ASR-Nano honours the disfluency prompt; SenseVoice ignores it,
+        so a rebuild is only needed for the LLM-decoder model.
+        """
+        config = self._deps.get_config()
+        new: Disfluency = "smooth" if config.disfluency == "verbatim" else "verbatim"
+        self._deps.set_config(dataclasses.replace(config, disfluency=new))
+        save_config(config_path(), self._deps.get_config())
+        self._deps.tray.refresh_menu()
+        log.info("disfluency toggled to %r", new)
+        if config.model == "funasr_nano":
+            return self._build_recognizer(config.model)
+        return None
+
+    def _build_recognizer(self, kind: ModelKind) -> Recognizer:
+        return Recognizer(
+            kind=kind,
+            model_dir=self._deps.models_root / kind,
+            num_threads=self._deps.num_threads(),
+            language=self._deps.language(),
+            disfluency=self._deps.get_config().disfluency,
+        )
 
     # -- diagnostics ------------------------------------------------------------
 

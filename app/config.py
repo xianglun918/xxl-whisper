@@ -16,6 +16,11 @@ APP_DIR_NAME: str = "xxl-whisper"
 
 type ModelKind = Literal["sensevoice", "funasr_nano"]
 
+#: Disfluency handling for the LLM-decoder model (Fun-ASR-Nano). verbatim keeps
+#: fillers (嗯/呃/啊), repetitions and false starts; smooth asks the decoder to
+#: clean them for chat-style output.
+type Disfluency = Literal["verbatim", "smooth"]
+
 #: Preset hotkey names -> virtual-key codes; any other VK (1..254) is also
 #: accepted as a raw integer for user-defined keys. Keys that are dangerous
 #: to remap (modifiers) are rejected at capture time, not here.
@@ -38,6 +43,10 @@ MOUSE_VKS: frozenset[int] = frozenset({0x05, 0x06})
 
 _MODELS: Mapping[str, None] = MappingProxyType(
     {"sensevoice": None, "funasr_nano": None}
+)
+
+_DISFLUENCY: Mapping[str, None] = MappingProxyType(
+    {"verbatim": None, "smooth": None}
 )
 
 _MIN_CUSTOM_VK: int = 1
@@ -69,6 +78,7 @@ class Config:
     check_updates: bool
     model: ModelKind
     proxy: str
+    disfluency: Disfluency
 
 
 def default_config() -> Config:
@@ -84,6 +94,7 @@ def default_config() -> Config:
         check_updates=True,
         model="sensevoice",
         proxy="",
+        disfluency="verbatim",
     )
 
 
@@ -127,7 +138,7 @@ def load_config(path: Path) -> Config:
     p = _Parser(raw=raw, path=path)
     return Config(
         hotkey=p.hotkey("hotkey", "caps_lock"),
-        hold_threshold_ms=p.int_in("hold_threshold_ms", 250, 10, 2_000),
+        hold_threshold_ms=p.int_in("hold_threshold_ms", 400, 10, 2_000),
         mic=p.text("mic", ""),
         num_threads=p.int_in("num_threads", 2, 1, 16),
         language=p.choice("language", "zh", _LANGUAGES),
@@ -136,6 +147,7 @@ def load_config(path: Path) -> Config:
         check_updates=p.bool_flag("check_updates", True),
         model=p.model_kind("model", "sensevoice"),
         proxy=p.text("proxy", ""),
+        disfluency=p.disfluency_kind("disfluency", "verbatim"),
     )
 
 
@@ -153,6 +165,7 @@ def save_config(path: Path, config: Config) -> None:
         f"check_updates = {str(config.check_updates).lower()}",
         f"model = {_quote(config.model)}",
         f"proxy = {_quote(config.proxy)}",
+        f"disfluency = {_quote(config.disfluency)}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -193,6 +206,14 @@ class _Parser:
         if value == "sensevoice":
             return "sensevoice"
         return "funasr_nano"
+
+    def disfluency_kind(self, name: str, default: Disfluency) -> Disfluency:
+        value = self._raw.get(name, default)
+        if not isinstance(value, str) or value not in _DISFLUENCY:
+            self._fail(f"{name} must be one of: {', '.join(sorted(_DISFLUENCY))}")
+        if value == "verbatim":
+            return "verbatim"
+        return "smooth"
 
     def hotkey(self, name: str, default: str | int) -> str | int:
         """Accept a preset name or a raw virtual-key code (1..254)."""
