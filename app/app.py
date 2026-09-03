@@ -158,11 +158,13 @@ class DictationApp:
         self._hook = HotkeyHook(
             vk=_VK_DISABLED if vk in MOUSE_VKS else vk,
             on_transition=self._on_transition,
+            disarmed_prompt=self._show_loading_prompt,
         )
         self._hook.start_and_wait()
         self._mouse_hook = MouseHook(
             vk=vk if vk in MOUSE_VKS else _VK_DISABLED,
             on_transition=self._on_transition,
+            disarmed_prompt=self._show_loading_prompt,
         )
         self._mouse_hook.start_and_wait()
         worker = threading.Thread(target=self._worker, daemon=True, name="asr-worker")
@@ -381,7 +383,14 @@ class DictationApp:
             self._recognizer = recognizer
 
     def _toggle_disfluency(self) -> None:
+        # Rebuilding the recognizer (Fun-ASR-Nano) blocks the worker; disarm the
+        # hooks first so CapsLock stays native instead of a dead key, then re-arm.
+        if self._hook is not None:
+            self._hook.set_armed(False)
+        if self._mouse_hook is not None:
+            self._mouse_hook.set_armed(False)
         recognizer = self._controls.toggle_disfluency()
+        self._set_hooks_armed()
         if recognizer is not None:
             self._recognizer = recognizer
 
@@ -424,6 +433,17 @@ class DictationApp:
             self._hook.set_armed(armed)
         if self._mouse_hook is not None:
             self._mouse_hook.set_armed(armed)
+
+    def _show_loading_prompt(self, show: bool) -> None:
+        """Hook-thread callback: hint that dictation is not ready yet.
+
+        Runs while the hooks are disarmed (model loading / switching) so a
+        hold does not feel like a dead key. The indicator facade is thread-safe.
+        """
+        if show:
+            self._indicator.show("模型加载中…请稍候")
+        else:
+            self._indicator.hide()
 
     def _on_captured_vk(self, vk: int) -> None:
         """Hook-thread callback: route the captured key through the worker."""

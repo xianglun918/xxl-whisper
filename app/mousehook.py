@@ -85,10 +85,14 @@ class MouseHook(threading.Thread):
     vk=0 disables interception entirely (all events pass through).
     """
 
-    def __init__(self, vk: int, on_transition: Callable[[bool], None]) -> None:
+    def __init__(
+        self, vk: int, on_transition: Callable[[bool], None],
+        disarmed_prompt: Callable[[bool], None] | None = None,
+    ) -> None:
         super().__init__(daemon=True, name="mouse-hook")
         self._vk = vk
         self._on_transition = on_transition
+        self._disarmed_prompt = disarmed_prompt
         self._is_down = False
         self._armed = False
         self._thread_id = 0
@@ -135,15 +139,33 @@ class MouseHook(threading.Thread):
         self._is_down = False
 
     def _hook_proc(self, ncode: int, wparam: int, lparam: int) -> int:
-        if ncode >= 0 and self._vk and self._armed:
+        if ncode >= 0 and self._vk:
             mb = ctypes.cast(lparam, _LLHOOKPTR).contents
             injected = mb.flags & (_LLMHF_INJECTED | _LLMHF_LOWER_IL_INJECTED)
             if not injected and wparam in (_WM_XBUTTONDOWN, _WM_XBUTTONUP):
                 button = mb.mouseData >> 16  # high word: 1=X1, 2=X2
                 if button == (1 if self._vk == VK_XBUTTON1 else 2):
-                    self._emit_transition(pressed=wparam == _WM_XBUTTONDOWN)
-                    return 1  # suppress native back/forward
+                    pressed = wparam == _WM_XBUTTONDOWN
+                    if self._armed:
+                        self._emit_transition(pressed)
+                        return 1  # suppress native back/forward
+                    self._emit_disarmed(pressed)
         return user32.CallNextHookEx(None, ncode, wparam, lparam)
+
+    def _emit_disarmed(self, pressed: bool) -> None:
+        """Disarmed side-button presses stay native; surface a loading hint."""
+        if pressed:
+            if self._is_down:
+                return
+            self._is_down = True
+            if self._disarmed_prompt is not None:
+                self._disarmed_prompt(True)
+        else:
+            if not self._is_down:
+                return
+            self._is_down = False
+            if self._disarmed_prompt is not None:
+                self._disarmed_prompt(False)
 
     def _emit_transition(self, pressed: bool) -> None:
         if pressed:

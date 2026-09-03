@@ -89,10 +89,16 @@ class HotkeyHook(threading.Thread):
     Auto-repeat is filtered here, so the callback sees clean down/up pairs.
     """
 
-    def __init__(self, vk: int, on_transition: Callable[[bool], None]) -> None:
+    def __init__(
+        self,
+        vk: int,
+        on_transition: Callable[[bool], None],
+        disarmed_prompt: Callable[[bool], None] | None = None,
+    ) -> None:
         super().__init__(daemon=True, name="hotkey-hook")
         self._vk = vk
         self._on_transition = on_transition
+        self._disarmed_prompt = disarmed_prompt
         self._is_down = False
         self._armed = False
         self._thread_id = 0
@@ -163,11 +169,32 @@ class HotkeyHook(threading.Thread):
             injected = kb.flags & (_LLKHF_INJECTED | _LLKHF_LOWER_IL_INJECTED)
             if not injected and self._capture_filter(kb.vkCode, wparam):
                 return 1  # swallow the captured key
-            if kb.vkCode == self._vk and self._vk and not injected and self._armed:
+            if kb.vkCode == self._vk and self._vk and not injected:
                 pressed = wparam in (_WM_KEYDOWN, _WM_SYSKEYDOWN)
-                self._emit_transition(pressed)
-                return 1  # suppress the native key function
+                if self._armed:
+                    self._emit_transition(pressed)
+                    return 1  # suppress the native key function
+                self._emit_disarmed(pressed)  # pass through + surface "loading" hint
         return user32.CallNextHookEx(None, ncode, wparam, lparam)
+
+    def _emit_disarmed(self, pressed: bool) -> None:
+        """While disarmed the key is native; still notify so the user sees a hint.
+
+        The worker may be busy loading the model, so the "模型加载中" prompt is
+        driven directly from the hook thread (the indicator facade is thread-safe).
+        """
+        if pressed:
+            if self._is_down:
+                return  # auto-repeat
+            self._is_down = True
+            if self._disarmed_prompt is not None:
+                self._disarmed_prompt(True)
+        else:
+            if not self._is_down:
+                return
+            self._is_down = False
+            if self._disarmed_prompt is not None:
+                self._disarmed_prompt(False)
 
     def _capture_filter(self, vk: int, wparam: int) -> bool:
         """Consume an armed one-shot capture; True when the event is swallowed.

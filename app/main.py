@@ -35,7 +35,7 @@ def _setup_logging() -> None:
     log_dir = Path(config_dir()) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(
-        log_dir / "app.log", maxBytes=1_000_000, backupCount=2, encoding="utf-8"
+        log_dir / "app.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8"
     )
     logging.basicConfig(
         level=logging.INFO,

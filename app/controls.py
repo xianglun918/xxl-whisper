@@ -169,9 +169,14 @@ class Controls:
         self._deps.set_config(dataclasses.replace(config, disfluency=new))
         save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
-        log.info("disfluency toggled to %r", new)
         if config.model == "funasr_nano":
+            log.info("disfluency -> %s: rebuilding funasr_nano recognizer", new)
             return self._build_recognizer(config.model)
+        log.warning(
+            "disfluency -> %s: model=%s cannot apply smoothing (only funasr_nano)",
+            new,
+            config.model,
+        )
         return None
 
     def _build_recognizer(self, kind: ModelKind) -> Recognizer:

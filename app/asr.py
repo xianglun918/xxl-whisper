@@ -1,5 +1,6 @@
 """SenseVoice / FunASR-Nano offline recognition via sherpa-onnx (CPU)."""
 
+import logging
 import re
 from pathlib import Path
 from typing import assert_never
@@ -8,6 +9,8 @@ import numpy as np
 import sherpa_onnx
 
 from app.config import Disfluency, ModelKind
+
+log = logging.getLogger(__name__)
 
 SAMPLE_RATE: int = 16_000
 
@@ -45,7 +48,9 @@ class Recognizer:
                     language=language,
                     use_itn=True,
                 )
+                log.info("recognizer: sensevoice (disfluency=%s — no effect)", disfluency)
             case "funasr_nano":
+                prompt = _FUNASR_NANO_PROMPTS[disfluency]
                 self._recognizer = sherpa_onnx.OfflineRecognizer.from_funasr_nano(
                     encoder_adaptor=str(model_dir / "encoder_adaptor.int8.onnx"),
                     llm=str(model_dir / "llm.int8.onnx"),
@@ -53,8 +58,9 @@ class Recognizer:
                     tokenizer=str(model_dir / "Qwen3-0.6B"),
                     num_threads=num_threads,
                     language=language,
-                    user_prompt=_FUNASR_NANO_PROMPTS[disfluency],
+                    user_prompt=prompt,
                 )
+                log.info("recognizer: funasr_nano (disfluency=%s prompt=%r)", disfluency, prompt)
             case unreachable:
                 assert_never(unreachable)
 
