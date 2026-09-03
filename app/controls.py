@@ -35,6 +35,11 @@ log = logging.getLogger(__name__)
 _VK_DISABLED: int = 0
 
 
+def disfluency_for_model(kind: str, current: Disfluency) -> Disfluency:
+    """Disfluency defaults to smooth when switching to the LLM-decoder model."""
+    return "smooth" if kind == "funasr_nano" else current
+
+
 @dataclass(frozen=True, slots=True)
 class ControlsDeps:
     """Live dependencies the panel actions mutate through."""
@@ -141,13 +146,16 @@ class Controls:
             guide = manual_download_guide(kind, self._deps.models_root)
             winutil.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
             return None
-        recognizer = self._build_recognizer(kind_typed)
         config = self._deps.get_config()
-        self._deps.set_config(dataclasses.replace(config, model=kind))
+        new_disfluency = disfluency_for_model(kind, config.disfluency)
+        self._deps.set_config(
+            dataclasses.replace(config, model=kind, disfluency=new_disfluency)
+        )
         save_config(config_path(), self._deps.get_config())
+        recognizer = self._build_recognizer(kind_typed)
         self._deps.tray.refresh_menu()
         self._deps.indicator.flash("模型已切换", 1200)
-        log.info("model switched to %r", kind)
+        log.info("model switched to %r (disfluency=%s)", kind, new_disfluency)
         return recognizer
 
     def toggle_disfluency(self) -> Recognizer | None:

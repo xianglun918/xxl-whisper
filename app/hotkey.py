@@ -94,11 +94,21 @@ class HotkeyHook(threading.Thread):
         self._vk = vk
         self._on_transition = on_transition
         self._is_down = False
+        self._armed = False
         self._thread_id = 0
         self._proc = _HOOKPROC(self._hook_proc)
         self._install_error: HotkeyError | None = None
         self._started = threading.Event()
         self._capture_cb: Callable[[int], None] | None = None
+
+    def set_armed(self, armed: bool) -> None:
+        """Arm or disarm suppression of the target key.
+
+        While disarmed (e.g. the model is still loading) the key passes through
+        natively — a CapsLock click toggles caps without needing the worker,
+        which may be busy decoding/downloading.
+        """
+        self._armed = armed
 
     @override
     def run(self) -> None:
@@ -153,7 +163,7 @@ class HotkeyHook(threading.Thread):
             injected = kb.flags & (_LLKHF_INJECTED | _LLKHF_LOWER_IL_INJECTED)
             if not injected and self._capture_filter(kb.vkCode, wparam):
                 return 1  # swallow the captured key
-            if kb.vkCode == self._vk and self._vk and not injected:
+            if kb.vkCode == self._vk and self._vk and not injected and self._armed:
                 pressed = wparam in (_WM_KEYDOWN, _WM_SYSKEYDOWN)
                 self._emit_transition(pressed)
                 return 1  # suppress the native key function

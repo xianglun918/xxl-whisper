@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from app.asr import _FUNASR_NANO_PROMPTS
 from app.config import Config, ConfigError, hotkey_vk, load_config, save_config
+from app.controls import disfluency_for_model
 
 
 def test_missing_file_returns_defaults(tmp_path: Path) -> None:
@@ -97,3 +98,9 @@ def test_funasr_nano_prompts_differ_by_disfluency() -> None:
     assert _FUNASR_NANO_PROMPTS["verbatim"] == "语音转写:"
     assert "语气填充词" in _FUNASR_NANO_PROMPTS["smooth"]
     assert _FUNASR_NANO_PROMPTS["smooth"] != _FUNASR_NANO_PROMPTS["verbatim"]
+
+def test_disfluency_defaults_smooth_for_funasr_nano() -> None:
+    assert disfluency_for_model("funasr_nano", "verbatim") == "smooth"
+    assert disfluency_for_model("funasr_nano", "smooth") == "smooth"
+    assert disfluency_for_model("sensevoice", "verbatim") == "verbatim"
+    assert disfluency_for_model("sensevoice", "smooth") == "smooth"  # preserve user choice

@@ -90,10 +90,15 @@ class MouseHook(threading.Thread):
         self._vk = vk
         self._on_transition = on_transition
         self._is_down = False
+        self._armed = False
         self._thread_id = 0
         self._proc = _HOOKPROC(self._hook_proc)
         self._install_error: MouseHookError | None = None
         self._started = threading.Event()
+
+    def set_armed(self, armed: bool) -> None:
+        """Arm/disarm suppression; disarmed passes side-buttons through natively."""
+        self._armed = armed
 
     @override
     def run(self) -> None:
@@ -130,7 +135,7 @@ class MouseHook(threading.Thread):
         self._is_down = False
 
     def _hook_proc(self, ncode: int, wparam: int, lparam: int) -> int:
-        if ncode >= 0 and self._vk:
+        if ncode >= 0 and self._vk and self._armed:
             mb = ctypes.cast(lparam, _LLHOOKPTR).contents
             injected = mb.flags & (_LLMHF_INJECTED | _LLMHF_LOWER_IL_INJECTED)
             if not injected and wparam in (_WM_XBUTTONDOWN, _WM_XBUTTONUP):

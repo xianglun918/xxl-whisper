@@ -370,7 +370,13 @@ class DictationApp:
             self._indicator.hide()
 
     def _swap_model(self, kind: str) -> None:
+        # Disarm while the worker downloads (CapsLock stays native), re-arm after.
+        if self._hook is not None:
+            self._hook.set_armed(False)
+        if self._mouse_hook is not None:
+            self._mouse_hook.set_armed(False)
         recognizer = self._controls.swap_model(kind)
+        self._set_hooks_armed()
         if recognizer is not None:
             self._recognizer = recognizer
 
@@ -401,10 +407,23 @@ class DictationApp:
             winutil.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
             return
         self._model_ready = True
+        self._set_hooks_armed()
         log.info("model ready: %s", self._config.model)
         if self._model_downloaded:
             self._indicator.flash("模型下载完成，可以开始使用了", 4000)
             self._tray.notify("模型下载完成，可以开始使用了", title="xxl-whisper")
+
+    def _set_hooks_armed(self) -> None:
+        """Arm the hooks once the model is ready so dictation can suppress keys.
+
+        While the model loads the hooks stay disarmed (CapsLock is native) so a
+        click toggles caps even though the worker is busy decoding.
+        """
+        armed = self._model_ready
+        if self._hook is not None:
+            self._hook.set_armed(armed)
+        if self._mouse_hook is not None:
+            self._mouse_hook.set_armed(armed)
 
     def _on_captured_vk(self, vk: int) -> None:
         """Hook-thread callback: route the captured key through the worker."""
@@ -419,8 +438,10 @@ class DictationApp:
         self._cancel_hold_confirm()
         self._updates.stop()
         if self._hook is not None:
+            self._hook.set_armed(False)
             self._hook.stop()
         if self._mouse_hook is not None:
+            self._mouse_hook.set_armed(False)
             self._mouse_hook.stop()
         if self._recorder is not None:
             self._recorder.close()
