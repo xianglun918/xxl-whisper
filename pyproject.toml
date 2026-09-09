@@ -10,6 +10,10 @@ dependencies = [
     "sherpa-onnx-core>=1.13.6",
     "pystray>=0.19",
     "pillow>=10.0",
+    "pyobjc-framework-quartz>=12.2.2 ; sys_platform == 'darwin'",
+    "pyobjc-framework-cocoa>=12.2.2 ; sys_platform == 'darwin'",
+    "pyobjc-framework-servicemanagement>=12.2.2 ; sys_platform == 'darwin'",
+    "pyobjc-framework-applicationservices>=12.2.2 ; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]
