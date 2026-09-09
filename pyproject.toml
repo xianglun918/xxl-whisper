@@ -68,4 +68,5 @@ reportUnknownLambdaType = "none" # pystray menu lambdas are structurally typed b
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = ["integration: requires downloaded model or hardware"]
