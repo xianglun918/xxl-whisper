@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches: [main, feat/macos-support]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync
+      - run: uv run python -m ruff check app tests run.py scripts
+      - run: uv run basedpyright app run.py
+      - run: uv run pytest tests -m "not integration" -q
