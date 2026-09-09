@@ -115,7 +115,7 @@ def _auto() -> ModuleType | None:
     module: ModuleType | None = getattr(_thread_local, "auto", None)
     if module is None:
         try:
-            import uiautomation as auto  # noqa: PLC0415 — COM init must happen per-thread
+            import uiautomation as auto  # noqa: PLC0415 — COM init must happen per-thread  # pyright: ignore[reportMissingImports] — win32-only, absent off-windows
 
             auto.UIAutomationInitializerInThread()
         except ImportError as exc:
