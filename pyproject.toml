@@ -1,7 +1,7 @@
 [project]
 name = "xxl-whisper"
-version = "0.5.0"
-description = "Windows tray push-to-talk dictation: hold CapsLock, speak, release, Chinese text lands at the cursor. Fully offline (SenseVoice-Small via sherpa-onnx)."
+version = "0.5.1"
+description = "Offline tray push-to-talk dictation (Windows: hold CapsLock; macOS: hold right Command). Fully offline via sherpa-onnx."
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
