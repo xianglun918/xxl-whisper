@@ -131,8 +131,8 @@ class HotkeyHook:
             self._disarmed_prompt(pressed)
         return event
 
-    def run(self) -> None:
-        """Install the tap and pump its CFRunLoop until :meth:`stop`."""
+    def _install(self, run_loop: object) -> tuple[object | None, object | None]:
+        """Create the tap, wire it into ``run_loop``, enable it, return both."""
         mask = (
             (1 << Quartz.kCGEventFlagsChanged)
             | (1 << Quartz.kCGEventKeyDown)
@@ -147,24 +147,43 @@ class HotkeyHook:
             None,
         )
         if not tap:
-            self._install_error = HotkeyError(code=0)
-            self._ready.set()
-            return
+            return None, None
         self._tap = tap
-        run_loop = Quartz.CFRunLoopGetCurrent()
         source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
         Quartz.CFRunLoopAddSource(run_loop, source, Quartz.kCFRunLoopDefaultMode)
         Quartz.CGEventTapEnable(tap, True)
+        return tap, source
+
+    def run(self) -> None:
+        """Install the tap and pump its CFRunLoop until :meth:`stop`."""
+        run_loop = Quartz.CFRunLoopGetCurrent()
+        tap, source = self._install(run_loop)
+        if tap is None:
+            self._install_error = HotkeyError(code=0)
+            self._ready.set()
+            return
         self._ready.set()
         watchdog = time.monotonic()
         while not self._stop.is_set():
             Quartz.CFRunLoopRunInMode(Quartz.kCFRunLoopDefaultMode, 0.1, False)
             now = time.monotonic()
-            if now - watchdog >= 1.0:
-                watchdog = now
-                if not Quartz.CGEventTapIsEnabled(tap):
-                    log.warning("event tap disabled by the system; re-enabling")
-                    Quartz.CGEventTapEnable(tap, True)
+            if now - watchdog < 1.0:
+                continue
+            watchdog = now
+            if Quartz.CGEventTapIsEnabled(tap):
+                continue
+            if Quartz.CGPreflightListenEventAccess():
+                # The grant arrived after this tap was created; a tap created
+                # without permission stays dead, so rebuild it — the permission
+                # check happens at creation, which saves the user a restart.
+                log.info("input monitoring granted; recreating the event tap")
+                Quartz.CFRunLoopRemoveSource(run_loop, source, Quartz.kCFRunLoopDefaultMode)
+                new_tap, new_source = self._install(run_loop)
+                if new_tap is not None:
+                    tap, source = new_tap, new_source
+                continue
+            log.warning("event tap disabled by the system; re-enabling")
+            Quartz.CGEventTapEnable(tap, True)
 
     def start_and_wait(self) -> None:
         """Start the hook thread and block until the tap is installed."""
