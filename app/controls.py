@@ -213,5 +213,6 @@ class Controls:
             f"当前热键：{hotkey_label}（vk={hotkey_vk(config.hotkey)}）",
             f"当前模型：{config.model}",
             f"麦克风：{config.mic or '系统默认'}",
+            *native.util.permission_report(),
         ]
         native.util.show_info("\n".join(lines), title="xxl-whisper 输入诊断")

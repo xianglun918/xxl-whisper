@@ -177,6 +177,9 @@ class DictationApp:
             self._config.mic,
             self._config.model,
         )
+        threading.Thread(
+            target=native.util.prompt_permissions, daemon=True, name="permissions-prompt"
+        ).start()
         try:
             self._tray.run()
         finally:
