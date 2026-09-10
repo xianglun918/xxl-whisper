@@ -7,6 +7,7 @@ Mirrors ``app/winutil.py`` so shared code reaches it via ``app.native.util``.
 """
 
 import fcntl
+import importlib
 import logging
 import subprocess
 from pathlib import Path
@@ -18,6 +19,9 @@ log = logging.getLogger(__name__)
 _DATA_ROOT: Path = Path.home() / "Library" / "Application Support" / "xxl-whisper"
 
 _LOCK_HANDLES: list[object] = []
+
+_ACCESS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+_LISTEN_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
 
 
 def _as_literal(text: str) -> str:
@@ -90,6 +94,39 @@ def ask_yes_no(message: str, title: str = "xxl-whisper") -> bool:
 def show_info(message: str, title: str = "xxl-whisper") -> None:
     """Show a modal information dialog."""
     _osascript(_dialog_script(message, title=title, icon="note"))
+
+
+def _permission_state() -> list[tuple[str, bool, str]]:
+    """Return (label, granted, settings URL) for the checkable TCC grants."""
+    app_services = importlib.import_module("ApplicationServices")
+    quartz = importlib.import_module("Quartz")
+    return [
+        ("辅助功能（注入 Cmd+V）", bool(app_services.AXIsProcessTrusted()), _ACCESS_URL),
+        ("输入监控（监听热键）", bool(quartz.CGPreflightListenEventAccess()), _LISTEN_URL),
+    ]
+
+
+def permission_report() -> list[str]:
+    """Human-readable TCC permission state for the diagnostics dialog."""
+    lines: list[str] = []
+    for label, granted, url in _permission_state():
+        lines.append(f"{label}：{'已授权' if granted else '未授权'}")
+        if not granted:
+            lines.append(f"  → 系统设置：{url}")
+    lines.append("麦克风（录音）：首次录音时系统弹窗授权")
+    return lines
+
+
+def prompt_permissions() -> None:
+    """Onboarding: offer to open System Settings when a TCC grant is missing."""
+    missing = [(label, url) for label, granted, url in _permission_state() if not granted]
+    if not missing:
+        return
+    label, url = missing[0]
+    message = f"缺少「{label}」授权，语音功能将不可用。"
+    script = _dialog_script(message, title="xxl-whisper 需要授权", buttons='{"稍后", "打开设置"}')
+    if "打开设置" in _osascript(script):
+        subprocess.run(["/usr/bin/open", url], check=False)  # noqa: S603 — fixed /usr/bin/open
 
 
 def set_dpi_awareness() -> None:
