@@ -4,13 +4,14 @@ The file crosses the trust boundary (user-editable), so parsing is total:
 either a valid frozen :class:`Config` or a typed :class:`ConfigError`.
 """
 
-import os
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, NoReturn
+
+from app import native
 
 APP_DIR_NAME: str = "xxl-whisper"
 
@@ -99,10 +100,8 @@ def default_config() -> Config:
 
 
 def config_dir() -> Path:
-    """Per-user data root: %LOCALAPPDATA%/xxl-whisper."""
-    base = os.environ.get("LOCALAPPDATA")
-    root = Path(base) if base else Path.home() / "AppData" / "Local"
-    return root / APP_DIR_NAME
+    """Per-user data root (%LOCALAPPDATA% on Windows, Application Support on macOS)."""
+    return native.data_root()
 
 
 def config_path() -> Path:
