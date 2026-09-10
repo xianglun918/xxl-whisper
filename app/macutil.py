@@ -118,8 +118,22 @@ def permission_report() -> list[str]:
 
 
 def prompt_permissions() -> None:
-    """Onboarding: offer to open System Settings when a TCC grant is missing."""
-    missing = [(label, url) for label, granted, url in _permission_state() if not granted]
+    """Onboarding: register the app in TCC and offer to open System Settings.
+
+    The prompting API variants are required: a freshly bundled app only appears
+    in the Accessibility / Input Monitoring lists after it has asked.
+    """
+    app_services = importlib.import_module("ApplicationServices")
+    quartz = importlib.import_module("Quartz")
+    missing: list[tuple[str, str]] = []
+    if not app_services.AXIsProcessTrusted():
+        app_services.AXIsProcessTrustedWithOptions(
+            {app_services.kAXTrustedCheckOptionPrompt: True}
+        )
+        missing.append(("辅助功能（注入 Cmd+V）", _ACCESS_URL))
+    if not quartz.CGPreflightListenEventAccess():
+        quartz.CGRequestListenEventAccess()
+        missing.append(("输入监控（监听热键）", _LISTEN_URL))
     if not missing:
         return
     label, url = missing[0]
