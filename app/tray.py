@@ -7,7 +7,7 @@ import pystray
 from PIL import Image, ImageDraw
 
 import app.recorder as recorder_mod
-from app import winio
+from app import native
 from app.config import HOTKEY_VK
 
 _HOTKEY_LABELS = {
@@ -29,7 +29,7 @@ _MODEL_LABELS = {
 
 def _hotkey_label(hotkey: str | int) -> str:
     if isinstance(hotkey, int):
-        return winio.key_name(hotkey)
+        return native.io.key_name(hotkey)
     return _HOTKEY_LABELS.get(hotkey, hotkey)
 
 

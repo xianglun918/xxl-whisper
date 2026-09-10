@@ -10,7 +10,7 @@ import logging
 import threading
 import webbrowser
 
-from app import winutil
+from app import native
 from app.tray import Tray
 from app.updater import ReleaseInfo, UpdateCheckError, fetch_latest_release, is_newer, parse_version
 
@@ -44,7 +44,7 @@ class UpdateFlow:
             return
         if not is_newer(release.version, self._current):
             current_text = ".".join(map(str, self._current))
-            winutil.show_info(f"已是最新版本 {current_text}。")
+            native.util.show_info(f"已是最新版本 {current_text}。")
             return
         if self._offer(release):
             log.info("update: opening %s", release.url)
@@ -77,4 +77,4 @@ class UpdateFlow:
         message = (
             f"发现新版本 {release.tag}（当前 v{current_text}）。{notes}\n\n现在打开下载页？"
         )
-        return winutil.ask_yes_no(message, title="xxl-whisper 更新")
+        return native.util.ask_yes_no(message, title="xxl-whisper 更新")

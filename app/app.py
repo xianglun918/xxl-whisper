@@ -15,13 +15,12 @@ from typing import assert_never
 
 import numpy as np
 
-from app import __version__, winio, winutil
+from app import __version__, native
 from app.asr import Recognizer
 from app.config import MOUSE_VKS, Config, config_path, hotkey_vk, models_root, save_config
 from app.controls import Controls, ControlsDeps
 from app.downloader import DownloadError, ensure_model, manual_download_guide
 from app.emit import EmitSettings, emit_text
-from app.hotkey import HotkeyHook
 from app.hotkey_logic import (
     Action,
     Click,
@@ -31,8 +30,6 @@ from app.hotkey_logic import (
     Release,
     StartHold,
 )
-from app.indicator import Indicator
-from app.mousehook import MouseHook
 from app.recorder import Recorder
 from app.tray import Tray, TrayCallbacks, TrayState
 from app.update_flow import UpdateFlow
@@ -103,11 +100,11 @@ class DictationApp:
         self._config = config
         self._queue: queue.Queue[WorkerMsg] = queue.Queue()
         self._detector = HoldClickDetector(config.hold_threshold_ms)
-        self._indicator = Indicator()
+        self._indicator = native.indicator.Indicator()
         self._recognizer: Recognizer | None = None
         self._recorder: Recorder | None = None
-        self._hook: HotkeyHook | None = None
-        self._mouse_hook: MouseHook | None = None
+        self._hook: native.hotkey.HotkeyHook | None = None
+        self._mouse_hook: native.mousehook.MouseHook | None = None
         self._paused = False
         self._ready = False
         self._skip_hold = False
@@ -155,13 +152,13 @@ class DictationApp:
             on_stream_error=lambda msg: log.warning("%s", msg),
         )
         vk = hotkey_vk(self._config.hotkey)
-        self._hook = HotkeyHook(
+        self._hook = native.hotkey.HotkeyHook(
             vk=_VK_DISABLED if vk in MOUSE_VKS else vk,
             on_transition=self._on_transition,
             disarmed_prompt=self._show_loading_prompt,
         )
         self._hook.start_and_wait()
-        self._mouse_hook = MouseHook(
+        self._mouse_hook = native.mousehook.MouseHook(
             vk=vk if vk in MOUSE_VKS else _VK_DISABLED,
             on_transition=self._on_transition,
             disarmed_prompt=self._show_loading_prompt,
@@ -198,7 +195,7 @@ class DictationApp:
         self._indicator.progress(pct, f"下载模型 {filename}")
 
     def _on_toggle_autostart(self) -> None:
-        winutil.set_autostart(not winutil.autostart_enabled())
+        native.util.set_autostart(not native.util.autostart_enabled())
 
     def _request_exit(self) -> None:
         """Stop the tray loop immediately; run() then tears the process down.
@@ -214,7 +211,7 @@ class DictationApp:
         return TrayState(
             ready=self._ready,
             paused=self._paused,
-            autostart=winutil.autostart_enabled(),
+            autostart=native.util.autostart_enabled(),
             current_mic=self._config.mic,
             current_hotkey=self._config.hotkey,
             current_model=self._config.model,
@@ -309,9 +306,9 @@ class DictationApp:
                 log.info("click: discarded buffer, toggling native key")
                 vk = hotkey_vk(self._config.hotkey)
                 if vk in MOUSE_VKS:
-                    winio.tap_mouse_x(vk)
+                    native.io.tap_mouse_x(vk)
                 else:
-                    winio.tap_key(vk)
+                    native.io.tap_key(vk)
             case EndHold(duration_ms=duration):
                 self._cancel_hold_confirm()
                 self._holding = False
@@ -413,7 +410,7 @@ class DictationApp:
         except DownloadError as exc:
             log.warning("model download failed: %s", exc)
             guide = manual_download_guide(self._config.model, models_root())
-            winutil.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
+            native.util.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
             return
         self._model_ready = True
         self._set_hooks_armed()
