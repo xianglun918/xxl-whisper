@@ -84,3 +84,12 @@ def set_dpi_awareness() -> None:
         shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_AWARE
     except (OSError, AttributeError):
         user32.SetProcessDPIAware()
+
+
+def permission_report() -> list[str]:
+    """No TCC permission model on Windows; contributes no diagnostics lines."""
+    return []
+
+
+def prompt_permissions() -> None:
+    """No-op on Windows: there are no per-user TCC grants to request."""
