@@ -110,9 +110,14 @@ xxl-whisper 是 Windows 托盘常驻的离线语音听写工具（v0.5.0 现网�
   ⚠️ **已知陷阱（勿重试）**：Tk 窗口吞合成 Cmd+V（即使 frontmost+key+focus 全满足）——mac 指示条
   必须用 AppKit NSPanel；`osascript 'make new document'` 会卡在 Automation 授权弹窗（故探针改用
   `open` + AX 回读，绕开 Automation）
-- **M2 — 门面与重指向**（🚧 进行中）：`app/native.py`（全仓唯一 `sys.platform` 点）+ mac 骨架
-  （macio/macutil/machotkey/macmousehook/mac_indicator/macuia）+ 八文件 import 重指向 + config 数据根；
-  **Windows 全门禁必须仍绿**（CI windows runner + 实机）
+- **M2 — 门面与重指向**（✅ 完成，CI 双平台绿）：`app/native.py` 门面——全仓唯一 `sys.platform` 点，
+  经 `__all__` 导出 `io`/`util`/`hotkey`/`mousehook`/`indicator`/`uia` + `data_root()`；六个 mac 骨架
+  （macio/macutil/machotkey/macmousehook/mac_indicator/macuia，占位体标注 M3–M5 里程碑）；
+  六个运行时模块 + `config.py` 全部改经门面；数据根 mac = `~/Library/Application Support/xxl-whisper`。
+  ⚠️ **类型约束**：门面子命名空间必须用**模块别名导入**（`from app import machotkey as hotkey`），
+  赋值式（`hotkey = machotkey`）会让 pyright 在类型表达式上报 `reportInvalidTypeForm`；
+  占位 stub 用 `msg = f"..."` 变量 + `raise NotImplementedError(msg)` 同时满足 ruff（EM101/ARG）与
+  pyright（未用参数）——两者都无需 lint 豁免
 - **M3 — 热键与录音链路**：`machotkey.py` 接入 → 源码跑通最小闭环
   「按住右 Cmd 说 → 识别 → Cmd+V 上屏」（macio 先只实现 paste 最小面）
 - **M4 — macio 全函数面**：剪贴板还原（`restore_clipboard` 对等）、key_name、
