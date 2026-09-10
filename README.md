@@ -92,3 +92,65 @@ URL 下载文件，放入对应目录（**子目录需按路径自行创建**，
   工具可能如此，症状：日志出现"本机拦截键盘注入"），自动回退为 WM_PASTE
   定点粘贴；若目标程序也不支持，文字保留在剪贴板并提示手动 Ctrl+V
 - 杀软误报 Python 打包 exe：加白即可
+
+## macOS 版
+
+macOS 版与 Windows 版功能对等：菜单栏常驻的离线听写工具，**按住右 Command 说话，松开后文字直接上屏到光标处**。识别同样纯本地完成（SenseVoice-Small / Fun-ASR-Nano，sherpa-onnx）。仅支持 Apple 芯片（arm64），需 **macOS 15 或更高**。
+
+### 安装
+
+1. 从 GitHub Release 下载 `xxl-whisper-arm64.zip`，解压得到 `xxl-whisper.app`
+2. 把 `.app` 放到任意固定目录（如「应用程序」）
+3. **首次打开：右键点图标 → 选「打开」**（Control + 单击等同右键）。当前构建是 ad-hoc 签名、未公证，双击会被 Gatekeeper 拦下；右键打开一次后即可正常双击
+
+首次运行会自动从 hf-mirror 下载约 230MB 模型（同 Windows 版）。需 macOS 15+ 的原因：sherpa-onnx 的预编译库在 macOS 14 及以下会直接加载失败（上游 issue [k2-fsa/sherpa-onnx#3840](https://github.com/k2-fsa/sherpa-onnx/issues/3840)）。
+
+### 首次授权（三项，必须）
+
+mac 与 Windows 最大的不同是需要三项系统授权，缺一不可。应用启动后会检测并弹窗引导，点「打开设置」会深链到对应面板：
+
+| 权限 | 用途 | 系统设置位置 |
+|---|---|---|
+| 辅助功能 | 注入 Cmd+V 上屏 | 隐私与安全性 → 辅助功能 |
+| 输入监控 | 监听热键 | 隐私与安全性 → 输入监控 |
+| 麦克风 | 录音 | 首次录音时系统弹窗授权 |
+
+**每次更新后，辅助功能与输入监控都要重新勾选一次。** ad-hoc 构建按二进制哈希识别身份，更新后旧授权失效；应用启动时会自动清理过期的授权记录（`tccutil reset`），因此系统设置里复选框显示为**未勾选**，每项**勾一次**即可，不用先删再添加。将来换成 Developer ID + 公证构建后这一步摩擦会消失（尚未实现）。
+
+> 源码运行（非 .app）时，授权归属宿主终端（如 iTerm2）；用 `tccutil reset` 可清掉重测。
+
+### 热键
+
+默认热键是**右 Command**（mac 无 CapsLock 选项，也没有 Scroll Lock 与鼠标侧键）。菜单栏图标 → 热键可切换：右 Command / F2 / F4 / F6 / F8 / 自定义按键（点后按任意键，Esc 取消）。
+
+> mac 的 F 键默认是媒体键（亮度、音量等）；要用 F2/F4/F6/F8 当热键，需按住 Fn，或在「系统设置 → 键盘」里开启「将 F1、F2 等键用作标准功能键」。
+
+### 配置与日志
+
+- 配置：`~/Library/Application Support/xxl-whisper/config.toml`（改完重启生效）
+- 日志：`~/Library/Application Support/xxl-whisper/logs/app.log`
+- 模型：`~/Library/Application Support/xxl-whisper/models/`
+
+### 开发
+
+```bash
+uv sync                     # 建虚拟环境装依赖
+uv run pytest tests -q      # 单测 + 集成测试（需已下载模型）
+uv run python run.py        # 源码运行
+bash build.sh               # PyInstaller 打包 -> dist/xxl-whisper.app + dist/xxl-whisper-arm64.zip
+```
+
+`build.sh` 需要仓库内的 `.venv`（先 `uv sync`）。默认 ad-hoc 签名；`CODESIGN_IDENTITY="Developer ID Application: ..." bash build.sh` 可切换 Developer ID 签名（供将来的公证使用）。
+
+### macOS 已知边界
+
+- 需 **macOS 15+（arm64）**：sherpa-onnx 预编译库在 14 及以下加载即崩（上游 #3840）
+- **首次打开需右键 → 打开**：ad-hoc 签名、未公证，被 Gatekeeper 拦；与 Windows 版「杀软误报加白」同量级
+- **每次更新后辅助功能 / 输入监控需重新勾选**：ad-hoc 构建按二进制哈希识别身份；应用启动会自动 `tccutil reset` 清掉过期记录，系统设置里显示未勾选，每项勾一次即可
+- 默认热键右 Command，无 CapsLock 选项；F 键预设需按 Fn 或改系统「标准功能键」设置
+- 上屏为 2 通道（Cmd+V 注入 → 剪贴板提示），无 Windows 版的 WM_PASTE / UIA 通道
+- 「正在听…」条位于屏幕底部居中；当前台窗口铺满屏幕时自动隐藏（近似判断，最大化的普通窗口也会隐藏）
+- 系统麦克风指示灯只在按住热键期间亮起（mac 上每次按住才开录音流，实测开流约 68ms）
+- 「开机自启」在源码运行下不可用（需打包后的 .app）；菜单项显示未勾选并记一条警告日志
+- 托盘的单选菜单显示为勾选（pystray-mac 不支持圆点样式，行为无差异）
+- 上屏前会先把文字写入剪贴板（与 Windows 版相同）
