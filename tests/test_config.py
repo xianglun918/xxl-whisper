@@ -7,10 +7,12 @@ from app.asr import _FUNASR_NANO_PROMPTS
 from app.config import Config, ConfigError, hotkey_vk, load_config, save_config
 from app.controls import disfluency_for_model
 
+from app import native
+
 
 def test_missing_file_returns_defaults(tmp_path: Path) -> None:
     config = load_config(tmp_path / "absent.toml")
-    assert config.hotkey == "caps_lock"
+    assert config.hotkey == native.hotkey.DEFAULT_HOTKEY
     assert config.hold_threshold_ms == 400
     assert config.mic == ""
     assert config.language == "zh"
@@ -26,7 +28,7 @@ def test_partial_file_merges_with_defaults(tmp_path: Path) -> None:
     config = load_config(path)
     assert config.mic == "USB Microphone"
     assert config.hold_threshold_ms == 400
-    assert config.hotkey == "caps_lock"
+    assert config.hotkey == native.hotkey.DEFAULT_HOTKEY
 
 
 def test_roundtrip(tmp_path: Path) -> None:
@@ -70,7 +72,8 @@ def test_custom_vk_hotkey_out_of_range_rejected(tmp_path: Path) -> None:
 
 
 def test_hotkey_vk_resolves_names_and_ints() -> None:
-    assert hotkey_vk("caps_lock") == 0x14
+    default = native.hotkey.DEFAULT_HOTKEY
+    assert hotkey_vk(default) == native.hotkey.PRESET_KEYCODES[default]
     assert hotkey_vk(0x2B) == 0x2B
 
 
