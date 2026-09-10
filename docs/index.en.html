@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>xxl-whisper — 离线语音听写（Windows / macOS）</title>
-<meta name="description" content="按住热键，说出中文，松开即上屏。纯本地离线识别、中英混说、文字直达光标。Windows 按住 CapsLock，macOS 按住右 Command。" />
+<title>xxl-whisper — Offline Voice Dictation (Windows / macOS)</title>
+<meta name="description" content="Hold a hotkey, speak, release and it's typed. Fully local offline recognition, mixed Chinese/English, text straight to the cursor. Hold CapsLock on Windows, hold Right Command on macOS." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -169,53 +169,53 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
       xxl-whisper
     </a>
     <div class="nav-links">
-      <a href="#platforms">平台</a>
-      <a href="#features">功能</a>
-      <a href="#models">模型</a>
-      <a href="#arch">架构</a>
+      <a href="#platforms">Platforms</a>
+      <a href="#features">Features</a>
+      <a href="#models">Models</a>
+      <a href="#arch">Architecture</a>
     </div>
     <div class="nav-cta">
-      <a class="btn btn-ghost" href="index.en.html">EN</a>
-      <a class="btn btn-dark" href="https://github.com/xianglun918/xxl-whisper/releases/latest">下载最新版</a>
+      <a class="btn btn-ghost" href="index.html">中文</a>
+      <a class="btn btn-dark" href="https://github.com/xianglun918/xxl-whisper/releases/latest">Download latest</a>
     </div>
   </div>
 </nav>
 
 <header class="hero">
   <div class="wrap inner">
-    <span class="pill"><span class="dot"></span>开源 · 全离线 · Windows / macOS</span>
-    <h1>按住热键，说出中文，<br /><span class="thin">松开即上屏</span></h1>
-    <p class="hero-sub">xxl-whisper 是 Windows 与 macOS 双平台的离线语音听写工具。Windows 按住 CapsLock，macOS 按住右 Command；识别全程在本地完成，无需联网、不依赖任何云服务；中英混说，文字直接落在光标处。</p>
+    <span class="pill"><span class="dot"></span>Open source · Fully offline · Windows / macOS</span>
+    <h1>Hold a hotkey, speak your mind,<br /><span class="thin">release and it's typed</span></h1>
+    <p class="hero-sub">xxl-whisper is an offline voice dictation tool for both Windows and macOS. Hold CapsLock on Windows, hold Right Command on macOS; recognition runs entirely on-device, with no network and no cloud service required; mix Chinese and English freely, and text lands right at the cursor.</p>
     <div class="hero-ctas">
       <a class="btn btn-dark" href="https://github.com/xianglun918/xxl-whisper/releases/latest">
         <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-        下载 Windows 版
+        Download for Windows
       </a>
       <a class="btn btn-ghost" href="https://github.com/xianglun918/xxl-whisper/releases/latest">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></svg>
-        下载 macOS 版
+        Download for macOS
       </a>
-      <a class="btn btn-ghost" href="architecture.html">查看架构图</a>
+      <a class="btn btn-ghost" href="architecture.en.html">View architecture</a>
       <a class="btn btn-ghost" href="https://github.com/xianglun918/xxl-whisper">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
         GitHub
       </a>
     </div>
     <div class="kbd-row">
-      <kbd>CapsLock</kbd><span>Windows 按住说话</span><span>·</span><kbd>右 Command</kbd><span>macOS 按住说话</span><span>·</span><span>松开即上屏</span>
+      <kbd>CapsLock</kbd><span>hold to talk on Windows</span><span>·</span><kbd>Right Command</kbd><span>hold to talk on macOS</span><span>·</span><span>release to type</span>
     </div>
     <div class="demo reveal">
       <div class="window">
-        <div class="window-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="window-title">dictation — 正在听…</span></div>
+        <div class="window-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="window-title">dictation — listening…</span></div>
         <div class="window-body">
-          <div class="holdline"><span class="label">按住</span><kbd>CapsLock</kbd><span class="label">或</span><kbd>右 Command</kbd><span class="label">说话，松开自动上屏</span></div>
+          <div class="holdline"><span class="label">Hold</span><kbd>CapsLock</kbd><span class="label">or</span><kbd>Right Command</kbd><span class="label">to talk, release to type</span></div>
           <div class="wave">
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
           </div>
-          <div class="typed">今天天气怎么样，我们一起去吃火锅吧。<span class="cursor"></span></div>
-          <div class="status"><span class="rec-dot"></span>SenseVoice-Small · CPU 实时 25×</div>
+          <div class="typed">How's the weather today? Let's go grab some hot pot.<span class="cursor"></span></div>
+          <div class="status"><span class="rec-dot"></span>SenseVoice-Small · CPU 25× realtime</div>
         </div>
       </div>
     </div>
@@ -225,33 +225,33 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
 <section id="platforms" style="padding-top:0">
   <div class="wrap">
     <div class="reveal"><div class="sec-label">Platforms</div>
-    <h2 class="sec-title">Windows 与 macOS，同一个离线内核</h2>
-    <p class="sec-desc">识别、录音、模型下载与更新两平台共用；只有热键钩子、上屏与状态条各有一套平台实现。</p></div>
+    <h2 class="sec-title">Windows and macOS, one offline core</h2>
+    <p class="sec-desc">Recognition, recording, model download and updates are shared across both platforms; only the hotkey hook, text insertion and status bar each have a platform-specific implementation.</p></div>
     <div class="models">
       <div class="model reveal"><span class="tag gray">Windows 10 / 11</span>
-        <h3>Windows 版</h3><div class="role">xxl-whisper.exe · 免安装</div>
+        <h3>Windows</h3><div class="role">xxl-whisper.exe · Portable</div>
         <ul>
-          <li>下载 <code>xxl-whisper.exe</code>，双击即运行</li>
-          <li>按住 <kbd>CapsLock</kbd> 说话，松开上屏；单击仍是大小写切换</li>
-          <li>上屏四级降级：Ctrl+V → WM_PASTE → UIA → 剪贴板</li>
-          <li>热键可换：CapsLock / F 键 / 鼠标侧键 / 自定义</li>
+          <li>Download <code>xxl-whisper.exe</code> and double-click to run</li>
+          <li>Hold <kbd>CapsLock</kbd> to talk, release to type; a single tap still toggles caps lock</li>
+          <li>Four-level insertion fallback: Ctrl+V → WM_PASTE → UIA → clipboard</li>
+          <li>Swap the hotkey: CapsLock / F keys / mouse side buttons / custom</li>
         </ul>
       </div>
       <div class="model reveal"><span class="tag green">macOS 15+ · arm64</span>
-        <h3>macOS 版</h3><div class="role">xxl-whisper-arm64.zip · .app</div>
+        <h3>macOS</h3><div class="role">xxl-whisper-arm64.zip · .app</div>
         <ul>
-          <li>下载 <code>xxl-whisper-arm64.zip</code>，解压得到 <code>.app</code></li>
-          <li><strong>首次打开：右键点图标 → 选「打开」</strong>（未公证，双击会被 Gatekeeper 拦）</li>
-          <li>按住 <kbd>右 Command</kbd> 说话；热键可换 F2 / F4 / F6 / F8 / 自定义</li>
-          <li>首次授权三项：辅助功能（上屏）/ 输入监控（热键）/ 麦克风（录音）</li>
-          <li>上屏两级：Cmd+V → 剪贴板兜底</li>
+          <li>Download <code>xxl-whisper-arm64.zip</code> and unzip to get the <code>.app</code></li>
+          <li><strong>First launch: right-click the icon → Open</strong> (not notarized, so a double-click is blocked by Gatekeeper)</li>
+          <li>Hold <kbd>Right Command</kbd> to talk; the hotkey can be F2 / F4 / F6 / F8 / custom</li>
+          <li>Grant three permissions on first run: Accessibility (insertion) / Input Monitoring (hotkey) / Microphone (recording)</li>
+          <li>Two-level insertion: Cmd+V → clipboard fallback</li>
         </ul>
       </div>
     </div>
     <div class="note reveal" style="margin-top:24px">
-      <strong>macOS 安装与权限</strong>：仅支持 Apple 芯片（arm64），需 macOS 15 或更高。当前为 ad-hoc 签名、未公证，首次打开需右键「打开」；每次更新后辅助功能与输入监控需重新勾选一次。安装、授权与常见问题见
-      <a href="https://github.com/xianglun918/xxl-whisper#macos-%E7%89%88">README 的 macOS 说明</a>，安装包见
-      <a href="https://github.com/xianglun918/xxl-whisper/releases/latest">Releases</a>。
+      <strong>macOS install &amp; permissions</strong>: Apple silicon (arm64) only, macOS 15 or later required. The current build is ad-hoc signed and not notarized, so the first launch needs a right-click → Open; after every update, Accessibility and Input Monitoring must be re-checked once. Installation, permissions and FAQs are in the
+      <a href="https://github.com/xianglun918/xxl-whisper#macos-%E7%89%88">macOS section of the README</a>, and builds are on
+      <a href="https://github.com/xianglun918/xxl-whisper/releases/latest">Releases</a>.
     </div>
   </div>
 </section>
@@ -259,15 +259,15 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
 <section id="features">
   <div class="wrap">
     <div class="reveal"><div class="sec-label">Features</div>
-    <h2 class="sec-title">为“打字慢的人”造的离线听写</h2>
-    <p class="sec-desc">没有账号、没有云、没有延迟到服务器的往返。语音在你的机器上变成文字，直接落到光标处。</p></div>
+    <h2 class="sec-title">Offline dictation built for people who type slowly</h2>
+    <p class="sec-desc">No account, no cloud, no round-trip to a server. Speech becomes text on your own machine and lands right at the cursor.</p></div>
     <div class="bento">
-      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg></div><h3>纯本地离线</h3><p>SenseVoice 本地推理，断网也能用；语音不出本机，隐私无忧。</p></div>
-      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h12"/><path d="M9 3v2"/><path d="m10.05 8.5-2.1 5.5M5 5v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5"/></svg></div><h3>中英混说</h3><p>中文为主，英文单词自然穿插——“开个 PR”“看下 README”照单全收。</p></div>
-      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div><h3>上屏按平台适配</h3><p>Windows 四级降级：Ctrl+V → WM_PASTE → UIA → 剪贴板；macOS 走 Cmd+V 注入，剪贴板兜底。</p></div>
-      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg></div><h3>热键自由</h3><p>Windows：CapsLock / F 键 / 鼠标侧键 / 自定义；macOS：右 Command / F2-F8 / 自定义。托盘即时切换。</p></div>
-      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><h3>永不抢焦点</h3><p>Windows 状态条跟随前台显示器；macOS 用非激活 NSPanel，不抢键盘焦点、不打断输入。</p></div>
-      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg></div><h3>一键升级</h3><p>启动静默检查新版本，托盘提示直达下载页；覆盖旧版本即完成升级。</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg></div><h3>Fully local &amp; offline</h3><p>SenseVoice runs inference locally and works without a network; your voice never leaves the machine.</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h12"/><path d="M9 3v2"/><path d="m10.05 8.5-2.1 5.5M5 5v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5"/></svg></div><h3>Mixed Chinese &amp; English</h3><p>Chinese-first, with English words woven in naturally — "open a PR", "check the README" are all handled.</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div><h3>Platform-aware insertion</h3><p>Windows uses a four-level fallback: Ctrl+V → WM_PASTE → UIA → clipboard; macOS injects Cmd+V with a clipboard fallback.</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg></div><h3>Hotkeys your way</h3><p>Windows: CapsLock / F keys / mouse side buttons / custom; macOS: Right Command / F2–F8 / custom. Switch instantly from the tray.</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><h3>Never steals focus</h3><p>On Windows the status bar follows the active display; on macOS a non-activating NSPanel avoids stealing keyboard focus or interrupting input.</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg></div><h3>One-click upgrade</h3><p>Silently checks for new versions on launch and links straight to the download page from the tray; overwrite the old build to upgrade.</p></div>
     </div>
   </div>
 </section>
@@ -275,11 +275,11 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
 <section style="padding-top:0">
   <div class="wrap">
     <div class="reveal"><div class="sec-label">How it works</div>
-    <h2 class="sec-title">三步，从声音到文字</h2></div>
+    <h2 class="sec-title">Three steps from voice to text</h2></div>
     <div class="pipeline">
-      <div class="step reveal"><span class="g">STEP 01</span><span class="num">HOLD</span><h3>按住</h3><p>按住热键（Windows：CapsLock；macOS：右 Command），麦克风开始拾音，底部浮条提示“正在听…”。</p></div>
-      <div class="step reveal"><span class="g">STEP 02</span><span class="num">ASR</span><h3>识别</h3><p>松开瞬间，本地模型离线解码，中文与夹杂的英文单词一并转写。</p></div>
-      <div class="step reveal"><span class="g">STEP 03</span><span class="num">TYPE</span><h3>上屏</h3><p>文字自动注入当前光标处：Windows 四级降级，macOS 走 Cmd+V，无需手动粘贴。</p></div>
+      <div class="step reveal"><span class="g">STEP 01</span><span class="num">HOLD</span><h3>Hold</h3><p>Hold the hotkey (CapsLock on Windows; Right Command on macOS) and the mic starts capturing, with a floating bar showing "listening…".</p></div>
+      <div class="step reveal"><span class="g">STEP 02</span><span class="num">ASR</span><h3>Recognize</h3><p>The moment you release, the local model decodes offline, transcribing Chinese and any English words together.</p></div>
+      <div class="step reveal"><span class="g">STEP 03</span><span class="num">TYPE</span><h3>Type</h3><p>Text is injected at the current cursor: a four-level fallback on Windows, Cmd+V on macOS — no manual paste needed.</p></div>
     </div>
   </div>
 </section>
@@ -287,30 +287,30 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
 <section id="models" style="background:#fafafa;box-shadow:0 0 0 1px var(--ring)">
   <div class="wrap">
     <div class="reveal"><div class="sec-label">Models</div>
-    <h2 class="sec-title">两档模型，按需切换</h2>
-    <p class="sec-desc">托盘菜单一键切换，模型按需自动下载。</p></div>
+    <h2 class="sec-title">Two models, switch on demand</h2>
+    <p class="sec-desc">Switch with one click from the tray; models download automatically on demand.</p></div>
     <div class="models">
-      <div class="model reveal"><span class="tag gray">默认</span>
-        <h3>SenseVoice-Small</h3><div class="role">快速 · 轻量</div>
+      <div class="model reveal"><span class="tag gray">Default</span>
+        <h3>SenseVoice-Small</h3><div class="role">Fast · Lightweight</div>
         <ul>
-          <li>约 230MB，下载快、启动快</li>
-          <li>CPU 实时约 25 倍速</li>
-          <li>日常中文听写首选</li>
+          <li>~230 MB — quick to download, quick to start</li>
+          <li>Runs at roughly 25× realtime on CPU</li>
+          <li>The go-to choice for everyday Chinese dictation</li>
         </ul>
       </div>
-      <div class="model recommended reveal"><span class="tag green">推荐新模型</span>
-        <h3>Fun-ASR-Nano</h3><div class="role">高精度 · LLM 解码</div>
+      <div class="model recommended reveal"><span class="tag green">Recommended</span>
+        <h3>Fun-ASR-Nano</h3><div class="role">High accuracy · LLM decoding</div>
         <ul>
-          <li>约 1GB，中英混说与方言表现更优</li>
-          <li>LLM 解码器，长句、口音更稳</li>
-          <li>对准确率要求高时切换此模型</li>
+          <li>~1 GB — better at mixed Chinese/English and dialects</li>
+          <li>An LLM decoder keeps long sentences and accents stable</li>
+          <li>Switch to this model when you need higher accuracy</li>
         </ul>
       </div>
     </div>
     <div class="note reveal" style="margin-top:24px">
-      <strong>内网 / 代理受限？</strong> 若自动下载失败，程序会弹窗给出手动下载指引；也可按
-      <a href="https://github.com/xianglun918/xxl-whisper#%E6%89%8B%E5%8A%A8%E4%B8%8B%E8%BD%BD%E6%A8%A1%E5%9E%8B%E5%86%85%E7%BD%91--%E4%BB%A3%E7%90%86%E5%8F%97%E9%99%90%E6%97%B6">README 的手动下载说明</a>
-      访问 hf-mirror 直链，把文件放入对应目录后重启即可。
+      <strong>Restricted network or proxy?</strong> If the automatic download fails, the app shows a dialog with manual download instructions; you can also follow the
+      <a href="https://github.com/xianglun918/xxl-whisper#%E6%89%8B%E5%8A%A8%E4%B8%8B%E8%BD%BD%E6%A8%A1%E5%9E%8B%E5%86%85%E7%BD%91--%E4%BB%A3%E7%90%86%E5%8F%97%E9%99%90%E6%97%B6">README's manual download guide</a>
+      to grab the files from the hf-mirror direct links, drop them into the right folder and restart.
     </div>
   </div>
 </section>
@@ -319,10 +319,10 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
   <div class="wrap">
     <div class="arch reveal">
       <div>
-        <h3>想了解它怎么工作？</h3>
-        <p>共享核心 + app/native.py 平台门面 + Windows / macOS 两套实现：钩子 → 录音 → 识别 → 上屏，以及离线模型与交互面。</p>
+        <h3>Want to see how it works?</h3>
+        <p>A shared core + the app/native.py platform facade + two implementations for Windows / macOS: hook → record → recognize → type, plus the offline models and the interaction surface.</p>
       </div>
-      <a class="btn" href="architecture.html">打开架构图 →</a>
+      <a class="btn" href="architecture.en.html">Open architecture →</a>
     </div>
   </div>
 </section>
@@ -330,7 +330,7 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
 <footer>
   <div class="wrap foot">
     <span class="mono">xxl-whisper · MIT License · Windows / macOS</span>
-    <span><a href="https://github.com/xianglun918/xxl-whisper">GitHub</a> · <a href="https://github.com/xianglun918/xxl-whisper/releases/latest">Releases</a> · <a href="architecture.html">架构图</a></span>
+    <span><a href="https://github.com/xianglun918/xxl-whisper">GitHub</a> · <a href="https://github.com/xianglun918/xxl-whisper/releases/latest">Releases</a> · <a href="architecture.en.html">Architecture</a></span>
   </div>
 </footer>
 

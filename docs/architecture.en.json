@@ -2,14 +2,14 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "xxl-whisper 系统架构",
-    "locale": "zh-CN",
-    "output": "docs/architecture.html",
+    "title": "xxl-whisper architecture",
+    "locale": "en",
+    "output": "docs/architecture.en.html",
     "quality_profile": "showcase",
     "views": [
       {
         "id": "voice-path",
-        "label": "语音主链路",
+        "label": "Voice path",
         "focus": [
           "orchestrator",
           "detector",
@@ -18,11 +18,11 @@
           "emit",
           "target"
         ],
-        "note": "按住热键到文字上屏的完整通路。"
+        "note": "The complete path from holding the hotkey to text landing on screen."
       },
       {
         "id": "platform-seam",
-        "label": "跨平台接缝",
+        "label": "Cross-platform seam",
         "focus": [
           "orchestrator",
           "native",
@@ -36,11 +36,11 @@
           "machotkey",
           "macindicator"
         ],
-        "note": "app/native.py 是全仓唯一 sys.platform 判定点，向下分派到 win* / mac* 两套实现。"
+        "note": "app/native.py is the repo's only sys.platform decision point; it dispatches down to the win* / mac* implementations."
       },
       {
         "id": "mac-native",
-        "label": "macOS 原生机制",
+        "label": "macOS native mechanisms",
         "focus": [
           "machotkey",
           "cgtap",
@@ -51,17 +51,17 @@
           "macutil",
           "tcc"
         ],
-        "note": "listen-only 事件监听、Cmd+V 注入、非激活指示条与 TCC 三权限引导。"
+        "note": "listen-only event monitoring, Cmd+V injection, a non-activating indicator bar, and TCC three-permission onboarding."
       },
       {
         "id": "offline-model",
-        "label": "离线模型",
+        "label": "Offline model",
         "focus": [
           "downloader",
           "model",
           "recognizer"
         ],
-        "note": "首启自动下载，之后全程断网可用。"
+        "note": "Auto-downloads on first launch; fully usable offline afterward."
       }
     ]
   },
@@ -70,7 +70,7 @@
       "id": "entry",
       "type": "backend",
       "label": "run.py / main.py",
-      "sublabel": "日志 · 单实例 · 配置",
+      "sublabel": "Logging · single instance · config",
       "pos": [
         40,
         64
@@ -84,7 +84,7 @@
       "id": "orchestrator",
       "type": "backend",
       "label": "DictationApp",
-      "sublabel": "单 worker 消息队列",
+      "sublabel": "single-worker message queue",
       "pos": [
         250,
         64
@@ -93,13 +93,13 @@
         190,
         54
       ],
-      "tag": "核心编排"
+      "tag": "Core orchestration"
     },
     {
       "id": "updater",
       "type": "backend",
       "label": "Updater",
-      "sublabel": "静默检查更新",
+      "sublabel": "Silent update check",
       "pos": [
         520,
         64
@@ -112,8 +112,8 @@
     {
       "id": "tray",
       "type": "frontend",
-      "label": "Tray 托盘",
-      "sublabel": "pystray · 双平台共用",
+      "label": "Tray",
+      "sublabel": "pystray · shared by both platforms",
       "pos": [
         750,
         64
@@ -127,7 +127,7 @@
       "id": "detector",
       "type": "backend",
       "label": "HoldClickDetector",
-      "sublabel": "按住 / 单击 250ms",
+      "sublabel": "hold / click 250ms",
       "pos": [
         40,
         166
@@ -141,7 +141,7 @@
       "id": "recorder",
       "type": "backend",
       "label": "Recorder",
-      "sublabel": "16 kHz 门控",
+      "sublabel": "16 kHz gated",
       "pos": [
         240,
         166
@@ -155,7 +155,7 @@
       "id": "recognizer",
       "type": "backend",
       "label": "Recognizer",
-      "sublabel": "SenseVoice 离线",
+      "sublabel": "SenseVoice offline",
       "pos": [
         440,
         166
@@ -168,8 +168,8 @@
     {
       "id": "emit",
       "type": "backend",
-      "label": "Emit 上屏链",
-      "sublabel": "按平台注册通道",
+      "label": "Emit output chain",
+      "sublabel": "per-platform output channels",
       "pos": [
         840,
         166
@@ -183,7 +183,7 @@
       "id": "downloader",
       "type": "backend",
       "label": "Downloader",
-      "sublabel": "hf-mirror 直链",
+      "sublabel": "hf-mirror direct link",
       "pos": [
         440,
         256
@@ -196,7 +196,7 @@
     {
       "id": "model",
       "type": "database",
-      "label": "SenseVoice 模型",
+      "label": "SenseVoice model",
       "sublabel": "INT8 · 230MB",
       "pos": [
         640,
@@ -220,13 +220,13 @@
         400,
         58
       ],
-      "tag": "全仓唯一 sys.platform 点"
+      "tag": "The repo's only sys.platform point"
     },
     {
       "id": "winio",
       "type": "backend",
       "label": "winio.py",
-      "sublabel": "剪贴板 · 注入 · 键名",
+      "sublabel": "clipboard · injection · key names",
       "pos": [
         40,
         484
@@ -240,7 +240,7 @@
       "id": "winutil",
       "type": "backend",
       "label": "winutil.py",
-      "sublabel": "对话框 · 自启 · 单实例",
+      "sublabel": "dialogs · autostart · single instance",
       "pos": [
         235,
         484
@@ -268,7 +268,7 @@
       "id": "winmousehook",
       "type": "security",
       "label": "mousehook.py",
-      "sublabel": "鼠标侧键 X1/X2",
+      "sublabel": "mouse side buttons X1/X2",
       "pos": [
         40,
         566
@@ -282,7 +282,7 @@
       "id": "winindicator",
       "type": "frontend",
       "label": "indicator.py",
-      "sublabel": "Tk 无激活置顶",
+      "sublabel": "Tk no-activate always-on-top",
       "pos": [
         235,
         566
@@ -296,7 +296,7 @@
       "id": "macio",
       "type": "backend",
       "label": "macio.py",
-      "sublabel": "NSPasteboard · 注入",
+      "sublabel": "NSPasteboard · injection",
       "pos": [
         660,
         484
@@ -338,7 +338,7 @@
       "id": "macindicator",
       "type": "frontend",
       "label": "mac_indicator.py",
-      "sublabel": "非激活 NSPanel",
+      "sublabel": "non-activating NSPanel",
       "pos": [
         1200,
         484
@@ -351,8 +351,8 @@
     {
       "id": "paste",
       "type": "backend",
-      "label": "Cmd+V 注入",
-      "sublabel": "剪贴板兜底",
+      "label": "Cmd+V injection",
+      "sublabel": "clipboard fallback",
       "pos": [
         660,
         570
@@ -365,8 +365,8 @@
     {
       "id": "tcc",
       "type": "security",
-      "label": "TCC 三权限引导",
-      "sublabel": "辅助功能·输入监控·麦克风",
+      "label": "TCC three-permission onboarding",
+      "sublabel": "Accessibility · Input Monitoring · Microphone",
       "pos": [
         840,
         570
@@ -379,8 +379,8 @@
     {
       "id": "cgtap",
       "type": "security",
-      "label": "CGEventTap 看门狗",
-      "sublabel": "tap 超时自动重启",
+      "label": "CGEventTap watchdog",
+      "sublabel": "auto-restart on tap timeout",
       "pos": [
         1020,
         570
@@ -393,8 +393,8 @@
     {
       "id": "nspanel",
       "type": "frontend",
-      "label": "NSPanel 指示条",
-      "sublabel": "不抢键盘焦点",
+      "label": "NSPanel indicator bar",
+      "sublabel": "never steals keyboard focus",
       "pos": [
         1200,
         570
@@ -407,8 +407,8 @@
     {
       "id": "target",
       "type": "external",
-      "label": "目标应用",
-      "sublabel": "前台窗口",
+      "label": "Target app",
+      "sublabel": "foreground window",
       "pos": [
         1160,
         166
@@ -422,7 +422,7 @@
   "boundaries": [
     {
       "kind": "region",
-      "label": "共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）",
+      "label": "Shared core · cross-platform (app orchestration + recognition / recording / download / update)",
       "wraps": [
         "entry",
         "orchestrator",
@@ -438,7 +438,7 @@
     },
     {
       "kind": "region",
-      "label": "Windows 平台层 · win* 模块",
+      "label": "Windows platform layer · win* modules",
       "wraps": [
         "winio",
         "winutil",
@@ -449,7 +449,7 @@
     },
     {
       "kind": "region",
-      "label": "macOS 平台层 · mac* 模块 + 原生机制",
+      "label": "macOS platform layer · mac* modules + native mechanisms",
       "wraps": [
         "macio",
         "macutil",
@@ -467,19 +467,19 @@
       "id": "boot",
       "from": "entry",
       "to": "orchestrator",
-      "label": "启动装配"
+      "label": "startup wiring"
     },
     {
       "id": "key-feed",
       "from": "orchestrator",
       "to": "detector",
-      "label": "键事件"
+      "label": "key events"
     },
     {
       "id": "gate-audio",
       "from": "detector",
       "to": "recorder",
-      "label": "门控录音"
+      "label": "gated recording"
     },
     {
       "id": "samples",
@@ -491,7 +491,7 @@
       "id": "asr-out",
       "from": "recognizer",
       "to": "emit",
-      "label": "识别文本"
+      "label": "recognized text"
     },
     {
       "id": "deliver",
@@ -504,33 +504,33 @@
       "id": "fetch",
       "from": "downloader",
       "to": "model",
-      "label": "下载校验"
+      "label": "download & verify"
     },
     {
       "id": "load-model",
       "from": "model",
       "to": "recognizer",
-      "label": "加载推理"
+      "label": "load for inference"
     },
     {
       "id": "update-check",
       "from": "orchestrator",
       "to": "updater",
-      "label": "检查更新",
+      "label": "check for updates",
       "variant": "dashed"
     },
     {
       "id": "tray-cmd",
       "from": "tray",
       "to": "orchestrator",
-      "label": "暂停 / 换麦 / 退出",
+      "label": "pause / change mic / quit",
       "variant": "dashed"
     },
     {
       "id": "native-assembly",
       "from": "orchestrator",
       "to": "native",
-      "label": "装配平台服务",
+      "label": "assemble platform services",
       "variant": "dashed"
     },
     {
@@ -600,13 +600,13 @@
       "id": "mac-paste",
       "from": "macio",
       "to": "paste",
-      "label": "Cmd+V 注入"
+      "label": "Cmd+V injection"
     },
     {
       "id": "mac-tcc",
       "from": "macutil",
       "to": "tcc",
-      "label": "三权限引导"
+      "label": "three-permission onboarding"
     },
     {
       "id": "mac-cgtap",
@@ -624,29 +624,29 @@
   "cards": [
     {
       "dot": "cyan",
-      "title": "语音主链路",
+      "title": "Voice path",
       "items": [
-        "按住热键：Windows 按住 CapsLock，macOS 按住右 Command；松开即上屏",
-        "SenseVoice 离线识别（CPU 约 25× 实时，中英混说）",
-        "上屏按平台注册：Windows 四级（Ctrl+V → WM_PASTE → UIA → 剪贴板），macOS 两级（Cmd+V → 剪贴板）"
+        "Hold the hotkey: CapsLock on Windows, Right Command on macOS; release and text lands on screen",
+        "SenseVoice offline recognition (~25× real time on CPU, mixed Chinese/English speech)",
+        "Output registered per platform: four levels on Windows (Ctrl+V → WM_PASTE → UIA → clipboard), two on macOS (Cmd+V → clipboard)"
       ]
     },
     {
       "dot": "emerald",
-      "title": "跨平台接缝",
+      "title": "Cross-platform seam",
       "items": [
-        "app/native.py 是全仓唯一 sys.platform 判定点，向上提供统一能力",
-        "共享核心两平台共用：asr / recorder / downloader / updater / hotkey_logic",
-        "win* 与 mac* 模块同函数面镜像，Windows 现网零回归"
+        "app/native.py is the repo's only sys.platform decision point, exposing a unified capability upward",
+        "The shared core serves both platforms: asr / recorder / downloader / updater / hotkey_logic",
+        "win* and mac* modules mirror the same function surface, with zero regression on the live Windows build"
       ]
     },
     {
       "dot": "violet",
-      "title": "macOS 原生机制",
+      "title": "macOS native mechanisms",
       "items": [
-        "listen-only CGEventTap 观察热键 + 看门狗超时重启（永不压制按键）",
-        "Cmd+V 注入上屏，剪贴板兜底；非激活 NSPanel 指示条不抢键盘焦点",
-        "首次运行引导辅助功能 / 输入监控 / 麦克风三项 TCC 授权；macOS 15+（arm64）"
+        "A listen-only CGEventTap observes hotkeys + a watchdog restarts on timeout (keys are never suppressed)",
+        "Cmd+V injection outputs text with a clipboard fallback; the non-activating NSPanel indicator bar never steals keyboard focus",
+        "First run guides the three TCC permissions — Accessibility / Input Monitoring / Microphone; macOS 15+ (arm64)"
       ]
     }
   ]
