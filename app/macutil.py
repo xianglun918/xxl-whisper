@@ -8,6 +8,7 @@ Mirrors ``app/winutil.py`` so shared code reaches it via ``app.native.util``.
 
 import fcntl
 import logging
+import subprocess
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -17,6 +18,24 @@ log = logging.getLogger(__name__)
 _DATA_ROOT: Path = Path.home() / "Library" / "Application Support" / "xxl-whisper"
 
 _LOCK_HANDLES: list[object] = []
+
+
+def _as_literal(text: str) -> str:
+    """Render ``text`` as an AppleScript string literal (newlines as return)."""
+    parts = [part.replace("\\", "\\\\").replace('"', '\\"') for part in text.split("\n")]
+    return " & return & ".join(f'"{part}"' for part in parts)
+
+
+def _osascript(script: str) -> str:
+    """Run one AppleScript snippet; return trimmed stdout (empty on failure)."""
+    result = subprocess.run(  # noqa: S603 — fixed /usr/bin/osascript, no shell
+        ["/usr/bin/osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return result.stdout.strip()
 
 
 def autostart_enabled() -> bool:
@@ -46,22 +65,31 @@ def acquire_single_instance() -> bool:
     return True
 
 
+def _dialog_script(message: str, *, title: str, buttons: str = "", icon: str = "") -> str:
+    """Build a ``display dialog`` AppleScript for the given parts."""
+    parts = [f"display dialog {_as_literal(message)}"]
+    if buttons:
+        parts.append(f"buttons {buttons}")
+    if icon:
+        parts.append(f"with icon {icon}")
+    parts.append(f"with title {_as_literal(title)}")
+    return " ".join(parts)
+
+
 def show_error(message: str) -> None:
     """Show a modal error dialog."""
-    msg = f"macutil.show_error({len(message)} chars) lands in M5 (NSAlert)"
-    raise NotImplementedError(msg)
+    _osascript(_dialog_script(message, title="xxl-whisper", icon="stop"))
 
 
 def ask_yes_no(message: str, title: str = "xxl-whisper") -> bool:
-    """Ask a modal yes/no question."""
-    msg = f"macutil.ask_yes_no({len(message)} chars, {title!r}) lands in M5 (NSAlert)"
-    raise NotImplementedError(msg)
+    """Ask a modal yes/no question; True when the user confirms."""
+    script = _dialog_script(message, title=title, buttons='{"取消", "确定"}')
+    return "确定" in _osascript(script)
 
 
 def show_info(message: str, title: str = "xxl-whisper") -> None:
     """Show a modal information dialog."""
-    msg = f"macutil.show_info({len(message)} chars, {title!r}) lands in M5 (NSAlert)"
-    raise NotImplementedError(msg)
+    _osascript(_dialog_script(message, title=title, icon="note"))
 
 
 def set_dpi_awareness() -> None:
