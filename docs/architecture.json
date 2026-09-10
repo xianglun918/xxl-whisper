@@ -10,81 +10,665 @@
       {
         "id": "voice-path",
         "label": "语音主链路",
-        "focus": ["hotkey", "detector", "recorder", "recognizer", "emit", "target"],
-        "note": "按住 CapsLock 到文字上屏的完整通路。"
+        "focus": [
+          "orchestrator",
+          "detector",
+          "recorder",
+          "recognizer",
+          "textfilter",
+          "emit",
+          "target"
+        ],
+        "note": "按住热键到文字上屏的完整通路。"
+      },
+      {
+        "id": "platform-seam",
+        "label": "跨平台接缝",
+        "focus": [
+          "orchestrator",
+          "native",
+          "winio",
+          "winutil",
+          "winhotkey",
+          "winmousehook",
+          "winindicator",
+          "macio",
+          "macutil",
+          "machotkey",
+          "macindicator"
+        ],
+        "note": "app/native.py 是全仓唯一 sys.platform 判定点，向下分派到 win* / mac* 两套实现。"
+      },
+      {
+        "id": "mac-native",
+        "label": "macOS 原生机制",
+        "focus": [
+          "machotkey",
+          "cgtap",
+          "macio",
+          "paste",
+          "macindicator",
+          "nspanel",
+          "macutil",
+          "tcc"
+        ],
+        "note": "listen-only 事件监听、Cmd+V 注入、非激活指示条与 TCC 三权限引导。"
       },
       {
         "id": "offline-model",
         "label": "离线模型",
-        "focus": ["downloader", "model", "recognizer"],
+        "focus": [
+          "downloader",
+          "model",
+          "recognizer"
+        ],
         "note": "首启自动下载，之后全程断网可用。"
-      },
-      {
-        "id": "user-surface",
-        "label": "交互面",
-        "focus": ["tray", "indicator", "orchestrator"],
-        "note": "托盘菜单与永不抢焦点的状态条。"
       }
     ]
   },
   "components": [
-    { "id": "entry", "type": "backend", "label": "run.py / main.py", "sublabel": "日志 · 单实例 · 配置", "pos": [40, 110], "size": [120, 64] },
-    { "id": "orchestrator", "type": "backend", "label": "DictationApp", "sublabel": "单 worker 消息队列", "pos": [260, 110], "size": [170, 64], "tag": "核心编排" },
-    { "id": "indicator", "type": "frontend", "label": "Indicator 状态条", "sublabel": "Tk 无激活置顶", "pos": [530, 110], "size": [170, 64] },
-    { "id": "tray", "type": "frontend", "label": "Tray 托盘", "sublabel": "pystray 菜单", "pos": [830, 110], "size": [140, 64] },
-    { "id": "hotkey", "type": "security", "label": "HotkeyHook", "sublabel": "WH_KEYBOARD_LL", "pos": [40, 320], "size": [120, 64] },
-    { "id": "detector", "type": "backend", "label": "HoldClickDetector", "sublabel": "按住 / 单击 250ms", "pos": [260, 320], "size": [120, 64] },
-    { "id": "recorder", "type": "backend", "label": "Recorder", "sublabel": "16 kHz 门控", "pos": [480, 320], "size": [120, 64] },
-    { "id": "recognizer", "type": "backend", "label": "Recognizer", "sublabel": "SenseVoice", "pos": [700, 320], "size": [120, 64] },
-    { "id": "emit", "type": "backend", "label": "Emit 上屏链", "sublabel": "三通道", "pos": [920, 320], "size": [130, 64] },
-    { "id": "target", "type": "external", "label": "目标应用", "sublabel": "前台窗口", "pos": [1150, 320], "size": [130, 64] },
-    { "id": "downloader", "type": "backend", "label": "Downloader", "sublabel": "hf-mirror 直链", "pos": [700, 530], "size": [120, 64] },
-    { "id": "model", "type": "database", "label": "SenseVoice 模型", "sublabel": "INT8 · 230MB", "pos": [930, 530], "size": [130, 64] }
+    {
+      "id": "entry",
+      "type": "backend",
+      "label": "run.py / main.py",
+      "sublabel": "日志 · 单实例 · 配置",
+      "pos": [
+        40,
+        64
+      ],
+      "size": [
+        130,
+        54
+      ]
+    },
+    {
+      "id": "orchestrator",
+      "type": "backend",
+      "label": "DictationApp",
+      "sublabel": "单 worker 消息队列",
+      "pos": [
+        250,
+        64
+      ],
+      "size": [
+        190,
+        54
+      ],
+      "tag": "核心编排"
+    },
+    {
+      "id": "updater",
+      "type": "backend",
+      "label": "Updater",
+      "sublabel": "静默检查更新",
+      "pos": [
+        520,
+        64
+      ],
+      "size": [
+        150,
+        54
+      ]
+    },
+    {
+      "id": "tray",
+      "type": "frontend",
+      "label": "Tray 托盘",
+      "sublabel": "pystray · 双平台共用",
+      "pos": [
+        750,
+        64
+      ],
+      "size": [
+        150,
+        54
+      ]
+    },
+    {
+      "id": "detector",
+      "type": "backend",
+      "label": "HoldClickDetector",
+      "sublabel": "按住 / 单击 250ms",
+      "pos": [
+        40,
+        166
+      ],
+      "size": [
+        130,
+        54
+      ]
+    },
+    {
+      "id": "recorder",
+      "type": "backend",
+      "label": "Recorder",
+      "sublabel": "16 kHz 门控",
+      "pos": [
+        240,
+        166
+      ],
+      "size": [
+        130,
+        54
+      ]
+    },
+    {
+      "id": "recognizer",
+      "type": "backend",
+      "label": "Recognizer",
+      "sublabel": "SenseVoice 离线",
+      "pos": [
+        440,
+        166
+      ],
+      "size": [
+        130,
+        54
+      ]
+    },
+    {
+      "id": "textfilter",
+      "type": "backend",
+      "label": "TextFilter",
+      "sublabel": "语义顺滑（可选）",
+      "pos": [
+        640,
+        166
+      ],
+      "size": [
+        130,
+        54
+      ]
+    },
+    {
+      "id": "emit",
+      "type": "backend",
+      "label": "Emit 上屏链",
+      "sublabel": "按平台注册通道",
+      "pos": [
+        840,
+        166
+      ],
+      "size": [
+        130,
+        54
+      ]
+    },
+    {
+      "id": "downloader",
+      "type": "backend",
+      "label": "Downloader",
+      "sublabel": "hf-mirror 直链",
+      "pos": [
+        440,
+        256
+      ],
+      "size": [
+        130,
+        54
+      ]
+    },
+    {
+      "id": "model",
+      "type": "database",
+      "label": "SenseVoice 模型",
+      "sublabel": "INT8 · 230MB",
+      "pos": [
+        640,
+        256
+      ],
+      "size": [
+        130,
+        54
+      ]
+    },
+    {
+      "id": "native",
+      "type": "backend",
+      "label": "app/native.py",
+      "sublabel": "io · util · hotkey · mousehook · indicator · uia",
+      "pos": [
+        490,
+        350
+      ],
+      "size": [
+        400,
+        58
+      ],
+      "tag": "全仓唯一 sys.platform 点"
+    },
+    {
+      "id": "winio",
+      "type": "backend",
+      "label": "winio.py",
+      "sublabel": "剪贴板 · 注入 · 键名",
+      "pos": [
+        40,
+        484
+      ],
+      "size": [
+        150,
+        54
+      ]
+    },
+    {
+      "id": "winutil",
+      "type": "backend",
+      "label": "winutil.py",
+      "sublabel": "对话框 · 自启 · 单实例",
+      "pos": [
+        235,
+        484
+      ],
+      "size": [
+        150,
+        54
+      ]
+    },
+    {
+      "id": "winhotkey",
+      "type": "security",
+      "label": "hotkey.py",
+      "sublabel": "WH_KEYBOARD_LL",
+      "pos": [
+        430,
+        484
+      ],
+      "size": [
+        150,
+        54
+      ]
+    },
+    {
+      "id": "winmousehook",
+      "type": "security",
+      "label": "mousehook.py",
+      "sublabel": "鼠标侧键 X1/X2",
+      "pos": [
+        40,
+        566
+      ],
+      "size": [
+        150,
+        54
+      ]
+    },
+    {
+      "id": "winindicator",
+      "type": "frontend",
+      "label": "indicator.py",
+      "sublabel": "Tk 无激活置顶",
+      "pos": [
+        235,
+        566
+      ],
+      "size": [
+        150,
+        54
+      ]
+    },
+    {
+      "id": "macio",
+      "type": "backend",
+      "label": "macio.py",
+      "sublabel": "NSPasteboard · 注入",
+      "pos": [
+        660,
+        484
+      ],
+      "size": [
+        160,
+        54
+      ]
+    },
+    {
+      "id": "macutil",
+      "type": "backend",
+      "label": "macutil.py",
+      "sublabel": "NSAlert · SMAppService",
+      "pos": [
+        840,
+        484
+      ],
+      "size": [
+        160,
+        54
+      ]
+    },
+    {
+      "id": "machotkey",
+      "type": "security",
+      "label": "machotkey.py",
+      "sublabel": "listen-only CGEventTap",
+      "pos": [
+        1020,
+        484
+      ],
+      "size": [
+        160,
+        54
+      ]
+    },
+    {
+      "id": "macindicator",
+      "type": "frontend",
+      "label": "mac_indicator.py",
+      "sublabel": "非激活 NSPanel",
+      "pos": [
+        1200,
+        484
+      ],
+      "size": [
+        160,
+        54
+      ]
+    },
+    {
+      "id": "paste",
+      "type": "backend",
+      "label": "Cmd+V 注入",
+      "sublabel": "剪贴板兜底",
+      "pos": [
+        660,
+        570
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "tcc",
+      "type": "security",
+      "label": "TCC 三权限引导",
+      "sublabel": "辅助功能·输入监控·麦克风",
+      "pos": [
+        840,
+        570
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "cgtap",
+      "type": "security",
+      "label": "CGEventTap 看门狗",
+      "sublabel": "tap 超时自动重启",
+      "pos": [
+        1020,
+        570
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "nspanel",
+      "type": "frontend",
+      "label": "NSPanel 指示条",
+      "sublabel": "不抢键盘焦点",
+      "pos": [
+        1200,
+        570
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "target",
+      "type": "external",
+      "label": "目标应用",
+      "sublabel": "前台窗口",
+      "pos": [
+        1160,
+        166
+      ],
+      "size": [
+        180,
+        54
+      ]
+    }
   ],
   "boundaries": [
     {
       "kind": "region",
-      "label": "xxl-whisper 单进程（Python · 5 线程 · 全离线）",
-      "wraps": ["entry", "orchestrator", "hotkey", "detector", "recorder", "recognizer", "emit", "tray", "indicator", "downloader", "model"]
+      "label": "共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）",
+      "wraps": [
+        "entry",
+        "orchestrator",
+        "updater",
+        "tray",
+        "detector",
+        "recorder",
+        "recognizer",
+        "textfilter",
+        "emit",
+        "downloader",
+        "model"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Windows 平台层 · win* 模块",
+      "wraps": [
+        "winio",
+        "winutil",
+        "winhotkey",
+        "winmousehook",
+        "winindicator"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "macOS 平台层 · mac* 模块 + 原生机制",
+      "wraps": [
+        "macio",
+        "macutil",
+        "machotkey",
+        "macindicator",
+        "paste",
+        "tcc",
+        "cgtap",
+        "nspanel"
+      ]
     }
   ],
   "connections": [
-    { "id": "boot", "from": "entry", "to": "orchestrator", "label": "启动装配" },
-    { "id": "key-events", "from": "hotkey", "to": "detector", "label": "按下 / 释放" },
-    { "id": "gate-audio", "from": "detector", "to": "recorder", "label": "StartHold 门控" },
-    { "id": "samples", "from": "recorder", "to": "recognizer", "label": "16 kHz 采样" },
-    { "id": "text-out", "from": "recognizer", "to": "emit", "label": "识别文本" },
-    { "id": "deliver", "from": "emit", "to": "target", "label": "Ctrl+V / WM_PASTE", "variant": "emphasis", "labelDy": 56 },
-    { "id": "install-hook", "from": "orchestrator", "to": "hotkey", "label": "安装钩子", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
-    { "id": "tray-cmd", "from": "tray", "to": "orchestrator", "label": "暂停 / 换麦 / 退出", "variant": "dashed", "fromSide": "top", "toSide": "top" },
-    { "id": "status", "from": "orchestrator", "to": "indicator", "label": "状态指令", "variant": "dashed" },
-    { "id": "fetch", "from": "downloader", "to": "model", "label": "下载校验" },
-    { "id": "load-model", "from": "model", "to": "recognizer", "label": "加载推理", "fromSide": "top", "toSide": "bottom" }
+    {
+      "id": "boot",
+      "from": "entry",
+      "to": "orchestrator",
+      "label": "启动装配"
+    },
+    {
+      "id": "key-feed",
+      "from": "orchestrator",
+      "to": "detector",
+      "label": "键事件"
+    },
+    {
+      "id": "gate-audio",
+      "from": "detector",
+      "to": "recorder",
+      "label": "门控录音"
+    },
+    {
+      "id": "samples",
+      "from": "recorder",
+      "to": "recognizer",
+      "label": "16 kHz"
+    },
+    {
+      "id": "asr-out",
+      "from": "recognizer",
+      "to": "textfilter",
+      "label": "识别文本"
+    },
+    {
+      "id": "filter-out",
+      "from": "textfilter",
+      "to": "emit",
+      "label": "润色文本"
+    },
+    {
+      "id": "deliver",
+      "from": "emit",
+      "to": "target",
+      "label": "Cmd+V / Ctrl+V / WM_PASTE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "fetch",
+      "from": "downloader",
+      "to": "model",
+      "label": "下载校验"
+    },
+    {
+      "id": "load-model",
+      "from": "model",
+      "to": "recognizer",
+      "label": "加载推理"
+    },
+    {
+      "id": "update-check",
+      "from": "orchestrator",
+      "to": "updater",
+      "label": "检查更新",
+      "variant": "dashed"
+    },
+    {
+      "id": "tray-cmd",
+      "from": "tray",
+      "to": "orchestrator",
+      "label": "暂停 / 换麦 / 退出",
+      "variant": "dashed"
+    },
+    {
+      "id": "native-assembly",
+      "from": "orchestrator",
+      "to": "native",
+      "label": "装配平台服务",
+      "variant": "dashed"
+    },
+    {
+      "id": "win-io",
+      "from": "native",
+      "to": "winio",
+      "label": "io",
+      "variant": "dashed"
+    },
+    {
+      "id": "win-util",
+      "from": "native",
+      "to": "winutil",
+      "label": "util",
+      "variant": "dashed"
+    },
+    {
+      "id": "win-hotkey",
+      "from": "native",
+      "to": "winhotkey",
+      "label": "hotkey",
+      "variant": "dashed"
+    },
+    {
+      "id": "win-mousehook",
+      "from": "native",
+      "to": "winmousehook",
+      "label": "mousehook",
+      "variant": "dashed"
+    },
+    {
+      "id": "win-indicator",
+      "from": "native",
+      "to": "winindicator",
+      "label": "indicator",
+      "variant": "dashed"
+    },
+    {
+      "id": "mac-io",
+      "from": "native",
+      "to": "macio",
+      "label": "io",
+      "variant": "dashed"
+    },
+    {
+      "id": "mac-util",
+      "from": "native",
+      "to": "macutil",
+      "label": "util",
+      "variant": "dashed"
+    },
+    {
+      "id": "mac-hotkey",
+      "from": "native",
+      "to": "machotkey",
+      "label": "hotkey",
+      "variant": "dashed"
+    },
+    {
+      "id": "mac-indicator",
+      "from": "native",
+      "to": "macindicator",
+      "label": "indicator",
+      "variant": "dashed"
+    },
+    {
+      "id": "mac-paste",
+      "from": "macio",
+      "to": "paste",
+      "label": "Cmd+V 注入"
+    },
+    {
+      "id": "mac-tcc",
+      "from": "macutil",
+      "to": "tcc",
+      "label": "三权限引导"
+    },
+    {
+      "id": "mac-cgtap",
+      "from": "machotkey",
+      "to": "cgtap",
+      "label": "listen-only tap"
+    },
+    {
+      "id": "mac-nspanel",
+      "from": "macindicator",
+      "to": "nspanel",
+      "label": "NSPanel"
+    }
   ],
   "cards": [
     {
       "dot": "cyan",
       "title": "语音主链路",
       "items": [
-        "按住 CapsLock：钩子门控录音，单击仍切换大小写",
+        "按住热键：Windows 按住 CapsLock，macOS 按住右 Command；松开即上屏",
         "SenseVoice 离线识别（CPU 约 25× 实时，中英混说）",
-        "三通道上屏：注入 Ctrl+V → WM_PASTE → 剪贴板提示"
+        "上屏按平台注册：Windows 四级（Ctrl+V → WM_PASTE → UIA → 剪贴板），macOS 两级（Cmd+V → 剪贴板）"
       ]
     },
     {
       "dot": "emerald",
-      "title": "完全离线",
+      "title": "跨平台接缝",
       "items": [
-        "首启从 hf-mirror 直链下载 230MB 模型，无需网盘",
-        "之后断网全功能可用，无任何云依赖"
+        "app/native.py 是全仓唯一 sys.platform 判定点，向上提供统一能力",
+        "共享核心两平台共用：asr / recorder / downloader / updater / hotkey_logic / text_filter",
+        "win* 与 mac* 模块同函数面镜像，Windows 现网零回归"
       ]
     },
     {
       "dot": "violet",
-      "title": "交互与韧性",
+      "title": "macOS 原生机制",
       "items": [
-        "托盘控制：暂停热键 / 选麦克风 / 开机自启",
-        "状态条永不抢焦点，跟随前台显示器，全屏可见"
+        "listen-only CGEventTap 观察热键 + 看门狗超时重启（永不压制按键）",
+        "Cmd+V 注入上屏，剪贴板兜底；非激活 NSPanel 指示条不抢键盘焦点",
+        "首次运行引导辅助功能 / 输入监控 / 麦克风三项 TCC 授权；macOS 15+（arm64）"
       ]
     }
   ]
