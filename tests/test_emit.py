@@ -7,7 +7,6 @@ ladder lands in M4.
 import sys
 
 import pytest
-
 from app.emit import Channel, TargetProbe, channels_in_order, is_classic_control
 
 _win_only = pytest.mark.skipif(
