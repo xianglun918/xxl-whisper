@@ -1,48 +1,44 @@
-"""macOS "正在听…" status bar — skeleton, body lands in M4.
+"""macOS "正在听…" status bar.
 
-Mirrors the ``Indicator`` surface of ``app/indicator.py`` so shared code
-reaches it via ``app.native.indicator``. M4 implements a non-activating AppKit
-NSPanel: the Windows version relies on ``WS_EX_NOACTIVATE`` and Tk cannot
-reproduce that on macOS (see the M1 findings in ``docs/macos-port-plan.md``).
-``quit`` is a real no-op so shutdown never raises.
+Invisible until M4 ships the AppKit NSPanel: every method is a no-op so the
+dictation loop runs without a bar. M4 implements the non-activating panel
+(the Windows version relies on ``WS_EX_NOACTIVATE``; Tk cannot reproduce that
+on macOS — see the M1 findings in ``docs/macos-port-plan.md``).
 """
+
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class Indicator:
-    """Owns the status bar; ``quit`` is safe, the rest are M4 placeholders."""
+    """Owns the status bar; invisible (no-op) until M4 ships the NSPanel."""
 
     def __init__(self) -> None:
         pass
 
     def show(self, text: str) -> None:
-        """Show the bar with ``text``."""
-        msg = f"mac_indicator.show({text!r}) lands in M4 (AppKit NSPanel)"
-        raise NotImplementedError(msg)
+        """No-op until M4: the bar stays hidden."""
+        log.debug("indicator.show(%r) ignored until M4", text)
 
     def update(self, text: str) -> None:
-        """Update the bar text."""
-        msg = f"mac_indicator.update({text!r}) lands in M4 (AppKit NSPanel)"
-        raise NotImplementedError(msg)
+        """No-op until M4."""
+        log.debug("indicator.update(%r) ignored until M4", text)
 
     def progress(self, pct: float, text: str) -> None:
-        """Show download progress."""
-        msg = f"mac_indicator.progress({pct}, {text!r}) lands in M4 (AppKit NSPanel)"
-        raise NotImplementedError(msg)
+        """No-op until M4."""
+        log.debug("indicator.progress(%s, %r) ignored until M4", pct, text)
 
     def hide(self) -> None:
-        """Hide the bar."""
-        msg = "mac_indicator.hide lands in M4 (AppKit NSPanel)"
-        raise NotImplementedError(msg)
+        """No-op until M4."""
 
     def flash(self, text: str, ms: int = 1500) -> None:
-        """Show a transient message."""
-        msg = f"mac_indicator.flash({text!r}, {ms}ms) lands in M4 (AppKit NSPanel)"
-        raise NotImplementedError(msg)
+        """No-op until M4."""
+        log.debug("indicator.flash(%r, %dms) ignored until M4", text, ms)
 
     def quit(self) -> None:
         """No-op: there is no window loop to stop yet."""
 
     def hwnd(self) -> int:
-        """Native window handle (observability/tests)."""
-        msg = "mac_indicator.hwnd lands in M4 (AppKit NSPanel)"
-        raise NotImplementedError(msg)
+        """No native window handle until M4."""
+        return 0
