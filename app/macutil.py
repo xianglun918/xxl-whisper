@@ -10,6 +10,7 @@ import fcntl
 import importlib
 import logging
 import subprocess
+import sys
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,9 @@ _LOCK_HANDLES: list[object] = []
 
 _ACCESS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 _LISTEN_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+
+#: The bundled app's identity (matches CFBundleIdentifier in the spec).
+_BUNDLE_ID = "com.xianglun918.xxl-whisper"
 
 
 def _as_literal(text: str) -> str:
@@ -106,6 +110,27 @@ def _permission_state() -> list[tuple[str, bool, str]]:
     ]
 
 
+def _repair_grant(service: str) -> None:
+    """Clear this app's stale TCC record so one fresh grant is enough.
+
+    Ad-hoc builds are identified by their binary hash, so an update leaves a
+    record for the previous hash: System Settings then shows the checkbox as
+    already enabled while the current binary is not actually granted. Resetting
+    the record makes the checkbox unchecked again, so the user only has to tick
+    it once (no remove/re-add dance). Source runs are skipped — their grants
+    belong to the terminal, not to this bundle id.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    subprocess.run(  # noqa: S603 — fixed /usr/bin/tccutil, no shell
+        ["/usr/bin/tccutil", "reset", service, _BUNDLE_ID],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+
 def permission_report() -> list[str]:
     """Human-readable TCC permission state for the diagnostics dialog."""
     lines: list[str] = []
@@ -118,7 +143,7 @@ def permission_report() -> list[str]:
 
 
 def prompt_permissions() -> None:
-    """Onboarding: register the app in TCC and offer to open System Settings.
+    """Onboarding: repair stale grants, re-prompt, and offer System Settings.
 
     The prompting API variants are required: a freshly bundled app only appears
     in the Accessibility / Input Monitoring lists after it has asked.
@@ -127,17 +152,19 @@ def prompt_permissions() -> None:
     quartz = importlib.import_module("Quartz")
     missing: list[tuple[str, str]] = []
     if not app_services.AXIsProcessTrusted():
+        _repair_grant("Accessibility")
         app_services.AXIsProcessTrustedWithOptions(
             {app_services.kAXTrustedCheckOptionPrompt: True}
         )
         missing.append(("辅助功能（注入 Cmd+V）", _ACCESS_URL))
     if not quartz.CGPreflightListenEventAccess():
+        _repair_grant("ListenEvent")
         quartz.CGRequestListenEventAccess()
         missing.append(("输入监控（监听热键）", _LISTEN_URL))
     if not missing:
         return
     label, url = missing[0]
-    message = f"缺少「{label}」授权，语音功能将不可用。"
+    message = f"缺少「{label}」授权。旧记录已自动清理，请在系统设置里勾选 xxl-whisper 即可。"
     script = _dialog_script(message, title="xxl-whisper 需要授权", buttons='{"稍后", "打开设置"}')
     if "打开设置" in _osascript(script):
         subprocess.run(["/usr/bin/open", url], check=False)  # noqa: S603 — fixed /usr/bin/open
