@@ -118,8 +118,14 @@ xxl-whisper 是 Windows 托盘常驻的离线语音听写工具（v0.5.0 现网�
   赋值式（`hotkey = machotkey`）会让 pyright 在类型表达式上报 `reportInvalidTypeForm`；
   占位 stub 用 `msg = f"..."` 变量 + `raise NotImplementedError(msg)` 同时满足 ruff（EM101/ARG）与
   pyright（未用参数）——两者都无需 lint 豁免
-- **M3 — 热键与录音链路**：`machotkey.py` 接入 → 源码跑通最小闭环
-  「按住右 Cmd 说 → 识别 → Cmd+V 上屏」（macio 先只实现 paste 最小面）
+- **M3 — 热键与录音链路**（✅ 完成，闭环实测通过）：`machotkey` 真实实现（listen-only tap +
+  看门狗，实测观测 `[True, False]`）；`macio` 最小面（剪贴板上屏 + Cmd+V 注入 + 注入存活探测 +
+  键名 + 前台应用）；`macutil` 单实例锁（flock）+ osascript 对话框 + 自启诚实降级；
+  `mac_indicator` 隐形 no-op；平台键数据迁入 `hotkey.py`/`machotkey.py`，mac 默认 `right_cmd`。
+  **实测日志证据**：`hold: ended after 1075 ms → captured 17205 samples → asr: '测试输入效果。'
+  → emit: target window 'iTerm2' → delivered`——「按住右 Cmd 说 → 识别 → Cmd+V 上屏」打通 ✓
+  ⚠️ **M4 遗留（实测发现）**：`emit` 日志文案带 Windows 味（"delivered via injected Ctrl+V"、
+  mac 上 "toggling native key" 实为 no-op）——M4 随通道平台化一并改为平台感知文案
 - **M4 — macio 全函数面**：剪贴板还原（`restore_clipboard` 对等）、key_name、
   NSScreen 工作区、NSPanel 指示条、emit 双通道注册
 - **M5 — macutil 与托盘全菜单对等**：SMAppService 自启、诊断对话框（含三权限状态 +
