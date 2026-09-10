@@ -90,17 +90,29 @@ xxl-whisper 是 Windows 托盘常驻的离线语音听写工具（v0.5.0 现网�
 
 ## 4. 里程碑（全绿才进下一关）
 
-- **M0 — 分支与基建**：切 `feat/macos-support`（✅ 已完成）；本计划文档首 commit（✅）；
-  `text_filter.py` + `tests/test_text_filter.py` 两件套落位 commit（纯逻辑未被引用的
-  进行中特性，随分支带入）；CI 骨架
-- **M1 — Day-1 冒烟探针（全绿才开主干）**：
-  ① `probe_mac_tap`：listen-only tap 观察右 Cmd 按住/松开（flagsChanged）+ 看门狗
-  ② `probe_mac_paste`：CGEventPost 注入 Cmd+V 上屏 + 剪贴板换写还原
-  ③ `probe_mac_permissions`：三权限检测 + 深链弹窗流
-  ④ `probe_mac_tray`：**pystray-mac 托盘菜单冒烟**（动态重建/勾选态/回调/osascript 通知）
-  ——④ 翻车触发受控换 rumps 决策点（门面下替换，代价可控）
-- **M2 — 门面与重指向**：`app/native.py` + 六文件 import 重指向 + `pyproject` 条件依赖 +
-  config 数据根；**Windows 全门禁必须仍绿**（CI windows runner + 实机）
+- **M0 — 分支与基建**（✅ 完成）：切 `feat/macos-support`；本计划文档首 commit；
+  `text_filter.py` 两件套落位；pytest `pythonpath` 修复（裸 `uv run pytest` 跨平台可解析）；
+  平台测试守卫（win32-only 收集期跳过）；CI 双平台门禁（windows-latest + macos-15）
+- **M1 — Day-1 冒烟探针**（✅ 4×OK，2026-09-10 本机验证）：
+  ① `probe_mac_tap` ✅ listen-only @ `kCGSessionEventTap` 观察右 Cmd（keycode `0x36` flagsChanged），
+  **看门狗 disable 静默 / enable 恢复双验证通过**；预检 API `CGPreflightListenEventAccess`
+  ② `probe_mac_paste` ✅ 胜出注入配置 = **`kCGEventSourceStateCombinedSessionState` 源 →
+  `kCGSessionEventTap` 投递点**（三配置全通，取最简）；序列 RCmd↓ → v↓ → v↑ → RCmd↑；
+  剪贴板 300 ms 后还原验证通过。靶子 = TextEdit + **AX 回读**
+  （`AXUIElementCopyAttributeValue(el, attr, None)` → `(err, value)`；树搜 `AXTextArea` 读 `AXValue`）
+  ③ `probe_mac_permissions` ✅ 三权限检测 + 深链 URL；开发期授权归属宿主终端（iTerm2）
+  ④ `probe_mac_tray` ✅ pystray-mac 可用；`HAS_MENU_RADIO=False` / `HAS_MENU_CHECK=True`；
+  osascript 通知 exit 0
+  ⚠️ **硬约束（CI 血泪教训）**：mac 模块的 pyobjc 导入必须走 `importlib.import_module` 动态化——
+  静态 `import Quartz` 会让 windows runner 的 basedpyright 报 `reportMissingImports`，
+  而加行级 `# pyright: ignore` 又会在 mac runner 报 `reportUnnecessaryTypeIgnoreComment`。
+  先例：`app/uia.py` 的 `_auto()`
+  ⚠️ **已知陷阱（勿重试）**：Tk 窗口吞合成 Cmd+V（即使 frontmost+key+focus 全满足）——mac 指示条
+  必须用 AppKit NSPanel；`osascript 'make new document'` 会卡在 Automation 授权弹窗（故探针改用
+  `open` + AX 回读，绕开 Automation）
+- **M2 — 门面与重指向**（🚧 进行中）：`app/native.py`（全仓唯一 `sys.platform` 点）+ mac 骨架
+  （macio/macutil/machotkey/macmousehook/mac_indicator/macuia）+ 八文件 import 重指向 + config 数据根；
+  **Windows 全门禁必须仍绿**（CI windows runner + 实机）
 - **M3 — 热键与录音链路**：`machotkey.py` 接入 → 源码跑通最小闭环
   「按住右 Cmd 说 → 识别 → Cmd+V 上屏」（macio 先只实现 paste 最小面）
 - **M4 — macio 全函数面**：剪贴板还原（`restore_clipboard` 对等）、key_name、
