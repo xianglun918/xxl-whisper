@@ -24,7 +24,20 @@ CODESIGN_IDENTITY = os.environ.get("CODESIGN_IDENTITY") or None
 datas = []
 binaries = []
 hiddenimports = ["sounddevice"]
-for package in ("sherpa_onnx", "onnxruntime"):
+# The mac modules import pyobjc with importlib (dynamic) to keep the Windows
+# runner's type checker happy (M1 finding), so PyInstaller cannot see them —
+# list them explicitly or the bundled app dies with ModuleNotFoundError.
+for package in (
+    "sherpa_onnx",
+    "onnxruntime",
+    "Quartz",
+    "AppKit",
+    "Foundation",
+    "ApplicationServices",
+    "ServiceManagement",
+    "objc",
+    "PyObjCTools",
+):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries
