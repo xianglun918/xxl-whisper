@@ -1,0 +1,58 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: xxl-whisper.exe
+          - os: macos-15
+            asset: xxl-whisper-arm64.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmd /c build.bat
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: bash build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/xxl-whisper.exe dist/xxl-whisper-arm64.zip \
+            --title "$GITHUB_REF_NAME" --generate-notes --repo "$GITHUB_REPOSITORY" \
+          || gh release upload "$GITHUB_REF_NAME" dist/xxl-whisper.exe dist/xxl-whisper-arm64.zip \
+            --clobber --repo "$GITHUB_REPOSITORY"
