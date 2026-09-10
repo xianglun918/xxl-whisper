@@ -134,8 +134,12 @@ xxl-whisper 是 Windows 托盘常驻的离线语音听写工具（v0.5.0 现网�
   **实测证据**：日志 `delivered via injected Cmd+V`、`click: discarded buffer, passing the tap through`
   ⚠️ **近似**：全屏抑制 = 「最前窗口是否铺满屏幕」，因此最大化的普通窗口也会隐藏提示条
   （比 win 独占全屏检测更宽）→ 记入 M6 的 README 已知边界
-- **M5 — macutil 与托盘全菜单对等**：SMAppService 自启、诊断对话框（含三权限状态 +
-  深链按钮）、暂停/选麦/换热键/换模型/语义顺滑开关/更新检查逐项对照 pass
+- **M5 — macutil 与托盘全菜单对等**（✅ 完成，用户全菜单验收通过）：`permission_report()`
+  （三权限状态 + 深链，接入诊断对话框；**Windows 侧返回空列表，零影响**）；`prompt_permissions()`
+  首启引导（缺授权才弹「稍后/打开设置」，全授权时静默）；**托盘通知无需改动**——pystray 0.19.5 的
+  mac `_notify` 本身就是 osascript 实现（librarian 的旧结论已过时）；`retarget` + 常规键
+  （keyDown/keyUp）路径冒烟通过；mac 预置键名正确（右 Command/F2/F4/F6/F8）。
+  **自启（SMAppService）延至 M6**：需要 .app bundle，源码运行下诚实降级（未勾选 + 警告日志）
 - **M6 — 打包与发版**：spec/build.sh → zip(onedir .app)；文档双平台化；
   Windows 实机终验（build.bat → exe → probe 三连 + 手测上屏链路）；
   Release 挂双附件（exe + arm64 zip）；发 v0.6.0
