@@ -140,9 +140,19 @@ xxl-whisper 是 Windows 托盘常驻的离线语音听写工具（v0.5.0 现网�
   mac `_notify` 本身就是 osascript 实现（librarian 的旧结论已过时）；`retarget` + 常规键
   （keyDown/keyUp）路径冒烟通过；mac 预置键名正确（右 Command/F2/F4/F6/F8）。
   **自启（SMAppService）延至 M6**：需要 .app bundle，源码运行下诚实降级（未勾选 + 警告日志）
-- **M6 — 打包与发版**：spec/build.sh → zip(onedir .app)；文档双平台化；
-  Windows 实机终验（build.bat → exe → probe 三连 + 手测上屏链路）；
-  Release 挂双附件（exe + arm64 zip）；发 v0.6.0
+- **M6 — 打包与发版**（✅ 完成）：`xxl-whisper-mac.spec` + `build.sh` → onedir `.app`（`ditto` 打 zip）；
+  info_plist 三键（`LSUIElement` / `NSMicrophoneUsageDescription` / 固定 bundle id）；签名身份参数化
+  （`CODESIGN_IDENTITY`，空 = ad-hoc，公证接口预留）。文档双平台化（README + 使用与分发说明）；
+  Windows 实机终验通过。
+  ⚠️ **打包关键坑**：mac 模块用 `importlib` 动态导入 pyobjc（M1 约束）→ PyInstaller 静态分析**看不见**
+  → 必须在 spec 里显式 `collect_all` 九个包（Quartz / AppKit / Foundation / ApplicationServices /
+  ServiceManagement / objc / PyObjCTools + sherpa_onnx / onnxruntime），否则打包应用启动即
+  `ModuleNotFoundError: No module named 'Quartz'`。
+  **发版 v0.5.1**（而非原计划的 v0.6.0——按维护者决定保持 0.5 系列）：新增 tag 触发的
+  `release.yml`，双平台 CI 构建并自动挂 Release（**免本地 Windows 构建**）。
+  旧 Release 清理：每个大版本保留最新稳定版 + `models` 兜底（下载器依赖），git tag 全保留。
+  ⚠️ **待办（下一版本）**：Developer ID + 公证——消除「更新后需重授权两项权限」与「首次右键打开」
+  两个摩擦（`build.sh` 已预留 `CODESIGN_IDENTITY`）
 
 ## 5. 已知对等偏差（全部进 README「已知边界」）
 
