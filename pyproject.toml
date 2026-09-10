@@ -1,7 +1,7 @@
 [project]
 name = "xxl-whisper"
-version = "0.5.0"
-description = "Windows tray push-to-talk dictation: hold CapsLock, speak, release, Chinese text lands at the cursor. Fully offline (SenseVoice-Small via sherpa-onnx)."
+version = "0.5.1"
+description = "Offline tray push-to-talk dictation (Windows: hold CapsLock; macOS: hold right Command). Fully offline via sherpa-onnx."
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
@@ -10,6 +10,10 @@ dependencies = [
     "sherpa-onnx-core>=1.13.6",
     "pystray>=0.19",
     "pillow>=10.0",
+    "pyobjc-framework-quartz>=12.2.2 ; sys_platform == 'darwin'",
+    "pyobjc-framework-cocoa>=12.2.2 ; sys_platform == 'darwin'",
+    "pyobjc-framework-servicemanagement>=12.2.2 ; sys_platform == 'darwin'",
+    "pyobjc-framework-applicationservices>=12.2.2 ; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]
@@ -18,6 +22,7 @@ dev = [
     "ruff>=0.7",
     "basedpyright>=1.18",
     "pyinstaller>=6.10",
+    "uiautomation>=2.0.29 ; sys_platform == 'win32'",
 ]
 
 [tool.ruff]
@@ -60,6 +65,7 @@ reportUnknownVariableType = "none"
 reportUntypedFunctionDecorator = "none"
 reportOptionalMemberAccess = "warning"
 reportAny = "none"               # ctypes wintypes boundaries
+reportExplicitAny = "none"       # pyobjc panel/label objects are dynamically typed
 reportUnannotatedClassAttribute = "none" # ctypes _fields_ structures cannot carry annotations
 reportUnusedCallResult = "none"  # pystray/tk/winreg calls whose results are intentionally dropped
 reportUnnecessaryComparison = "none" # fires on the assert_never exhaustiveness idiom itself
@@ -68,4 +74,5 @@ reportUnknownLambdaType = "none" # pystray menu lambdas are structurally typed b
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = ["integration: requires downloaded model or hardware"]

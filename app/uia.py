@@ -10,6 +10,7 @@ design:
   initialize inside the worker thread, never at app import time.
 """
 
+import importlib
 import logging
 import threading
 from dataclasses import dataclass
@@ -115,8 +116,7 @@ def _auto() -> ModuleType | None:
     module: ModuleType | None = getattr(_thread_local, "auto", None)
     if module is None:
         try:
-            import uiautomation as auto  # noqa: PLC0415 — COM init must happen per-thread
-
+            auto = importlib.import_module("uiautomation")
             auto.UIAutomationInitializerInThread()
         except ImportError as exc:
             log.warning("uiautomation unavailable: %s", exc)

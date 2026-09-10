@@ -4,13 +4,14 @@ The file crosses the trust boundary (user-editable), so parsing is total:
 either a valid frozen :class:`Config` or a typed :class:`ConfigError`.
 """
 
-import os
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, NoReturn
+
+from app import native
 
 APP_DIR_NAME: str = "xxl-whisper"
 
@@ -21,25 +22,15 @@ type ModelKind = Literal["sensevoice", "funasr_nano"]
 #: clean them for chat-style output.
 type Disfluency = Literal["verbatim", "smooth"]
 
-#: Preset hotkey names -> virtual-key codes; any other VK (1..254) is also
-#: accepted as a raw integer for user-defined keys. Keys that are dangerous
-#: to remap (modifiers) are rejected at capture time, not here.
-HOTKEY_VK: Mapping[str, int] = MappingProxyType(
-    {
-        "caps_lock": 0x14,
-        "f2": 0x71,
-        "f4": 0x73,
-        "f6": 0x75,
-        "f8": 0x77,
-        "scroll_lock": 0x91,
-        "mouse_x1": 0x05,  # VK_XBUTTON1 — mouse side button
-        "mouse_x2": 0x06,  # VK_XBUTTON2
-    }
-)
+#: Preset hotkey names -> platform keycodes (owned by the platform hook module).
+#: Any other keycode (1..254) is also accepted as a raw integer for
+#: user-defined keys. Keys that are dangerous to remap (modifiers) are
+#: rejected at capture time, not here.
+HOTKEY_VK: Mapping[str, int] = native.hotkey.PRESET_KEYCODES
 
-#: Buttons that live on the mouse, watched by the mouse LL hook instead of
-#: the keyboard LL hook.
-MOUSE_VKS: frozenset[int] = frozenset({0x05, 0x06})
+#: Buttons that live on the mouse, watched by the mouse LL hook instead of the
+#: keyboard LL hook (empty on macOS).
+MOUSE_VKS: frozenset[int] = native.hotkey.MOUSE_KEYCODES
 
 _MODELS: Mapping[str, None] = MappingProxyType(
     {"sensevoice": None, "funasr_nano": None}
@@ -82,9 +73,9 @@ class Config:
 
 
 def default_config() -> Config:
-    """First-run defaults: CapsLock push-to-talk, Chinese, 400 ms click cutoff."""
+    """First-run defaults: platform push-to-talk key, Chinese, 400 ms cutoff."""
     return Config(
-        hotkey="caps_lock",
+        hotkey=native.hotkey.DEFAULT_HOTKEY,
         hold_threshold_ms=400,
         mic="",
         num_threads=2,
@@ -99,10 +90,8 @@ def default_config() -> Config:
 
 
 def config_dir() -> Path:
-    """Per-user data root: %LOCALAPPDATA%/xxl-whisper."""
-    base = os.environ.get("LOCALAPPDATA")
-    root = Path(base) if base else Path.home() / "AppData" / "Local"
-    return root / APP_DIR_NAME
+    """Per-user data root (%LOCALAPPDATA% on Windows, Application Support on macOS)."""
+    return native.data_root()
 
 
 def config_path() -> Path:
@@ -137,7 +126,7 @@ def load_config(path: Path) -> Config:
         raise ConfigError(reason=f"malformed TOML ({exc})", path=path) from exc
     p = _Parser(raw=raw, path=path)
     return Config(
-        hotkey=p.hotkey("hotkey", "caps_lock"),
+        hotkey=p.hotkey("hotkey", native.hotkey.DEFAULT_HOTKEY),
         hold_threshold_ms=p.int_in("hold_threshold_ms", 400, 10, 2_000),
         mic=p.text("mic", ""),
         num_threads=p.int_in("num_threads", 2, 1, 16),

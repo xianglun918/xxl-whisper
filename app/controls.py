@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from app import winio, winutil
+from app import native
 from app.asr import Recognizer
 from app.config import (
     MOUSE_VKS,
@@ -24,9 +24,6 @@ from app.config import (
 )
 from app.downloader import DownloadError, ensure_model, manual_download_guide
 from app.emit import is_classic_control
-from app.hotkey import HotkeyHook
-from app.indicator import Indicator
-from app.mousehook import MouseHook
 from app.recorder import Recorder
 from app.tray import Tray
 
@@ -44,11 +41,13 @@ def disfluency_for_model(kind: str, current: Disfluency) -> Disfluency:
 class ControlsDeps:
     """Live dependencies the panel actions mutate through."""
 
-    indicator: Indicator
+    indicator: native.indicator.Indicator
     tray: Tray
     get_config: Callable[[], Config]
     set_config: Callable[[Config], None]
-    get_hooks: Callable[[], tuple[HotkeyHook | None, MouseHook | None]]
+    get_hooks: Callable[
+        [], tuple[native.hotkey.HotkeyHook | None, native.mousehook.MouseHook | None]
+    ]
     get_recorder: Callable[[], Recorder | None]
     rebuild_recorder: Callable[[str], Recorder]
     models_root: Path
@@ -82,7 +81,7 @@ class Controls:
         self._deps.set_config(dataclasses.replace(config, hotkey=key))
         save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
-        label = winio.key_name(vk) if isinstance(key, int) else key
+        label = native.io.key_name(vk) if isinstance(key, int) else key
         log.info("hotkey switched to %r (vk=0x%02X)", label, vk)
         self._deps.indicator.flash(f"热键已切换：{label}", 1200)
 
@@ -144,7 +143,7 @@ class Controls:
             log.warning("model download failed: %s", exc)
             self._deps.indicator.hide()
             guide = manual_download_guide(kind, self._deps.models_root)
-            winutil.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
+            native.util.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
             return None
         config = self._deps.get_config()
         new_disfluency = disfluency_for_model(kind, config.disfluency)
@@ -192,12 +191,12 @@ class Controls:
 
     def show_diagnostics(self) -> None:
         """Show a human-readable input-channel health report."""
-        alive = winio.keyboard_injection_alive()
-        control_class = winio.focused_control_class()
+        alive = native.io.keyboard_injection_alive()
+        control_class = native.io.focused_control_class()
         classic = bool(control_class) and is_classic_control(control_class)
         config = self._deps.get_config()
         hotkey_label = (
-            winio.key_name(hotkey_vk(config.hotkey))
+            native.io.key_name(hotkey_vk(config.hotkey))
             if isinstance(config.hotkey, int)
             else config.hotkey
         )
@@ -214,5 +213,6 @@ class Controls:
             f"当前热键：{hotkey_label}（vk={hotkey_vk(config.hotkey)}）",
             f"当前模型：{config.model}",
             f"麦克风：{config.mic or '系统默认'}",
+            *native.util.permission_report(),
         ]
-        winutil.show_info("\n".join(lines), title="xxl-whisper 输入诊断")
+        native.util.show_info("\n".join(lines), title="xxl-whisper 输入诊断")

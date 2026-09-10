@@ -7,9 +7,14 @@ to 32-bit ints, and wstring_at dereferenced the sign-extended garbage.
 Skipped when the clipboard is held by another process (locked environments).
 """
 
-import ctypes
+import sys
 
 import pytest
+
+if sys.platform != "win32":
+    pytest.skip("win32-only: raw Win32 clipboard regression", allow_module_level=True)
+
+import ctypes
 
 from app import winio
 

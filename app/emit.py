@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, assert_never
 
-from app import uia, winio
+from app import native
 
 log = logging.getLogger(__name__)
 
@@ -85,14 +85,14 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
 
     Returns the channel that delivered, or CLIPBOARD when nothing could.
     """
-    log.info("emit: target window %r", winio.foreground_window_title())
-    winio.set_clipboard_text(text)  # always staged: manual Ctrl+V also works
-    alive = winio.keyboard_injection_alive()
-    control_class = winio.focused_control_class()
+    log.info("emit: target window %r", native.io.foreground_window_title())
+    native.io.set_clipboard_text(text)  # always staged: manual paste also works
+    alive = native.io.keyboard_injection_alive()
+    control_class = native.io.focused_control_class()
     probe = TargetProbe(
         injection_alive=alive,
         is_classic_control=is_classic_control(control_class),
-        uia_writable=False if alive else uia.probe_focused().writable,
+        uia_writable=False if alive else native.uia.probe_focused().writable,
     )
     for channel in channels_in_order(probe):
         match channel:
@@ -100,7 +100,7 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
                 if _try_keys(text, settings, indicator):
                     return Channel.KEYS
             case Channel.WM_PASTE:
-                if winio.post_wm_paste_to_focus():
+                if native.io.post_wm_paste_to_focus():
                     log.info("emit: posted WM_PASTE (class=%r)", control_class)
                     indicator.flash("已粘贴（WM_PASTE）", 1200)
                     return Channel.WM_PASTE
@@ -112,29 +112,29 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
             case unreachable:
                 assert_never(unreachable)
     log.warning("emit: no channel delivered (class=%r); text on clipboard", control_class)
-    indicator.flash("已复制到剪贴板，请手动 Ctrl+V", 2500)
+    indicator.flash(f"已复制到剪贴板，请手动 {native.io.PASTE_COMBO}", 2500)
     return Channel.CLIPBOARD
 
 
 def _try_keys(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> bool:
     try:
-        winio.paste_text(
+        native.io.paste_text(
             text,
             restore_clipboard=settings.restore_clipboard,
             delay_ms=settings.paste_delay_ms,
         )
-    except (winio.PasteError, OSError) as exc:
+    except (native.io.PasteError, OSError) as exc:
         log.warning("emit: keys path failed: %s", exc)
         return False
-    log.info("emit: delivered via injected Ctrl+V")
+    log.info("emit: delivered via injected %s", native.io.PASTE_COMBO)
     indicator.hide()
     return True
 
 
 def _try_uia(text: str, control_class: str, indicator: _IndicatorLike) -> bool:
     try:
-        uia.append_text(text)
-    except uia.UiaUnavailableError as exc:
+        native.uia.append_text(text)
+    except native.uia.UiaUnavailableError as exc:
         log.warning("emit: UIA failed: %s", exc)
         return False
     log.info("emit: appended via UIA (class=%r)", control_class)
