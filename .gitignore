@@ -9,6 +9,7 @@ __pycache__/
 build/
 dist/
 *.spec
+!xxl-whisper-mac.spec
 
 # Tool metadata
 .codegraph/
