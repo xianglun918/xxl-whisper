@@ -27,6 +27,9 @@ _CLIPBOARD_OPEN_RETRY_DELAY_S: float = 0.05
 _UNICODE_EVENTS_PER_CHAR: int = 2  # key down + key up
 _SEND_INPUT_EVENTS_PER_CLICK: int = 2  # button down + button up
 
+#: Human-facing name of the paste keystroke (emit wording is shared code).
+PASTE_COMBO: str = "Ctrl+V"
+
 
 class PasteError(Exception):
     """Raised when the clipboard or SendInput path fails irrecoverably."""

@@ -303,7 +303,7 @@ class DictationApp:
                     self._recorder.stop()  # discard the click's buffer
                 self._indicator.hide()
                 self._skip_hold = False
-                log.info("click: discarded buffer, toggling native key")
+                log.info("click: discarded buffer, passing the tap through")
                 vk = hotkey_vk(self._config.hotkey)
                 if vk in MOUSE_VKS:
                     native.io.tap_mouse_x(vk)

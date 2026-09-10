@@ -86,7 +86,7 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
     Returns the channel that delivered, or CLIPBOARD when nothing could.
     """
     log.info("emit: target window %r", native.io.foreground_window_title())
-    native.io.set_clipboard_text(text)  # always staged: manual Ctrl+V also works
+    native.io.set_clipboard_text(text)  # always staged: manual paste also works
     alive = native.io.keyboard_injection_alive()
     control_class = native.io.focused_control_class()
     probe = TargetProbe(
@@ -112,7 +112,7 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
             case unreachable:
                 assert_never(unreachable)
     log.warning("emit: no channel delivered (class=%r); text on clipboard", control_class)
-    indicator.flash("已复制到剪贴板，请手动 Ctrl+V", 2500)
+    indicator.flash(f"已复制到剪贴板，请手动 {native.io.PASTE_COMBO}", 2500)
     return Channel.CLIPBOARD
 
 
@@ -126,7 +126,7 @@ def _try_keys(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> b
     except (native.io.PasteError, OSError) as exc:
         log.warning("emit: keys path failed: %s", exc)
         return False
-    log.info("emit: delivered via injected Ctrl+V")
+    log.info("emit: delivered via injected %s", native.io.PASTE_COMBO)
     indicator.hide()
     return True
 
