@@ -33,7 +33,22 @@ else:
     from app import macuia as uia
     from app import macutil as util
 
-__all__ = ["data_root", "hotkey", "indicator", "io", "mousehook", "uia", "util"]
+#: Windows keeps the capture stream open for the app's lifetime (invisible
+#: cost, saves the 50-150 ms device-open from the push-to-talk budget). macOS
+#: opens it per hold: an open stream keeps the system microphone indicator lit
+#: (measured open cost ~68 ms).
+RECORDER_KEEP_OPEN: bool = sys.platform == "win32"
+
+__all__ = [
+    "RECORDER_KEEP_OPEN",
+    "data_root",
+    "hotkey",
+    "indicator",
+    "io",
+    "mousehook",
+    "uia",
+    "util",
+]
 
 
 def data_root() -> Path:
