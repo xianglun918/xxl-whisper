@@ -126,8 +126,14 @@ xxl-whisper 是 Windows 托盘常驻的离线语音听写工具（v0.5.0 现网�
   → emit: target window 'iTerm2' → delivered`——「按住右 Cmd 说 → 识别 → Cmd+V 上屏」打通 ✓
   ⚠️ **M4 遗留（实测发现）**：`emit` 日志文案带 Windows 味（"delivered via injected Ctrl+V"、
   mac 上 "toggling native key" 实为 no-op）——M4 随通道平台化一并改为平台感知文案
-- **M4 — macio 全函数面**：剪贴板还原（`restore_clipboard` 对等）、key_name、
-  NSScreen 工作区、NSPanel 指示条、emit 双通道注册
+- **M4 — macio 全函数面与指示条**（✅ 完成，用户实测确认）：`mac_indicator` 真实 AppKit NSPanel
+  （非激活 / 浮动 / 忽略鼠标 / 跨 Space / 主线程派发 / 过期隐藏 / 全屏抑制；冒烟实测窗口号 3872，
+  用户确认**可见且不抢输入焦点**）；`macio` 补全（`type_text` Unicode 直打、`active_monitor_work_area`
+  NSScreen、`exclusive_fullscreen_owner_active` CGWindowList 近似）；平台化文案 `PASTE_COMBO`
+  （win `Ctrl+V` / mac `Cmd+V`）。
+  **实测证据**：日志 `delivered via injected Cmd+V`、`click: discarded buffer, passing the tap through`
+  ⚠️ **近似**：全屏抑制 = 「最前窗口是否铺满屏幕」，因此最大化的普通窗口也会隐藏提示条
+  （比 win 独占全屏检测更宽）→ 记入 M6 的 README 已知边界
 - **M5 — macutil 与托盘全菜单对等**：SMAppService 自启、诊断对话框（含三权限状态 +
   深链按钮）、暂停/选麦/换热键/换模型/语义顺滑开关/更新检查逐项对照 pass
 - **M6 — 打包与发版**：spec/build.sh → zip(onedir .app)；文档双平台化；
