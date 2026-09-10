@@ -65,6 +65,7 @@ reportUnknownVariableType = "none"
 reportUntypedFunctionDecorator = "none"
 reportOptionalMemberAccess = "warning"
 reportAny = "none"               # ctypes wintypes boundaries
+reportExplicitAny = "none"       # pyobjc panel/label objects are dynamically typed
 reportUnannotatedClassAttribute = "none" # ctypes _fields_ structures cannot carry annotations
 reportUnusedCallResult = "none"  # pystray/tk/winreg calls whose results are intentionally dropped
 reportUnnecessaryComparison = "none" # fires on the assert_never exhaustiveness idiom itself
