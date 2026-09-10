@@ -1,15 +1,56 @@
-"""macOS global push-to-talk hook — skeleton, body lands in M3.
+"""macOS global push-to-talk hook — listen-only CGEventTap (M3).
 
-Mirrors the lifecycle surface of ``app/hotkey.py`` (``HotkeyHook``) so shared
-code reaches it via ``app.native.hotkey``. M3 implements the listen-only
-CGEventTap (right Cmd = keycode 0x36, ``flagsChanged``) with a CFRunLoop
-thread and a tap watchdog — see the M1 findings in ``docs/macos-port-plan.md``.
+Observes one mac keycode via a listen-only event tap at the session level and
+reports press/release transitions. macOS never suppresses the key (decision
+#5), so a quick tap passes through natively and the app treats it as a click.
 
-The Windows hook suppresses the key and re-synthesizes taps; macOS deliberately
-never suppresses (decision #5), so this class only observes transitions.
+The mechanism is the one validated by ``scripts/probe_mac_tap.py`` (M1):
+``flagsChanged`` for modifier keys, ``keyDown``/``keyUp`` for regular keys, a
+CFRunLoop on the hook thread, and a watchdog that re-enables the tap when
+macOS disables it. pyobjc is imported with ``importlib`` (M1 constraint).
 """
 
-from collections.abc import Callable
+import importlib
+import logging
+import threading
+import time
+from collections.abc import Callable, Mapping
+from types import MappingProxyType
+
+Quartz = importlib.import_module("Quartz")
+
+log = logging.getLogger(__name__)
+
+#: mac virtual keycodes for the hotkey presets (kVK_*). macOS has no Scroll
+#: Lock and drops mouse side buttons, so neither appears here.
+PRESET_KEYCODES: Mapping[str, int] = MappingProxyType(
+    {
+        "right_cmd": 0x36,
+        "f2": 0x78,
+        "f4": 0x76,
+        "f6": 0x61,
+        "f8": 0x64,
+    }
+)
+
+#: Preset selected on a fresh macOS install.
+DEFAULT_HOTKEY: str = "right_cmd"
+
+#: No mouse side-button hotkeys on macOS.
+MOUSE_KEYCODES: frozenset[int] = frozenset()
+
+#: Modifier keycodes -> the CGEventFlags bit that means "this key is down".
+_MODIFIER_FLAGS: Mapping[int, int] = MappingProxyType(
+    {
+        0x36: Quartz.kCGEventFlagMaskCommand,  # right Command
+        0x37: Quartz.kCGEventFlagMaskCommand,  # left Command
+        0x3C: Quartz.kCGEventFlagMaskShift,  # right Shift
+        0x3D: Quartz.kCGEventFlagMaskAlternate,  # right Option
+        0x3E: Quartz.kCGEventFlagMaskControl,  # right Control
+    }
+)
+
+_VK_DISABLED: int = 0
 
 
 class HotkeyError(Exception):
@@ -21,7 +62,12 @@ class HotkeyError(Exception):
 
 
 class HotkeyHook:
-    """Daemon-thread event-tap hook; emits key transitions for one keycode."""
+    """Daemon-thread listen-only tap; emits transitions for one keycode.
+
+    ``on_transition(pressed)`` runs on the hook thread — it must only enqueue.
+    Auto-repeat and stray releases are filtered here, so the callback sees
+    clean down/up pairs. ``vk=0`` disables interception (no key is observed).
+    """
 
     def __init__(
         self,
@@ -32,33 +78,101 @@ class HotkeyHook:
         self._vk = vk
         self._on_transition = on_transition
         self._disarmed_prompt = disarmed_prompt
+        self._armed = False
+        self._is_down = False
+        self._capture_cb: Callable[[int], None] | None = None
+        self._install_error: HotkeyError | None = None
+        self._stop = threading.Event()
+        self._ready = threading.Event()
+        self._tap: object | None = None
+        self._thread = threading.Thread(target=self.run, daemon=True, name="hotkey-hook")
 
     def set_armed(self, armed: bool) -> None:
-        """Arm/disarm transition delivery."""
-        msg = f"machotkey.set_armed(armed={armed}) lands in M3 (listen-only tap)"
-        raise NotImplementedError(msg)
+        """Arm or disarm transition delivery.
 
-    def run(self) -> None:
-        """Pump the CFRunLoop for the event tap."""
-        msg = "machotkey.run lands in M3 (listen-only tap)"
-        raise NotImplementedError(msg)
-
-    def start_and_wait(self) -> None:
-        """Start the hook thread and block until the tap is installed."""
-        msg = "machotkey.start_and_wait lands in M3 (listen-only tap)"
-        raise NotImplementedError(msg)
-
-    def stop(self) -> None:
-        """Stop the hook thread and tear the tap down."""
-        msg = "machotkey.stop lands in M3 (listen-only tap)"
-        raise NotImplementedError(msg)
+        While disarmed (e.g. the model is still loading) transitions drive
+        ``disarmed_prompt`` instead of the worker.
+        """
+        self._armed = armed
 
     def retarget(self, vk: int) -> None:
         """Switch the observed keycode."""
-        msg = f"machotkey.retarget(vk={vk}) lands in M3 (listen-only tap)"
-        raise NotImplementedError(msg)
+        self._vk = vk
+        self._is_down = False
 
     def arm_capture(self, on_key: Callable[[int], None]) -> None:
-        """One-shot capture of the next key for the hotkey picker."""
-        msg = f"machotkey.arm_capture({on_key!r}) lands in M3 (listen-only tap)"
-        raise NotImplementedError(msg)
+        """Capture the next non-modifier key press for the hotkey picker."""
+        self._capture_cb = on_key
+
+    def _callback(self, _proxy: object, typ: int, event: object, _refcon: object) -> object:
+        keycode = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
+        if self._capture_cb is not None and typ == Quartz.kCGEventKeyDown:
+            capture = self._capture_cb
+            self._capture_cb = None
+            capture(keycode)
+            return event
+        if self._vk == _VK_DISABLED or keycode != self._vk:
+            return event
+        if typ == Quartz.kCGEventFlagsChanged:
+            flag = _MODIFIER_FLAGS.get(self._vk)
+            if flag is None:
+                return event
+            pressed = bool(Quartz.CGEventGetFlags(event) & flag)
+        elif typ in (Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp):
+            pressed = typ == Quartz.kCGEventKeyDown
+        else:
+            return event
+        if pressed == self._is_down:
+            return event
+        self._is_down = pressed
+        if self._armed:
+            self._on_transition(pressed)
+        elif self._disarmed_prompt is not None:
+            self._disarmed_prompt(pressed)
+        return event
+
+    def run(self) -> None:
+        """Install the tap and pump its CFRunLoop until :meth:`stop`."""
+        mask = (
+            (1 << Quartz.kCGEventFlagsChanged)
+            | (1 << Quartz.kCGEventKeyDown)
+            | (1 << Quartz.kCGEventKeyUp)
+        )
+        tap = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap,
+            Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionListenOnly,
+            mask,
+            self._callback,
+            None,
+        )
+        if not tap:
+            self._install_error = HotkeyError(code=0)
+            self._ready.set()
+            return
+        self._tap = tap
+        run_loop = Quartz.CFRunLoopGetCurrent()
+        source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
+        Quartz.CFRunLoopAddSource(run_loop, source, Quartz.kCFRunLoopDefaultMode)
+        Quartz.CGEventTapEnable(tap, True)
+        self._ready.set()
+        watchdog = time.monotonic()
+        while not self._stop.is_set():
+            Quartz.CFRunLoopRunInMode(Quartz.kCFRunLoopDefaultMode, 0.1, False)
+            now = time.monotonic()
+            if now - watchdog >= 1.0:
+                watchdog = now
+                if not Quartz.CGEventTapIsEnabled(tap):
+                    log.warning("event tap disabled by the system; re-enabling")
+                    Quartz.CGEventTapEnable(tap, True)
+
+    def start_and_wait(self) -> None:
+        """Start the hook thread and block until the tap is installed."""
+        self._thread.start()
+        self._ready.wait(timeout=5.0)
+        if self._install_error is not None:
+            raise self._install_error
+
+    def stop(self) -> None:
+        """Stop the hook thread."""
+        self._stop.set()
