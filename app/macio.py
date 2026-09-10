@@ -25,6 +25,9 @@ _PB_TYPE = AppKit.NSPasteboardTypeString
 _KEY_V = 0x09
 _KEY_RCMD = 0x36
 
+#: Human-facing name of the paste keystroke (emit wording is shared code).
+PASTE_COMBO: str = "Cmd+V"
+
 #: mac keycodes -> display names for tray/diagnostics labels.
 _KEY_NAMES: Mapping[int, str] = MappingProxyType(
     {
@@ -130,9 +133,15 @@ def paste_text(text: str, restore_clipboard: bool, delay_ms: int) -> None:
 
 
 def type_text(text: str) -> None:
-    """Unicode typing fallback."""
-    msg = f"macio.type_text({len(text)} chars) lands in M4 (mac native surface)"
-    raise NotImplementedError(msg)
+    """Type ``text`` via unicode key events (fallback when paste is blocked)."""
+    if not Quartz.CGPreflightPostEventAccess():
+        raise PasteError(api="CGPreflightPostEventAccess", code=0)
+    source = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateCombinedSessionState)
+    for char in text:
+        for down in (True, False):
+            event = Quartz.CGEventCreateKeyboardEvent(source, 0, down)
+            Quartz.CGEventKeyboardSetUnicodeString(event, len(char), char)
+            Quartz.CGEventPost(Quartz.kCGSessionEventTap, event)
 
 
 def foreground_window_title() -> str:
@@ -159,15 +168,37 @@ def post_wm_paste_to_focus() -> bool:
 
 
 def active_monitor_work_area() -> tuple[int, int, int, int]:
-    """Work area (x, y, width, height) of the active screen."""
-    msg = "macio.active_monitor_work_area lands in M4 (mac native surface)"
-    raise NotImplementedError(msg)
+    """Active screen work area as (left, top, right, bottom), top-left origin."""
+    screen = AppKit.NSScreen.mainScreen()
+    if screen is None:
+        return (0, 0, 0, 0)
+    full = screen.frame()
+    work = screen.visibleFrame()
+    left = int(work.origin.x)
+    right = int(work.origin.x + work.size.width)
+    top = int(full.size.height - (work.origin.y + work.size.height))
+    bottom = int(full.size.height - work.origin.y)
+    return (left, top, right, bottom)
 
 
 def exclusive_fullscreen_owner_active() -> bool:
-    """Whether an exclusive-fullscreen app owns the active screen."""
-    msg = "macio.exclusive_fullscreen_owner_active lands in M4 (mac native surface)"
-    raise NotImplementedError(msg)
+    """Approximate exclusive fullscreen: the frontmost window fills the screen."""
+    screen = AppKit.NSScreen.mainScreen()
+    if screen is None:
+        return False
+    full = screen.frame()
+    windows = Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+        Quartz.kCGNullWindowID,
+    )
+    for info in windows or []:
+        if int(info.get("kCGWindowLayer", 1)) != 0:
+            continue
+        bounds = info.get("kCGWindowBounds") or {}
+        width = float(bounds.get("Width", 0.0))
+        height = float(bounds.get("Height", 0.0))
+        return width >= full.size.width - 1 and height >= full.size.height - 1
+    return False
 
 
 def key_name(vk: int) -> str:
