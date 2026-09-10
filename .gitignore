@@ -21,3 +21,4 @@ dist/
 
 # macOS
 .DS_Store
+.playwright-mcp/
