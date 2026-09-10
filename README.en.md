@@ -8,7 +8,7 @@
 
 A dual-platform (Windows/macOS) offline voice dictation tool: hold the hotkey (CapsLock on Windows / Right Command on macOS), speak, release and the text is inserted at the cursor. It runs fully local with no network, and handles mixed Chinese–English speech.
 
-[![xxl-whisper architecture](docs/architecture.en.png)](https://xianglun918.github.io/xxl-whisper/architecture.html)
+[![xxl-whisper architecture](docs/architecture.en.png)](https://xianglun918.github.io/xxl-whisper/architecture.en.html)
 
 ## Quick start
 
@@ -31,7 +31,7 @@ A dual-platform (Windows/macOS) offline voice dictation tool: hold the hotkey (C
 |---|---|
 | 🌐 Website | https://xianglun918.github.io/xxl-whisper/ |
 | 📖 Usage & Distribution Guide | [docs/使用与分发说明.en.md](docs/使用与分发说明.en.md) — install, FAQ, config, models / proxy / manual download, known limits, macOS details, maintainer release |
-| 🗺️ Interactive architecture | [online](https://xianglun918.github.io/xxl-whisper/architecture.html) · [JSON source](docs/architecture.json) |
+| 🗺️ Interactive architecture | [online](https://xianglun918.github.io/xxl-whisper/architecture.en.html) · [JSON source](docs/architecture.en.json) |
 
 ## Development
 

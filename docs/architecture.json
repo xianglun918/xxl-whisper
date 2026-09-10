@@ -155,7 +155,7 @@
       "id": "recognizer",
       "type": "backend",
       "label": "Recognizer",
-      "sublabel": "SenseVoice 离线",
+      "sublabel": "双模型离线",
       "pos": [
         440,
         166
@@ -196,8 +196,8 @@
     {
       "id": "model",
       "type": "database",
-      "label": "SenseVoice 模型",
-      "sublabel": "INT8 · 230MB",
+      "label": "离线模型",
+      "sublabel": "SenseVoice / Fun-ASR-Nano",
       "pos": [
         640,
         256
@@ -627,7 +627,7 @@
       "title": "语音主链路",
       "items": [
         "按住热键：Windows 按住 CapsLock，macOS 按住右 Command；松开即上屏",
-        "SenseVoice 离线识别（CPU 约 25× 实时，中英混说）",
+        "SenseVoice / Fun-ASR-Nano 离线识别（CPU 约 25× 实时，中英混说）",
         "上屏按平台注册：Windows 四级（Ctrl+V → WM_PASTE → UIA → 剪贴板），macOS 两级（Cmd+V → 剪贴板）"
       ]
     },

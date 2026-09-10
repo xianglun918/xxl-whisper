@@ -5042,7 +5042,7 @@
         <path data-edge-from="recognizer" data-edge-to="emit" data-edge-label="识别文本" data-edge-key="4" data-edge-id="asr-out" data-composition-points="570,193;840,193" d="M 570 193 L 840 193" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="emit" data-edge-to="target" data-edge-label="Cmd+V / Ctrl+V / WM_PASTE" data-edge-key="6" data-edge-id="deliver" data-composition-points="970,193;1160,193" d="M 970 193 L 1160 193" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="downloader" data-edge-to="model" data-edge-label="下载校验" data-edge-key="7" data-edge-id="fetch" data-composition-points="570,283;640,283" d="M 570 283 L 640 283" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="model" data-edge-to="recognizer" data-edge-label="加载推理" data-edge-key="8" data-edge-id="load-model" data-composition-points="705,256;705,238;505,238;505,220" d="M 705 256 L 705.0 246.0 Q 705 238 697.0 238.0 L 513.0 238.0 Q 505 238 505.0 230.0 L 505 220" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="model" data-edge-to="recognizer" data-edge-label="加载推理" data-edge-key="8" data-edge-id="load-model" data-composition-points="720,256;720,238;505,238;505,220" d="M 720 256 L 720.0 246.0 Q 720 238 697.0 238.0 L 513.0 238.0 Q 505 238 505.0 230.0 L 505 220" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="orchestrator" data-edge-to="updater" data-edge-label="检查更新" data-edge-key="9" data-edge-id="update-check" data-composition-points="440,91;520,91" d="M 440 91 L 520 91" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="tray" data-edge-to="orchestrator" data-edge-label="暂停 / 换麦 / 退出" data-edge-key="10" data-edge-id="tray-cmd" data-composition-points="825,64;825,52;345,52;345,64" d="M 825 64 L 825.0 58.0 Q 825 52 819.0 52.0 L 351.0 52.0 Q 345 52 345.0 58.0 L 345 64" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="orchestrator" data-edge-to="native" data-edge-label="装配平台服务" data-edge-key="11" data-edge-id="native-assembly" data-composition-points="390,118;390,132;800,132;800,350" d="M 390 118 L 390.0 125.0 Q 390 132 397.0 132.0 L 792.0 132.0 Q 800 132 800.0 140.0 L 800 350" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
@@ -5122,15 +5122,15 @@
           <text data-node-label="" data-detail-anchor="" x="305" y="193" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Recorder</text>
           <text data-detail="context" x="305" y="208" class="t-muted" font-size="10" text-anchor="middle">16 kHz 门控</text>
         </g>
-        <g id="node-recognizer" data-node-id="recognizer" data-node-label="Recognizer" tabindex="0" role="button" aria-label="聚焦Recognizer，SenseVoice 离线, 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）" aria-pressed="false" data-node-kind="backend" data-node-sublabel="SenseVoice 离线" data-node-context="共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）">
-          <title>Recognizer · SenseVoice 离线 · 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）</title>
+        <g id="node-recognizer" data-node-id="recognizer" data-node-label="Recognizer" tabindex="0" role="button" aria-label="聚焦Recognizer，双模型离线, 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）" aria-pressed="false" data-node-kind="backend" data-node-sublabel="双模型离线" data-node-context="共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）">
+          <title>Recognizer · 双模型离线 · 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）</title>
           <rect x="440" y="166" width="130" height="54" rx="6" class="c-mask"/>
           <rect x="440" y="166" width="130" height="54" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(446 172) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="505" y="193" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Recognizer</text>
-          <text data-detail="context" x="505" y="208" class="t-muted" font-size="10" text-anchor="middle">SenseVoice 离线</text>
+          <text data-detail="context" x="505" y="208" class="t-muted" font-size="10" text-anchor="middle">双模型离线</text>
         </g>
         <g id="node-emit" data-node-id="emit" data-node-label="Emit 上屏链" tabindex="0" role="button" aria-label="聚焦Emit 上屏链，按平台注册通道, 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）" aria-pressed="false" data-node-kind="backend" data-node-sublabel="按平台注册通道" data-node-context="共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）">
           <title>Emit 上屏链 · 按平台注册通道 · 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）</title>
@@ -5152,15 +5152,15 @@
           <text data-node-label="" data-detail-anchor="" x="505" y="283" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Downloader</text>
           <text data-detail="context" x="505" y="298" class="t-muted" font-size="10" text-anchor="middle">hf-mirror 直链</text>
         </g>
-        <g id="node-model" data-node-id="model" data-node-label="SenseVoice 模型" tabindex="0" role="button" aria-label="聚焦SenseVoice 模型，INT8 · 230MB, 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）" aria-pressed="false" data-node-kind="database" data-node-sublabel="INT8 · 230MB" data-node-context="共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）">
-          <title>SenseVoice 模型 · INT8 · 230MB · 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）</title>
-          <rect x="640" y="256" width="130" height="54" rx="6" class="c-mask"/>
-          <rect x="640" y="256" width="130" height="54" rx="6" class="c-database" stroke-width="1.5"/>
+        <g id="node-model" data-node-id="model" data-node-label="离线模型" tabindex="0" role="button" aria-label="聚焦离线模型，SenseVoice / Fun-ASR-Nano, 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）" aria-pressed="false" data-node-kind="database" data-node-sublabel="SenseVoice / Fun-ASR-Nano" data-node-context="共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）">
+          <title>离线模型 · SenseVoice / Fun-ASR-Nano · 共享核心 · 跨平台（应用编排 + 识别 / 录音 / 下载 / 更新）</title>
+          <rect x="640" y="256" width="160" height="54" rx="6" class="c-mask"/>
+          <rect x="640" y="256" width="160" height="54" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(646 262) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="705" y="283" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">SenseVoice 模型</text>
-          <text data-detail="context" x="705" y="298" class="t-muted" font-size="10" text-anchor="middle">INT8 · 230MB</text>
+          <text data-node-label="" data-detail-anchor="" x="720" y="283" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">离线模型</text>
+          <text data-detail="context" x="720" y="298" class="t-muted" font-size="10" text-anchor="middle">SenseVoice / Fun-ASR-Nano</text>
         </g>
         <g id="node-native" data-node-id="native" data-node-label="app/native.py" tabindex="0" role="button" aria-label="聚焦app/native.py，io · util · hotkey · mousehook · indicator · uia, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="io · util · hotkey · mousehook · indicator · uia" data-node-tag="全仓唯一 sys.platform 点" data-node-context="架构组件">
           <title>app/native.py · io · util · hotkey · mousehook · indicator · uia · 架构组件 · 全仓唯一 sys.platform 点</title>
@@ -5643,7 +5643,7 @@
         </div>
         <ul>
           <li>&bull; 按住热键：Windows 按住 CapsLock，macOS 按住右 Command；松开即上屏</li>
-          <li>&bull; SenseVoice 离线识别（CPU 约 25× 实时，中英混说）</li>
+          <li>&bull; SenseVoice / Fun-ASR-Nano 离线识别（CPU 约 25× 实时，中英混说）</li>
           <li>&bull; 上屏按平台注册：Windows 四级（Ctrl+V → WM_PASTE → UIA → 剪贴板），macOS 两级（Cmd+V → 剪贴板）</li>
         </ul>
       </div>

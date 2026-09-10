@@ -155,7 +155,7 @@
       "id": "recognizer",
       "type": "backend",
       "label": "Recognizer",
-      "sublabel": "SenseVoice offline",
+      "sublabel": "dual-model, offline",
       "pos": [
         440,
         166
@@ -196,8 +196,8 @@
     {
       "id": "model",
       "type": "database",
-      "label": "SenseVoice model",
-      "sublabel": "INT8 · 230MB",
+      "label": "Offline models",
+      "sublabel": "SenseVoice / Fun-ASR-Nano",
       "pos": [
         640,
         256
@@ -627,7 +627,7 @@
       "title": "Voice path",
       "items": [
         "Hold the hotkey: CapsLock on Windows, Right Command on macOS; release and text lands on screen",
-        "SenseVoice offline recognition (~25× real time on CPU, mixed Chinese/English speech)",
+        "SenseVoice / Fun-ASR-Nano offline recognition (~25× real time on CPU, mixed Chinese/English speech)",
         "Output registered per platform: four levels on Windows (Ctrl+V → WM_PASTE → UIA → clipboard), two on macOS (Cmd+V → clipboard)"
       ]
     },
