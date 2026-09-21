@@ -1,3 +1,5 @@
+
+
 # xxl-whisper
 
 > 🌐 **中文** · [English](README.en.md)
@@ -37,7 +39,7 @@ Windows / macOS 双平台离线语音听写工具：**按住热键说话（Windo
 
 ```bash
 uv sync                  # 建虚拟环境装依赖
-uv run pytest tests -q   # 单测 + 集成测试（需已下载模型）
+uv run pytest tests -q   # 单测 + 集成测试（未下载模型时集成测试跳过）
 uv run python run.py     # 源码运行
 build.bat                # Windows 打包 -> dist\xxl-whisper.exe
 bash build.sh            # macOS 打包 -> dist/xxl-whisper-arm64.zip
