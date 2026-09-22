@@ -1,7 +1,14 @@
 """Pure unit tests for the calm listening-breath helpers (no display)."""
 
 import pytest
-from app.pulse import BREATH_MS, blend_hex, blend_rgb, breath_phase
+from app.pulse import (
+    BREATH_MS,
+    SHADE_STEPS,
+    blend_hex,
+    blend_rgb,
+    breath_phase,
+    quantize_shade,
+)
 
 
 def test_breath_starts_and_ends_at_the_trough() -> None:
@@ -46,3 +53,28 @@ def test_blend_hex_midpoint_and_clamping() -> None:
 
 def test_blend_rgb_interpolates_each_channel() -> None:
     assert blend_rgb((0.0, 0.0, 0.0), (1.0, 0.5, 0.25), 0.5) == (0.5, 0.25, 0.125)
+
+
+def test_quantize_shade_keeps_the_endpoints() -> None:
+    assert quantize_shade(0.0) == 0.0
+    assert quantize_shade(1.0) == 1.0
+
+
+def test_quantize_shade_snaps_to_even_steps() -> None:
+    assert quantize_shade(0.5) == 0.5
+    assert quantize_shade(0.1) == 1 / SHADE_STEPS
+    assert quantize_shade(0.6) == 5 / SHADE_STEPS
+
+
+def test_quantize_shade_clamps_out_of_range_input() -> None:
+    assert quantize_shade(-5.0) == 0.0
+    assert quantize_shade(5.0) == 1.0
+
+
+def test_quantize_shade_with_zero_steps_is_identity() -> None:
+    assert quantize_shade(0.37, steps=0) == pytest.approx(0.37)
+
+
+def test_quantize_shade_collapses_a_breath_to_a_few_shades() -> None:
+    shades = {quantize_shade(breath_phase(ms)) for ms in range(0, BREATH_MS, 10)}
+    assert len(shades) <= SHADE_STEPS + 1

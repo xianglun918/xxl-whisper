@@ -17,7 +17,7 @@ from functools import partial
 from typing import assert_never
 
 from app import winio
-from app.pulse import LEVEL_DECAY, LEVEL_GAIN, blend_hex, breath_phase
+from app.pulse import LEVEL_DECAY, LEVEL_GAIN, blend_hex, breath_phase, quantize_shade
 
 _user32 = ctypes.WinDLL("user32")
 _GWL_EXSTYLE: int = -20
@@ -189,6 +189,7 @@ class Indicator:
         self._live = False
         self._pulse_job: str | None = None
         self._pulse_elapsed_ms = 0
+        self._last_shade: str | None = None  # last fg applied; skips no-op frames
         self._level = 0.0
         self._level_lock = threading.Lock()
         self._started.set()
@@ -275,6 +276,7 @@ class Indicator:
         """Enter sticky listening mode and start the slow breath."""
         self._live = True
         self._pulse_elapsed_ms = 0
+        self._last_shade = _ACCENT_SOFT
         self._label.configure(text=text, fg=_ACCENT_SOFT)  # trough: breath rises in
         self._place()
         self._schedule_pulse()
@@ -305,7 +307,10 @@ class Indicator:
             level = self._level
             self._level *= LEVEL_DECAY
         intensity = min(1.0, breath_phase(self._pulse_elapsed_ms) + level * LEVEL_GAIN)
-        self._label.configure(fg=blend_hex(_ACCENT_SOFT, _ACCENT, intensity))
+        shade = blend_hex(_ACCENT_SOFT, _ACCENT, quantize_shade(intensity))
+        if shade != self._last_shade:  # the quantised breath only reconfigures on a step
+            self._last_shade = shade
+            self._label.configure(fg=shade)
         self._pulse_elapsed_ms += _PULSE_MS
         self._pulse_job = self._root.after(_PULSE_MS, self._pulse_tick)
 
@@ -313,6 +318,7 @@ class Indicator:
         """Leave live mode and cancel any pending breath callback (no leaks)."""
         self._live = False
         self._pulse_elapsed_ms = 0
+        self._last_shade = None
         with self._level_lock:
             self._level = 0.0
         job = self._pulse_job

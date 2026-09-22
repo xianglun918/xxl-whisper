@@ -13,6 +13,8 @@ returned order and stops at the first success.
 """
 
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, assert_never
@@ -20,6 +22,44 @@ from typing import Protocol, assert_never
 from app import native
 
 log = logging.getLogger(__name__)
+
+#: How long an injection probe's answer is trusted. ``keyboard_injection_alive``
+#: presses F13 and sleeps 10 ms, so probing on every sentence of a burst is
+#: wasted work; caching makes a burst probe once. The trade-off: a keyboard-hook
+#: blocker that appears mid-burst is only noticed up to this TTL late — well
+#: under the time a user would perceive, while a probe that already ran this
+#: burst is not repeated.
+_INJECTION_TTL_S: float = 4.0
+
+
+class ProbeCache:
+    """Short-TTL cache for an expensive boolean probe, keyed on the callable.
+
+    Keying on the probe's identity means a monkeypatched probe (tests) is never
+    served a stale answer, while production's stable module function is cached.
+    The clock is injectable so the TTL is unit-tested without sleeping.
+    """
+
+    def __init__(self, ttl_s: float, clock: Callable[[], float]) -> None:
+        self._ttl_s = ttl_s
+        self._clock = clock
+        self._probe: Callable[[], bool] | None = None
+        self._value = False
+        self._expires_at = 0.0
+
+    def get(self, probe: Callable[[], bool]) -> bool:
+        """Return the cached value, refreshing it once the TTL has elapsed."""
+        now = self._clock()
+        if probe is self._probe and now < self._expires_at:
+            return self._value
+        value = probe()
+        self._probe = probe
+        self._value = value
+        self._expires_at = now + self._ttl_s
+        return value
+
+
+_INJECTION_PROBE = ProbeCache(_INJECTION_TTL_S, time.monotonic)
 
 
 class Channel(StrEnum):
@@ -110,7 +150,9 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
     window = native.io.foreground_window_title()
     focus_hwnd = native.io.focused_control_hwnd()
     control_class = native.io.focused_control_class()
-    alive = native.io.keyboard_injection_alive()
+    # Cached for a short TTL: a burst of sentences probes once, while a genuinely
+    # new blocker is still detected after the TTL (see ProbeCache).
+    alive = _INJECTION_PROBE.get(native.io.keyboard_injection_alive)
     log.info(
         "emit: target window=%r focus_hwnd=0x%X class=%r injection_alive=%s",
         window,

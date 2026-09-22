@@ -48,11 +48,21 @@ jobs:
           path: dist
           merge-multiple: true
       - run: ls -l dist
+      - name: Write release checksums
+        working-directory: dist
+        run: |
+          sha256sum xxl-whisper.exe | cut -d' ' -f1 > xxl-whisper.exe.sha256
+          sha256sum xxl-whisper-arm64.zip | cut -d' ' -f1 > xxl-whisper-arm64.zip.sha256
+          ls -l ./*.sha256
       - name: Create or update the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/xxl-whisper.exe dist/xxl-whisper-arm64.zip \
+          gh release create "$GITHUB_REF_NAME" \
+            dist/xxl-whisper.exe dist/xxl-whisper.exe.sha256 \
+            dist/xxl-whisper-arm64.zip dist/xxl-whisper-arm64.zip.sha256 \
             --title "$GITHUB_REF_NAME" --generate-notes --repo "$GITHUB_REPOSITORY" \
-          || gh release upload "$GITHUB_REF_NAME" dist/xxl-whisper.exe dist/xxl-whisper-arm64.zip \
+          || gh release upload "$GITHUB_REF_NAME" \
+            dist/xxl-whisper.exe dist/xxl-whisper.exe.sha256 \
+            dist/xxl-whisper-arm64.zip dist/xxl-whisper-arm64.zip.sha256 \
             --clobber --repo "$GITHUB_REPOSITORY"

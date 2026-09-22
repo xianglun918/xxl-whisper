@@ -22,3 +22,6 @@ dist/
 # macOS
 .DS_Store
 .playwright-mcp/
+
+# Local notes (never published or committed)
+.local/

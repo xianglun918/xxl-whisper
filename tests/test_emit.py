@@ -11,6 +11,7 @@ from app.emit import (
     Channel,
     DeliveryPath,
     EmitSettings,
+    ProbeCache,
     TargetProbe,
     channels_in_order,
     choose_delivery_path,
@@ -150,3 +151,83 @@ def test_emit_text_clipboard_paste_path_stages_and_restores(
     assert staged == ["hello"]
     assert pasted == [("hello", True, 42)]
     assert indicator.hidden == 1
+
+
+class _Clock:
+    """Deterministic monotonic clock for the TTL tests."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_probe_cache_reuses_a_value_within_the_ttl() -> None:
+    clock = _Clock()
+    cache = ProbeCache(ttl_s=4.0, clock=clock)
+    calls: list[int] = []
+
+    def probe() -> bool:
+        calls.append(1)
+        return True
+
+    assert cache.get(probe) is True
+    clock.now = 3.9
+    assert cache.get(probe) is True
+    assert len(calls) == 1
+
+
+def test_probe_cache_refreshes_once_the_ttl_elapses() -> None:
+    clock = _Clock()
+    cache = ProbeCache(ttl_s=4.0, clock=clock)
+    calls: list[int] = []
+
+    def probe() -> bool:
+        calls.append(1)
+        return False  # a genuinely new blocker appears
+
+    assert cache.get(probe) is False
+    clock.now = 4.0
+    assert cache.get(probe) is False
+    assert len(calls) == 2
+
+
+def test_probe_cache_does_not_serve_one_probe_another_probes_answer() -> None:
+    clock = _Clock()
+    cache = ProbeCache(ttl_s=4.0, clock=clock)
+
+    def alive() -> bool:
+        return True
+
+    def dead() -> bool:
+        return False
+
+    assert cache.get(alive) is True
+    assert cache.get(dead) is False  # identity change forces a fresh probe
+
+
+def test_emit_text_probes_injection_once_per_burst(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A burst of sentences must not re-press F13 for every emit."""
+    _stub_target(monkeypatch)
+    monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
+    monkeypatch.setattr(native.io, "set_clipboard_text", lambda _text: None)
+
+    def _noop_paste(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(native.io, "paste_text", _noop_paste)
+    calls: list[int] = []
+
+    def probe() -> bool:
+        calls.append(1)
+        return True
+
+    monkeypatch.setattr(native.io, "keyboard_injection_alive", probe)
+    indicator = _FakeIndicator()
+    settings = EmitSettings(restore_clipboard=True, paste_delay_ms=0)
+
+    emit_text("a", settings, indicator)
+    emit_text("b", settings, indicator)
+
+    assert len(calls) == 1

@@ -73,6 +73,27 @@ def acquire_single_instance() -> bool:
     return True
 
 
+def instance_running() -> bool:
+    """Whether another process holds the single-instance lock.
+
+    Probes the lock file without keeping it, mirroring ``winutil`` so the
+    platform facade stays symmetric (the self-update helper is Windows-only,
+    so this is never reached at runtime on macOS).
+    """
+    lock_path = _DATA_ROOT / "xxl-whisper.lock"
+    if not lock_path.exists():
+        return False
+    handle = lock_path.open("w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return True
+    fcntl.flock(handle, fcntl.LOCK_UN)
+    handle.close()
+    return False
+
+
 def _dialog_script(message: str, *, title: str, buttons: str = "", icon: str = "") -> str:
     """Build a ``display dialog`` AppleScript for the given parts."""
     parts = [f"display dialog {_as_literal(message)}"]

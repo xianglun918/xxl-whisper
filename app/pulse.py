@@ -16,6 +16,11 @@ BREATH_MS: int = 2000
 LEVEL_GAIN: float = 0.30
 #: Per-frame decay of the sampled mic level, so the breath settles when silent.
 LEVEL_DECAY: float = 0.85
+#: Discrete shades the breath snaps to. Adjacent 1/8 shades of the accent are
+#: indistinguishable at this size, so quantising lets a tick skip the widget
+#: reconfigure on most frames (~8 updates per breath, not ~50) while the eye
+#: still sees a smooth cycle.
+SHADE_STEPS: int = 8
 
 _TAU: float = 2.0 * math.pi
 
@@ -30,6 +35,18 @@ def breath_phase(elapsed_ms: int, period_ms: int = BREATH_MS) -> float:
         return 0.0
     fraction = (elapsed_ms % period_ms) / period_ms
     return (1.0 - math.cos(_TAU * fraction)) / 2.0
+
+
+def quantize_shade(intensity: float, steps: int = SHADE_STEPS) -> float:
+    """Snap a 0..1 breath intensity to one of *steps* even shades.
+
+    Quantising the breath lets the indicator reconfigure its colour only when
+    the shade actually changes, instead of on every frame. ``steps <= 0``
+    disables quantisation (returns the clamped input).
+    """
+    if steps <= 0:
+        return _clamp(intensity)
+    return round(_clamp(intensity) * steps) / steps
 
 
 def blend_hex(start: str, end: str, t: float) -> str:

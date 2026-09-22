@@ -5,7 +5,17 @@ import json
 
 import app.updater as upd
 import pytest
-from app.updater import UpdateCheckError, fetch_latest_release, is_newer, parse_version
+from app.updater import (
+    AssetInfo,
+    ReleaseInfo,
+    UpdateCheckError,
+    fetch_checksum,
+    fetch_latest_release,
+    find_update_assets,
+    is_newer,
+    parse_checksum,
+    parse_version,
+)
 
 
 def test_parse_version_accepts_v_prefix() -> None:
@@ -89,3 +99,93 @@ def test_fetch_latest_release_rejects_bad_payload(
     monkeypatch.setattr(upd.urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(UpdateCheckError):
         fetch_latest_release()
+
+
+def test_fetch_latest_release_parses_assets(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = json.dumps(
+        {
+            "tag_name": "v0.3.0",
+            "html_url": "https://example.invalid/v0.3.0",
+            "body": "",
+            "assets": [
+                {
+                    "name": "xxl-whisper.exe",
+                    "browser_download_url": "https://example.invalid/x.exe",
+                    "size": 1234,
+                },
+                {
+                    "name": "xxl-whisper.exe.sha256",
+                    "browser_download_url": "https://example.invalid/x.sha256",
+                },
+                42,
+                "not-a-dict",
+            ],
+        }
+    ).encode("utf-8")
+
+    def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr(upd.urllib.request, "urlopen", fake_urlopen)
+    release = fetch_latest_release()
+
+    assert [asset.name for asset in release.assets] == [
+        "xxl-whisper.exe",
+        "xxl-whisper.exe.sha256",
+    ]
+    assert release.assets[0].size == 1234
+    assert release.assets[1].size is None
+
+
+def _release_with(assets: list[AssetInfo]) -> ReleaseInfo:
+    return ReleaseInfo(
+        tag="v0.3.0", version=(0, 3, 0), url="u", notes="", assets=tuple(assets)
+    )
+
+
+def test_find_update_assets_requires_exe_and_checksum() -> None:
+    exe = AssetInfo(name="xxl-whisper.exe", url="u1", size=10)
+    sum_asset = AssetInfo(name="xxl-whisper.exe.sha256", url="u2", size=None)
+
+    found = find_update_assets(_release_with([exe, sum_asset]))
+    assert found is not None
+    assert found.exe == exe
+    assert found.checksum == sum_asset
+
+    assert find_update_assets(_release_with([exe])) is None
+    assert find_update_assets(_release_with([sum_asset])) is None
+    assert find_update_assets(_release_with([])) is None
+
+
+def test_parse_checksum_accepts_bare_and_sha256sum_output() -> None:
+    digest = "a" * 64
+    assert parse_checksum(digest) == digest
+    assert parse_checksum(f"{digest}  xxl-whisper.exe") == digest
+    assert parse_checksum(f"  {digest.upper()}\n") == digest
+
+
+def test_parse_checksum_rejects_garbage() -> None:
+    for bad in ("", "abc", "z" * 64, "a" * 63, "a" * 65):
+        with pytest.raises(UpdateCheckError):
+            parse_checksum(bad)
+
+
+def test_fetch_checksum_parses_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    digest = "b" * 64
+
+    def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
+        return _FakeResponse(digest.encode())
+
+    monkeypatch.setattr(upd.urllib.request, "urlopen", fake_urlopen)
+    assert fetch_checksum("https://example.invalid/x.sha256") == digest
+
+
+def test_fetch_checksum_wraps_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    reason = "connection reset"
+
+    def boom(request: object, timeout: float) -> _FakeResponse:
+        raise OSError(reason)
+
+    monkeypatch.setattr(upd.urllib.request, "urlopen", boom)
+    with pytest.raises(UpdateCheckError):
+        fetch_checksum("https://example.invalid/x.sha256")

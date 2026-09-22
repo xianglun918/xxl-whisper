@@ -12,12 +12,17 @@ _ERROR_ALREADY_EXISTS = 183
 _IDYES = 6
 _MB_SETFOREGROUND = 0x00010000
 _MB_TOPMOST = 0x00040000
+_SYNCHRONIZE = 0x00100000
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 kernel32.CreateMutexW.restype = wintypes.HANDLE
 kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+kernel32.OpenMutexW.restype = wintypes.HANDLE
+kernel32.OpenMutexW.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
+kernel32.CloseHandle.restype = wintypes.BOOL
+kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
 user32.MessageBoxW.argtypes = (
     wintypes.HWND,
     wintypes.LPCWSTR,
@@ -57,6 +62,19 @@ def acquire_single_instance() -> bool:
     global _mutex_handle  # noqa: PLW0603 — handle must outlive this call
     _mutex_handle = kernel32.CreateMutexW(None, False, _MUTEX_NAME)
     return ctypes.get_last_error() != _ERROR_ALREADY_EXISTS
+
+
+def instance_running() -> bool:
+    """Whether another process holds the single-instance mutex.
+
+    Probes with ``OpenMutexW`` (never creating one) so the update helper can
+    watch for the running app to exit without owning the mutex itself.
+    """
+    handle = kernel32.OpenMutexW(_SYNCHRONIZE, False, _MUTEX_NAME)
+    if not handle:
+        return False
+    kernel32.CloseHandle(handle)
+    return True
 
 
 def show_error(message: str) -> None:

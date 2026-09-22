@@ -128,6 +128,18 @@ class Segmenter:
             return None
         return np.array(segment.samples, dtype=np.float32, copy=True)
 
+    def current_sample_count(self) -> int:
+        """Return the in-progress segment's sample count, without copying it.
+
+        The continuous VAD loop consults this before :meth:`current_samples` so
+        it can skip the O(N) copy for an utterance past the partial ceiling;
+        ``len`` on the VAD's own sample list is O(1).
+        """
+        segment = self._vad.current_segment
+        if segment is None:
+            return 0
+        return len(segment.samples)
+
     def drain(self) -> list[np.ndarray]:
         """Speech segments finished since the last drain, in order."""
         segments: list[np.ndarray] = []

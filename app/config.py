@@ -119,6 +119,11 @@ def models_root() -> Path:
     return config_dir() / "models"
 
 
+def updates_dir() -> Path:
+    """Where downloaded release builds are staged (%LOCALAPPDATA%/xxl-whisper/updates)."""
+    return config_dir() / "updates"
+
+
 def hotkey_vk(hotkey: str | int) -> int:
     """Resolve a preset name or raw VK into the virtual-key code."""
     if isinstance(hotkey, int):

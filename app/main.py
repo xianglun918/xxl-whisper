@@ -8,12 +8,20 @@ from pathlib import Path
 from app import native
 from app.app import DictationApp
 from app.config import ConfigError, config_dir, config_path, load_config
+from app.selfupdate import parse_update_args, run_helper
 
 
 def entry() -> None:
     """Process entry: never returns when the app runs to completion."""
     config_dir().mkdir(parents=True, exist_ok=True)
     _setup_logging()
+    # The self-update helper runs before any normal startup: no tray, no config
+    # prompt, and crucially no single-instance acquisition (it must observe the
+    # running app release that mutex, not compete with it).
+    request = parse_update_args(sys.argv[1:])
+    if request is not None:
+        run_helper(request)
+        return
     native.util.set_dpi_awareness()
     if not native.util.acquire_single_instance():
         native.util.show_error("xxl-whisper 已在运行（请查看托盘图标）。")

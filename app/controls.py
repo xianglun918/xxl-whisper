@@ -50,6 +50,7 @@ class ControlsDeps:
     ]
     get_recorder: Callable[[], Recorder | None]
     rebuild_recorder: Callable[[str], Recorder]
+    release_recognizer: Callable[[], None]
     models_root: Path
     num_threads: Callable[[], int]
     language: Callable[[], str]
@@ -151,6 +152,10 @@ class Controls:
             dataclasses.replace(config, model=kind, disfluency=new_disfluency)
         )
         save_config(config_path(), self._deps.get_config())
+        # Release the outgoing model *before* allocating the new one so the two
+        # never overlap in memory (peak ~1.25 GB -> one model). The decode
+        # threads re-read the recognizer and skip while it is None.
+        self._deps.release_recognizer()
         recognizer = self._build_recognizer(kind_typed)
         self._deps.tray.refresh_menu()
         self._deps.indicator.flash("模型已切换", 1200)
@@ -170,6 +175,7 @@ class Controls:
         self._deps.tray.refresh_menu()
         if config.model == "funasr_nano":
             log.info("disfluency -> %s: rebuilding funasr_nano recognizer", new)
+            self._deps.release_recognizer()  # drop the old model before rebuilding
             return self._build_recognizer(config.model)
         log.warning(
             "disfluency -> %s: model=%s cannot apply smoothing (only funasr_nano)",
