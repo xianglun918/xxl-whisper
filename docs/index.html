@@ -109,6 +109,31 @@ section{padding:96px 0}
 .step p{font-size:15px;color:var(--ink2)}
 .step .g{font-family:var(--mono);font-size:12px;color:var(--ink3);display:block;margin-bottom:6px}
 
+/* continuous spotlight */
+.live-card{background:#fff;border-radius:12px;box-shadow:var(--card-shadow);padding:24px;overflow:hidden}
+.live-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px;flex-wrap:wrap}
+.live-title{font-size:15px;font-weight:600}
+.live-hint{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+.canvas-wrap{position:relative;width:100%}
+#ct-canvas{display:block;width:100%}
+.ct-transcript{list-style:none;display:flex;flex-direction:column;gap:8px;margin:20px 0 0;padding:0}
+.ct-transcript li{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;background:#fafafa;box-shadow:0 0 0 1px var(--ring);opacity:0;transform:translateY(6px);transition:opacity .45s ease,transform .45s cubic-bezier(.16,1,.3,1)}
+.ct-transcript li.show{opacity:1;transform:none}
+.ct-transcript .ts{font-family:var(--mono);font-size:12px;color:var(--accent);min-width:52px}
+.ct-transcript .tx{font-size:16px;color:var(--ink)}
+.live-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:20px}
+.live-note{font-family:var(--mono);font-size:12px;color:var(--ink3);margin-left:auto}
+.btn .i-pause{display:none}
+.btn.is-playing .i-play{display:none}
+.btn.is-playing .i-pause{display:inline-flex}
+.proof{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+.proof-item{display:flex;align-items:baseline;gap:8px;background:#fafafa;border-radius:8px;box-shadow:0 0 0 1px var(--ring);padding:10px 14px}
+.proof-k{font-size:13px;color:var(--ink3)}
+.proof-v{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--ink)}
+.proof-v em{font-style:normal;color:var(--accent)}
+.proof-v.zero{color:var(--tag-green-tx)}
+.live-more{margin-top:20px;font-size:14px}
+
 /* models */
 .models{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .model{position:relative;background:#fff;border-radius:12px;box-shadow:var(--card-shadow);padding:40px}
@@ -143,7 +168,7 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
 /* reveal */
 .reveal{opacity:0;transform:translateY(12px);transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
 .reveal.on{opacity:1;transform:none}
-@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}.wave span{animation:none}}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}.wave span{animation:none}.ct-transcript li{opacity:1;transform:none;transition:none}}
 
 /* responsive */
 @media (max-width:900px){
@@ -158,6 +183,8 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
   .hero{padding:72px 0 48px}
   section{padding:64px 0}
   .sec-title{font-size:30px}
+  .live-card{padding:16px}
+  .live-note{margin-left:0;width:100%}
 }
 </style>
 </head>
@@ -288,6 +315,44 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
   </div>
 </section>
 
+<section id="continuous">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">Live</div>
+    <h2 class="sec-title">持续听写：不用按任何键，说完一句就上屏</h2>
+    <p class="sec-desc">内置 VAD 只在检测到人声时才识别——静音和背景噪音一个字都不出。</p></div>
+    <div class="live-card reveal">
+      <div class="live-head">
+        <span class="live-title">实时演示 · 9.9s TTS 语音</span>
+        <span class="live-hint">滚动到此处自动播放</span>
+      </div>
+      <div class="canvas-wrap"><canvas id="ct-canvas" role="img" aria-label="持续听写 VAD 时序演示：波形轨、VAD 门控轨与识别分段轨"></canvas></div>
+      <ul class="ct-transcript">
+        <li><span class="ts">2.95s</span><span class="tx">今天天气怎么样？</span></li>
+        <li><span class="ts">3.43s</span><span class="tx">我们一起去吃火锅吧。</span></li>
+        <li><span class="ts">0.79s</span><span class="tx">这个。</span></li>
+      </ul>
+      <div class="live-controls">
+        <button class="btn btn-dark" id="ct-play" type="button" aria-pressed="false">
+          <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>
+          <svg class="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+          <span class="btn-label">播放</span>
+        </button>
+        <button class="btn btn-ghost" id="ct-replay" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+          重播
+        </button>
+        <span class="live-note">Silero VAD · threshold 0.5 · min_speech 250ms</span>
+      </div>
+    </div>
+    <div class="proof reveal">
+      <div class="proof-item"><span class="proof-k">真实语音</span><span class="proof-v"><em>7.24s</em> 检出</span></div>
+      <div class="proof-item"><span class="proof-k">静音</span><span class="proof-v zero">0 段</span></div>
+      <div class="proof-item"><span class="proof-k">白噪 rms 0.02 / 0.10 / 0.30</span><span class="proof-v zero">0 段</span></div>
+    </div>
+    <div class="live-more reveal"><a href="continuous.html">查看完整演示 →</a></div>
+  </div>
+</section>
+
 <section id="models" style="background:#fafafa;box-shadow:0 0 0 1px var(--ring)">
   <div class="wrap">
     <div class="reveal"><div class="sec-label">Models</div>
@@ -349,6 +414,261 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
     entries.forEach(function(en){if(en.isIntersecting){en.target.classList.add('on');io.unobserve(en.target)}})
   },{threshold:0.12});
   els.forEach(function(e){io.observe(e)});
+})();
+
+/* continuous dictation spotlight demo */
+(function(){
+  var canvas=document.getElementById('ct-canvas');
+  if(!canvas||!canvas.getContext) return;
+  var ctx=canvas.getContext('2d');
+  var reduce=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var FONT='"Geist",-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif';
+  var MONO='"Geist Mono",ui-monospace,"Consolas",monospace';
+  var COL={accent:'#0a72ef',rec:'#ff5b4f',ink3:'#666666',barIdle:'#e9e9e9',barPast:'#d5d5d5',noise:'#cfcfcf',noiseIdle:'#ededed',gateOff:'#e3e3e3',trackBg:'#fafafa'};
+  var TOTAL=11.6;
+  var VOICE=[{start:0.70,end:3.65,dur:'2.95s'},{start:4.35,end:7.78,dur:'3.43s'},{start:8.38,end:9.17,dur:'0.79s'}];
+  var NOISE={start:9.75,end:11.45};
+  var W=0,H=0,dpr=1,plotX=0,plotW=0,step=3,bars=[],trackY=null,noteY=0,legendY=0,short=false;
+  var st={t:0,playing:false,last:0,raf:0};
+  var items=document.querySelectorAll('.ct-transcript li');
+
+  function hash(n){var s=Math.sin(n*127.1+311.7)*43758.5453;return s-Math.floor(s);}
+  function regionAt(t){
+    for(var i=0;i<VOICE.length;i++){if(t>=VOICE[i].start&&t<=VOICE[i].end)return{kind:'voice',i:i};}
+    if(t>=NOISE.start&&t<=NOISE.end)return{kind:'noise'};
+    return{kind:'silence'};
+  }
+  function segBottom(){return trackY.seg.y+trackY.seg.h;}
+  function xOf(t){return plotX+(Math.min(t,TOTAL)/TOTAL)*plotW;}
+  function rr(x,y,w,h,r){
+    if(w<0){x+=w;w=-w;}if(h<0){y+=h;h=-h;}
+    r=Math.min(r,h/2,w/2);if(r<0)r=0;
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);
+    ctx.closePath();
+  }
+  function buildBars(){
+    step=short?2.4:3;
+    var n=Math.max(8,Math.floor(plotW/step));
+    bars=[];
+    for(var i=0;i<n;i++){
+      var t=(i/(n-1))*TOTAL,reg=regionAt(t),amp;
+      if(reg.kind==='voice'){
+        var s=VOICE[reg.i],u=(t-s.start)/(s.end-s.start);
+        var env=Math.min(1,u*7,(1-u)*7);if(env<0)env=0;
+        amp=Math.max(0.10,env*(0.32+0.68*hash(i*1.7+1)));
+      }else if(reg.kind==='noise'){
+        amp=0.10+0.06*hash(i*2.3+5);
+      }else{
+        amp=0.035+0.03*hash(i*3.1+9);
+      }
+      bars.push({t:t,amp:amp,kind:reg.kind});
+    }
+  }
+  function layout(){
+    var wrap=canvas.parentElement;
+    var cw=wrap.clientWidth||wrap.getBoundingClientRect().width||320;
+    W=Math.max(300,Math.round(cw));
+    short=W<560;
+    H=short?300:312;
+    dpr=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.round(W*dpr);
+    canvas.height=Math.round(H*dpr);
+    canvas.style.width='100%';
+    canvas.style.height=H+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    var labw=short?56:64;
+    plotX=14+labw;
+    plotW=W-plotX-14;
+    trackY={
+      wave:{y:34,h:54,label:'波形'},
+      gate:{y:110,h:40,label:'VAD 门控'},
+      seg:{y:170,h:46,label:'识别分段'}
+    };
+    noteY=H-70;
+    legendY=H-20;
+    buildBars();
+    draw();
+  }
+  function drawBgs(){
+    var names=['wave','gate','seg'];
+    ctx.font='12px '+FONT;
+    for(var k=0;k<3;k++){
+      var tr=trackY[names[k]];
+      ctx.fillStyle=COL.trackBg;
+      rr(plotX,tr.y,plotW,tr.h,6);ctx.fill();
+      ctx.fillStyle=COL.ink3;
+      ctx.textAlign='right';ctx.textBaseline='middle';
+      ctx.fillText(tr.label,plotX-10,tr.y+tr.h/2);
+    }
+    var nx1=xOf(NOISE.start),nx2=xOf(NOISE.end);
+    ctx.save();
+    ctx.strokeStyle='rgba(0,0,0,0.07)';
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    ctx.moveTo(nx1,22);ctx.lineTo(nx1,segBottom());
+    ctx.moveTo(nx2,22);ctx.lineTo(nx2,segBottom());
+    ctx.stroke();
+    ctx.restore();
+  }
+  function drawWave(){
+    var tr=trackY.wave,cy=tr.y+tr.h/2,bw=Math.max(1.2,step-1);
+    for(var i=0;i<bars.length;i++){
+      var b=bars[i];
+      var h=Math.max(3,b.amp*tr.h*0.92);
+      var x=plotX+i*step;
+      var past=b.t<=st.t,col;
+      if(b.kind==='voice')col=past?COL.accent:COL.barIdle;
+      else if(b.kind==='noise')col=past?COL.noise:COL.noiseIdle;
+      else col=past?COL.barPast:COL.barIdle;
+      ctx.fillStyle=col;
+      ctx.fillRect(x,cy-h/2,bw,h);
+    }
+  }
+  function drawGate(){
+    var tr=trackY.gate,cy=tr.y+tr.h/2,bw=Math.max(1.2,step-1);
+    ctx.fillStyle='rgba(0,0,0,0.05)';
+    ctx.fillRect(plotX,cy-1,plotW,2);
+    for(var i=0;i<bars.length;i++){
+      var b=bars[i];
+      var open=(b.kind==='voice'&&b.t<=st.t);
+      var h=open?tr.h*0.78:5;
+      ctx.fillStyle=open?COL.accent:COL.gateOff;
+      ctx.fillRect(plotX+i*step,cy-h/2,bw,h);
+    }
+  }
+  function drawSegs(){
+    var tr=trackY.seg;
+    for(var i=0;i<VOICE.length;i++){
+      var s=VOICE[i];
+      if(st.t<s.end)continue;
+      var x1=xOf(s.start),x2=xOf(s.end);
+      var g=Math.min(1,(st.t-s.end)/0.28);
+      var gw=(x2-x1)*(1-Math.pow(1-g,3));
+      if(gw<1)continue;
+      ctx.fillStyle=COL.accent;
+      rr(x1,tr.y,gw,tr.h,6);ctx.fill();
+      if(g>0.6){
+        ctx.fillStyle=COL.accent;
+        ctx.font='600 11px '+MONO;
+        ctx.textAlign='center';ctx.textBaseline='alphabetic';
+        ctx.fillText(s.dur,(x1+x2)/2,tr.y-8);
+      }
+    }
+  }
+  function drawNoiseNote(){
+    var a=Math.max(0,Math.min(1,(st.t-(NOISE.start-0.1))/0.45));
+    if(a<=0)return;
+    var cx=(xOf(NOISE.start)+xOf(NOISE.end))/2;
+    var label=short?'环境噪音 · 0 字':'环境噪音 · 已忽略，0 字';
+    ctx.save();
+    ctx.globalAlpha=a;
+    ctx.font=(short?'11px ':'12px ')+FONT;
+    var tw=ctx.measureText(label).width;
+    var pw=tw+36,ph=26;
+    var px=Math.min(Math.max(cx-pw/2,plotX),Math.max(plotX,plotX+plotW-pw));
+    ctx.fillStyle='#f5f5f5';
+    rr(px,noteY,pw,ph,9999);ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.08)';
+    ctx.lineWidth=1;
+    rr(px+0.5,noteY+0.5,pw-1,ph-1,9999);ctx.stroke();
+    ctx.fillStyle=COL.rec;
+    ctx.beginPath();ctx.arc(px+17,noteY+ph/2,3.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=COL.ink3;
+    ctx.textAlign='left';ctx.textBaseline='middle';
+    ctx.fillText(label,px+28,noteY+ph/2+0.5);
+    ctx.restore();
+  }
+  function drawPlayhead(){
+    var x=xOf(st.t);
+    ctx.strokeStyle=COL.rec;
+    ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(x,20);ctx.lineTo(x,segBottom());ctx.stroke();
+    ctx.fillStyle=COL.rec;
+    ctx.beginPath();ctx.arc(x,20,3.5,0,Math.PI*2);ctx.fill();
+  }
+  function drawLegend(){
+    var itemsArr=short
+      ?[{c:COL.accent,t:'人声'},{c:COL.noise,t:'噪音'},{c:COL.rec,t:'播放头'}]
+      :[{c:COL.accent,t:'人声（VAD 开启）'},{c:COL.noise,t:'背景噪音（忽略）'},{c:COL.rec,t:'播放头'}];
+    ctx.font='11px '+FONT;
+    ctx.textAlign='left';ctx.textBaseline='middle';
+    var x=plotX;
+    for(var i=0;i<itemsArr.length;i++){
+      ctx.fillStyle=itemsArr[i].c;
+      ctx.fillRect(x,legendY-4.5,9,9);
+      ctx.fillStyle=COL.ink3;
+      ctx.fillText(itemsArr[i].t,x+14,legendY+0.5);
+      x+=14+ctx.measureText(itemsArr[i].t).width+22;
+    }
+  }
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    drawBgs();drawWave();drawGate();drawSegs();drawNoiseNote();drawPlayhead();drawLegend();
+  }
+  function updateTexts(){
+    for(var i=0;i<items.length;i++){var s=VOICE[i];if(!s)continue;if(st.t>=s.end)items[i].classList.add('show');}
+  }
+  function resetTexts(){
+    for(var i=0;i<items.length;i++)items[i].classList.remove('show');
+  }
+  var btnPlay=document.getElementById('ct-play');
+  var btnReplay=document.getElementById('ct-replay');
+  var btnLabel=btnPlay?btnPlay.querySelector('.btn-label'):null;
+  function syncBtn(){
+    if(!btnPlay)return;
+    btnPlay.classList.toggle('is-playing',st.playing);
+    btnPlay.setAttribute('aria-pressed',st.playing?'true':'false');
+    if(btnLabel)btnLabel.textContent=st.playing?'暂停':'播放';
+  }
+  function renderFinal(){
+    st.t=TOTAL;st.playing=false;updateTexts();draw();syncBtn();
+  }
+  function tick(ts){
+    if(!st.playing)return;
+    if(!st.last)st.last=ts;
+    var dt=(ts-st.last)/1000;st.last=ts;
+    if(dt>0.06)dt=0.06;
+    st.t+=dt*1.25;
+    if(st.t>=TOTAL){st.t=TOTAL;st.playing=false;updateTexts();draw();syncBtn();return;}
+    updateTexts();draw();
+    st.raf=requestAnimationFrame(tick);
+  }
+  function play(){
+    if(reduce){renderFinal();return;}
+    if(st.t>=TOTAL){st.t=0;resetTexts();}
+    if(st.playing)return;
+    st.playing=true;st.last=0;syncBtn();
+    st.raf=requestAnimationFrame(tick);
+  }
+  function pause(){
+    st.playing=false;
+    if(st.raf)cancelAnimationFrame(st.raf);
+    syncBtn();
+  }
+  if(btnPlay)btnPlay.addEventListener('click',function(){if(st.playing)pause();else play();});
+  if(btnReplay)btnReplay.addEventListener('click',function(){pause();st.t=0;resetTexts();play();});
+  var card=document.querySelector('.live-card');
+  if(card&&!reduce&&'IntersectionObserver' in window){
+    var vio=new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(en.isIntersecting){ if(st.t<TOTAL&&!st.playing)play(); }
+        else{ pause(); }
+      });
+    },{threshold:0.35});
+    vio.observe(card);
+  }
+  layout();
+  if(reduce)renderFinal();
+  if(window.ResizeObserver){
+    var ro=new ResizeObserver(function(){layout();if(reduce)renderFinal();});
+    ro.observe(canvas.parentElement);
+  }else{
+    window.addEventListener('resize',function(){layout();if(reduce)renderFinal();});
+  }
 })();
 </script>
 </body>
