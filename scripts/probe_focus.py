@@ -1,6 +1,6 @@
 # ─── How to run ───
 # .venv\Scripts\python.exe scripts\probe_focus.py
-# Verifies: bar visible, bottom-center of the active monitor, no focus theft.
+# Verifies: bar visible, right-edge/vertically-centred, no focus theft (incl. live pulse).
 
 import ctypes
 import sys
@@ -17,9 +17,9 @@ from app import winio
 
 _user32 = ctypes.WinDLL("user32")
 
-# Visual tolerances for "close enough to center/bottom" (px).
+# Visual tolerances for "close enough to the right edge / vertical center" (px).
 _CENTER_TOLERANCE_PX = 200
-_BOTTOM_BAND_PX = 300
+_RIGHT_BAND_PX = 80
 _MIN_BAR_WIDTH_PX = 60
 
 
@@ -47,21 +47,33 @@ indicator.update("识别中…")
 time.sleep(0.4)
 after = winio.foreground_window_title()
 
+# Live mode: the pulse loop must not steal focus or hide the bar.
+indicator.listen("● 聆听中")
+time.sleep(0.5)
+after_live = winio.foreground_window_title()
+
 rect = _RECT()
 _user32.GetWindowRect(indicator.hwnd(), ctypes.byref(rect))
 visible = bool(_user32.IsWindowVisible(indicator.hwnd()))
-screen_h = root.winfo_screenheight()
-screen_w = root.winfo_screenwidth()
+_left, top, right, bottom = winio.active_monitor_work_area()
 width = rect.right - rect.left
-centered = abs((rect.left + width // 2) - screen_w // 2) < _CENTER_TOLERANCE_PX
-near_bottom = screen_h - rect.bottom < _BOTTOM_BAND_PX
+height = rect.bottom - rect.top
+near_right = (right - rect.right) < _RIGHT_BAND_PX
+centered = abs((rect.top + height // 2) - (top + bottom) // 2) < _CENTER_TOLERANCE_PX
 
 print(f"before={before!r}")
 print(f"after={after!r}")
+print(f"after_live={after_live!r}")
 print(f"visible={visible} rect=({rect.left},{rect.top},{rect.right},{rect.bottom})")
-print(f"centered={centered} near_bottom={near_bottom}")
+print(f"near_right={near_right} centered={centered}")
 
-ok = before == after and visible and centered and near_bottom and width > _MIN_BAR_WIDTH_PX
+ok = (
+    before == after == after_live
+    and visible
+    and near_right
+    and centered
+    and width > _MIN_BAR_WIDTH_PX
+)
 print("VERDICT:", "OK" if ok else "BROKEN")
 indicator.quit()
 root.destroy()

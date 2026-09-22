@@ -70,6 +70,11 @@ class Config:
     model: ModelKind
     proxy: str
     disfluency: Disfluency
+    continuous: bool
+    vad_threshold: float
+    vad_min_speech_ms: int
+    vad_min_silence_ms: int
+    vad_max_speech_ms: int
 
 
 def default_config() -> Config:
@@ -86,6 +91,11 @@ def default_config() -> Config:
         model="sensevoice",
         proxy="",
         disfluency="verbatim",
+        continuous=False,
+        vad_threshold=0.5,
+        vad_min_speech_ms=250,
+        vad_min_silence_ms=500,
+        vad_max_speech_ms=20_000,
     )
 
 
@@ -137,6 +147,11 @@ def load_config(path: Path) -> Config:
         model=p.model_kind("model", "sensevoice"),
         proxy=p.text("proxy", ""),
         disfluency=p.disfluency_kind("disfluency", "verbatim"),
+        continuous=p.bool_flag("continuous", False),
+        vad_threshold=p.float_in("vad_threshold", 0.5, 0.0, 1.0),
+        vad_min_speech_ms=p.int_in("vad_min_speech_ms", 250, 50, 5_000),
+        vad_min_silence_ms=p.int_in("vad_min_silence_ms", 500, 50, 10_000),
+        vad_max_speech_ms=p.int_in("vad_max_speech_ms", 20_000, 1_000, 60_000),
     )
 
 
@@ -155,6 +170,11 @@ def save_config(path: Path, config: Config) -> None:
         f"model = {_quote(config.model)}",
         f"proxy = {_quote(config.proxy)}",
         f"disfluency = {_quote(config.disfluency)}",
+        f"continuous = {str(config.continuous).lower()}",
+        f"vad_threshold = {config.vad_threshold}",
+        f"vad_min_speech_ms = {config.vad_min_speech_ms}",
+        f"vad_min_silence_ms = {config.vad_min_silence_ms}",
+        f"vad_max_speech_ms = {config.vad_max_speech_ms}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -175,6 +195,15 @@ class _Parser:
         if not lo <= value <= hi:
             self._fail(f"{name} out of range [{lo}, {hi}]")
         return value
+
+    def float_in(self, name: str, default: float, lo: float, hi: float) -> float:
+        value = self._raw.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            self._fail(f"{name} must be a number")
+        number = float(value)
+        if not lo <= number <= hi:
+            self._fail(f"{name} out of range [{lo}, {hi}]")
+        return number
 
     def bool_flag(self, name: str, default: bool) -> bool:
         value = self._raw.get(name, default)

@@ -5,8 +5,14 @@ On Windows the stream stays open for the app's lifetime (opening a device costs
 stream keeps the system microphone indicator lit, so the stream is opened per
 hold instead (measured ~68 ms) and the indicator only appears while dictating.
 Either way the audio callback only appends frames while the gate is open.
+
+A *sink* (continuous dictation) turns the recorder into a pure forwarder: every
+callback block goes straight into a bounded queue and is never buffered here, so
+push-to-talk behavior is byte-for-byte unchanged while no sink is set.
 """
 
+import contextlib
+import queue
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -45,6 +51,27 @@ def _resolve_device(name: str) -> int | None:
     return None  # configured mic vanished: fall back to default silently
 
 
+def _offer(sink: queue.Queue[np.ndarray], block: np.ndarray) -> bool:
+    """Enqueue a copy without blocking; False when the sink is full."""
+    try:
+        sink.put_nowait(block.copy())
+    except queue.Full:
+        return False
+    return True
+
+
+def _forward(sink: queue.Queue[np.ndarray], block: np.ndarray) -> None:
+    """Hand one block to *sink* without ever blocking the audio callback.
+
+    When the consumer falls behind, the oldest queued block is dropped so the
+    stream keeps flowing and the callback stays real-time.
+    """
+    if not _offer(sink, block):
+        with contextlib.suppress(queue.Empty):
+            sink.get_nowait()  # drop the oldest block
+        _offer(sink, block)
+
+
 class Recorder:
     """Owns the InputStream; yields float32 mono samples on stop()."""
 
@@ -54,6 +81,7 @@ class Recorder:
         self._lock = threading.Lock()
         self._buffer: list[np.ndarray] = []
         self._recording = False
+        self._sink: queue.Queue[np.ndarray] | None = None
         self._stream: sd.InputStream | None = None
         if native.RECORDER_KEEP_OPEN:
             self._open_stream()
@@ -101,9 +129,32 @@ class Recorder:
     def close(self) -> None:
         self._close_stream()
 
+    def start_sink(self, sink: queue.Queue[np.ndarray]) -> None:
+        """Continuous capture: forward every callback block to *sink*.
+
+        The sink owns its own drop policy (see :func:`_forward`), so the
+        callback can never block; the hold buffer is left untouched.
+        """
+        if not native.RECORDER_KEEP_OPEN and self._stream is None:
+            self._open_stream()
+        with self._lock:
+            self._sink = sink
+            self._recording = False
+
+    def stop_sink(self) -> None:
+        """Stop forwarding blocks; push-to-talk state is left untouched."""
+        with self._lock:
+            self._sink = None
+        if not native.RECORDER_KEEP_OPEN:
+            self._close_stream()
+
     def _on_audio(self, indata: np.ndarray, _frames: int, _time: object, status: int) -> None:
         if status:
             self._on_stream_error(f"audio stream status: {status}")
+        sink = self._sink
+        if sink is not None:
+            _forward(sink, indata)
+            return
         if self._recording:
             with self._lock:
                 self._buffer.append(indata.copy())

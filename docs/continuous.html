@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>持续听写 — xxl-whisper 免按键 VAD 听写</title>
+<meta name="description" content="持续听写：麦克风常开，内置 Silero VAD 自动切句，说完一句即上屏。静音与背景噪音不会产生任何文字。" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#ffffff; --ink:#171717; --ink2:#4d4d4d; --ink3:#666666; --line:#ebebeb;
+  --ring:rgba(0,0,0,0.08); --ring-soft:rgb(235,235,235);
+  --accent:#0a72ef; --rec:#ff5b4f;
+  --tag-blue-bg:#ebf5ff; --tag-blue-tx:#0068d6; --tag-green-bg:#edf3ec; --tag-green-tx:#346538;
+  --sans:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:"Geist Mono",ui-monospace,"SF Mono","Cascadia Code","Consolas",monospace;
+  --card-shadow:0 0 0 1px rgba(0,0,0,0.08), 0 2px 2px rgba(0,0,0,0.04), 0 0 0 1px #fafafa inset;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;font-size:16px;line-height:1.6;overflow-x:hidden}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1120px;margin:0 auto;padding:0 32px}
+.mono{font-family:var(--mono)}
+code{font-family:var(--mono);font-size:13px;background:#f2f2f2;border-radius:4px;padding:2px 6px;color:var(--ink)}
+::selection{background:rgba(10,114,239,0.14)}
+
+/* ---------- nav ---------- */
+nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 0 0 1px var(--ring)}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px;letter-spacing:-0.01em;color:var(--ink)}
+.brand:hover{text-decoration:none}
+.brand .mark{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:var(--ink);color:#fff}
+.brand .mark svg{width:15px;height:15px}
+.nav-links{display:flex;align-items:center;gap:28px}
+.nav-links a{color:var(--ink2);font-size:14px;font-weight:500}
+.nav-links a:hover{color:var(--ink);text-decoration:none}
+.nav-cta{display:flex;align-items:center;gap:14px}
+.btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--sans);font-size:14px;font-weight:500;border-radius:6px;padding:10px 18px;cursor:pointer;transition:transform .12s ease,background .12s ease,box-shadow .12s ease;border:none}
+.btn:active{transform:scale(0.98)}
+.btn-dark{background:var(--ink);color:#fff}
+.btn-dark:hover{background:#000}
+.btn-ghost{background:#fff;color:var(--ink);box-shadow:0 0 0 1px var(--ring-soft)}
+.btn-ghost:hover{box-shadow:0 0 0 1px rgba(0,0,0,0.22)}
+.btn svg{width:15px;height:15px}
+.btn .i-pause{display:none}
+.btn.is-playing .i-play{display:none}
+.btn.is-playing .i-pause{display:inline-flex}
+
+/* ---------- hero ---------- */
+.hero{position:relative;padding:104px 0 64px;text-align:center}
+.hero::before{content:"";position:absolute;inset:0;background:
+  radial-gradient(1100px 460px at 50% -8%,rgba(10,114,239,0.055),transparent 60%),
+  radial-gradient(700px 380px at 82% 6%,rgba(255,91,79,0.035),transparent 60%);
+  pointer-events:none}
+.hero::after{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(0,0,0,0.035) 1px,transparent 1px);background-size:26px 26px;mask-image:radial-gradient(600px 360px at 50% 10%,#000 0%,transparent 70%);-webkit-mask-image:radial-gradient(600px 360px at 50% 10%,#000 0%,transparent 70%);pointer-events:none}
+.hero .inner{position:relative;z-index:1}
+.pill{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:500;color:var(--tag-blue-tx);background:var(--tag-blue-bg);border-radius:9999px;padding:4px 12px;margin-bottom:28px;letter-spacing:0.02em}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--tag-blue-tx)}
+h1{font-size:60px;font-weight:600;line-height:1.08;letter-spacing:-0.03em;margin-bottom:24px;color:var(--ink)}
+h1 .thin{font-weight:400;color:var(--ink2)}
+.hero-sub{font-size:20px;font-weight:400;color:var(--ink2);line-height:1.7;max-width:660px;margin:0 auto 40px}
+.hero-stats{display:flex;justify-content:center;flex-wrap:wrap;gap:12px;margin-bottom:8px}
+.stat{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink2);background:#fff;border-radius:9999px;padding:8px 16px;box-shadow:0 0 0 1px var(--ring)}
+.stat b{font-weight:600;color:var(--ink)}
+.stat .k{font-family:var(--mono);font-size:12px;color:var(--accent)}
+
+/* ---------- sections ---------- */
+section{padding:96px 0}
+.sec-label{font-family:var(--mono);font-size:13px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:16px}
+.sec-title{font-size:40px;font-weight:600;letter-spacing:-0.025em;line-height:1.15;margin-bottom:20px}
+.sec-desc{font-size:18px;color:var(--ink2);max-width:660px;margin-bottom:48px}
+
+/* ---------- compare ---------- */
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.mode-card{background:#fff;border-radius:12px;box-shadow:var(--card-shadow);padding:32px;transition:box-shadow .2s ease}
+.mode-card h3{font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:20px 0 10px}
+.mode-card p{font-size:15px;color:var(--ink2)}
+.mode-card.active{box-shadow:0 0 0 2px var(--ink), 0 16px 48px -24px rgba(0,0,0,0.2)}
+.mode-top{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.mic{position:relative;display:grid;place-items:center;width:60px;height:60px;border-radius:50%;background:#fff;box-shadow:0 0 0 1px var(--ring);color:var(--ink)}
+.mic svg{width:26px;height:26px}
+.mode-card.active .mic{background:var(--ink);color:#fff;box-shadow:0 0 0 1px var(--ink)}
+.pulse{position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 2px var(--accent);opacity:0;animation:pulse 2.4s cubic-bezier(.16,1,.3,1) infinite}
+.pulse.d2{animation-delay:1.2s}
+@keyframes pulse{0%{transform:scale(1);opacity:.5}70%{opacity:0}100%{transform:scale(1.85);opacity:0}}
+.badge{font-size:12px;font-weight:500;padding:4px 12px;border-radius:9999px;white-space:nowrap}
+.badge.blue{background:var(--tag-blue-bg);color:var(--tag-blue-tx)}
+.badge.gray{background:#f5f5f5;color:var(--ink3)}
+.badge.green{background:var(--tag-green-bg);color:var(--tag-green-tx)}
+.badge.rec{background:#fff0ef;color:#c13b31}
+.mode-gate{display:flex;align-items:center;gap:12px;margin-top:24px}
+.g-line{position:relative;flex:1;height:6px;border-radius:9999px;background:#ececec;overflow:hidden}
+.g-line::after{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--accent);transform:scaleX(var(--g,1));transform-origin:left}
+.g-line.off::after{background:#c9c9c9;--g:.16}
+.g-line.on::after{--g:1}
+.g-label{font-family:var(--mono);font-size:12px;color:var(--ink3);white-space:nowrap}
+
+/* ---------- stage (demo) ---------- */
+.stage{background:#fff;border-radius:12px;box-shadow:var(--card-shadow);padding:24px;overflow:hidden}
+.stage-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}
+.stage-title{font-size:15px;font-weight:600}
+.stage-hint{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+.canvas-wrap{position:relative;width:100%}
+#vad-canvas{display:block;width:100%}
+.transcript{list-style:none;display:flex;flex-direction:column;gap:8px;margin:20px 0 0;padding:0}
+.transcript li{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;background:#fafafa;box-shadow:0 0 0 1px var(--ring);opacity:0;transform:translateY(6px);transition:opacity .45s ease,transform .45s cubic-bezier(.16,1,.3,1)}
+.transcript li.show{opacity:1;transform:none}
+.transcript .ts{font-family:var(--mono);font-size:12px;color:var(--accent);min-width:52px}
+.transcript .tx{font-size:16px;color:var(--ink)}
+.controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:20px}
+.controls-note{font-size:12px;color:var(--ink3);margin-left:auto}
+
+/* ---------- flow ---------- */
+.flow{display:flex;align-items:stretch;gap:8px}
+.flow-step{flex:1;background:#fff;border-radius:10px;box-shadow:var(--card-shadow);padding:22px 20px}
+.flow-ico{display:grid;place-items:center;width:40px;height:40px;border-radius:8px;background:#f7f6f3;box-shadow:0 0 0 1px var(--ring);margin-bottom:16px;color:var(--ink)}
+.flow-ico svg{width:20px;height:20px}
+.flow-k{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--accent);letter-spacing:0.08em}
+.flow-step h3{font-size:18px;font-weight:600;letter-spacing:-0.02em;margin:6px 0 6px}
+.flow-step p{font-size:13.5px;color:var(--ink2);line-height:1.5}
+.flow-arrow{align-self:center;color:#c9c9c9;font-size:18px;line-height:1;flex:0 0 auto;padding:0 2px}
+
+/* ---------- bench ---------- */
+.bench{background:#fff;border-radius:12px;box-shadow:var(--card-shadow);padding:28px}
+.bench-row{display:grid;grid-template-columns:200px 1fr 150px;align-items:center;gap:16px;padding:12px 0}
+.bench-row + .bench-row{box-shadow:0 -1px 0 var(--line)}
+.bench-name{font-size:14px;color:var(--ink2)}
+.bench-name .rms{font-family:var(--mono);font-size:12.5px;color:var(--ink3)}
+.bench-track{position:relative;height:14px;border-radius:9999px;background:#f2f2f2;overflow:hidden}
+.bench-fill{height:100%;border-radius:9999px;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform .9s cubic-bezier(.16,1,.3,1) .1s}
+.reveal.on .bench-fill{transform:scaleX(var(--v,0))}
+.bench-val{font-family:var(--mono);font-size:12.5px;color:var(--ink3);text-align:right}
+.bench-val strong{color:var(--ink);font-weight:600}
+.bench-note{font-size:13px;color:var(--ink3);margin-top:20px;padding-top:20px;box-shadow:0 -1px 0 var(--line)}
+
+/* ---------- pitfall ---------- */
+.pit{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.pit-card{background:#fff;border-radius:12px;box-shadow:var(--card-shadow);padding:28px}
+.pit-card.bad{box-shadow:0 0 0 1px rgba(255,91,79,0.35), 0 0 0 1px #fafafa inset}
+.pit-card.good{box-shadow:0 0 0 2px var(--ink), 0 16px 48px -24px rgba(0,0,0,0.2)}
+.pit-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.pit-head h3{font-size:19px;font-weight:600;letter-spacing:-0.02em}
+.pit-mark{font-family:var(--mono);font-size:14px;font-weight:600}
+.pit-mark.x{color:var(--rec)}
+.pit-mark.v{color:var(--tag-green-tx)}
+.pit-gate{position:relative;height:34px;border-radius:8px;background:#fafafa;box-shadow:0 0 0 1px var(--ring);overflow:hidden;margin-bottom:8px}
+.pit-gate::after{content:"";position:absolute;left:0;top:0;bottom:0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform 1s cubic-bezier(.16,1,.3,1) .15s;opacity:.9}
+.reveal.on .pit-gate::after{transform:scaleX(var(--v,0))}
+.pit-card.bad .pit-gate::after{background:var(--rec)}
+.pit-cap{font-family:var(--mono);font-size:12px;color:var(--ink3);display:flex;justify-content:space-between;gap:8px}
+.pit-big{font-family:var(--mono);font-size:32px;font-weight:600;letter-spacing:-0.02em;margin-top:16px}
+.pit-card.bad .pit-big{color:var(--rec)}
+.pit-card.good .pit-big{color:var(--accent)}
+.pit-card p{font-size:14.5px;color:var(--ink2);margin-top:8px}
+
+/* ---------- knobs ---------- */
+.knobs{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.knob{background:#fff;border-radius:10px;box-shadow:var(--card-shadow);padding:24px}
+.knob-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:20px;flex-wrap:wrap}
+.knob-head code{font-size:12.5px;background:#f2f2f2;padding:3px 7px}
+.slider{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent;cursor:pointer;display:block}
+.slider::-webkit-slider-runnable-track{height:4px;border-radius:9999px;background:linear-gradient(90deg,var(--accent) var(--p,50%),#ececec var(--p,50%))}
+.slider::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;margin-top:-6px;border-radius:50%;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,0.18),0 1px 2px rgba(0,0,0,0.2)}
+.slider::-moz-range-track{height:4px;border-radius:9999px;background:linear-gradient(90deg,var(--accent) var(--p,50%),#ececec var(--p,50%))}
+.slider::-moz-range-thumb{width:16px;height:16px;border:none;border-radius:50%;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,0.18)}
+.knob-foot{display:flex;align-items:center;justify-content:space-between;font-family:var(--mono);font-size:11.5px;color:var(--ink3);margin-top:2px}
+.knob-val{color:var(--accent);font-weight:500}
+.knob p{font-size:13.5px;color:var(--ink2);margin-top:16px;line-height:1.55}
+
+/* ---------- start ---------- */
+.start-grid{display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:start}
+.tray{background:#fff;border-radius:12px;box-shadow:var(--card-shadow);padding:20px}
+.tray-title{font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px}
+.tray-menu{list-style:none;background:#fafafa;border-radius:8px;box-shadow:0 0 0 1px var(--ring);padding:6px;overflow:hidden}
+.tray-menu li{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--ink2);padding:9px 12px;border-radius:6px}
+.tray-menu li.dim{color:var(--ink3)}
+.tray-menu li.on{background:var(--tag-blue-bg);color:var(--tag-blue-tx);font-weight:500}
+.tray-menu li .chk{width:16px;height:16px;display:grid;place-items:center;color:var(--accent);flex:0 0 auto}
+.tray-menu li .chk svg{width:14px;height:14px}
+.tray-menu li .arr{margin-left:auto;color:var(--ink3);font-size:12px}
+.start-steps{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.start-steps li{display:flex;gap:14px;background:#fff;border-radius:10px;box-shadow:var(--card-shadow);padding:20px}
+.start-steps .n{display:grid;place-items:center;flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-family:var(--mono);font-size:12px;font-weight:500}
+.start-steps strong{display:block;font-size:15px;font-weight:600;margin-bottom:4px}
+.start-steps p{font-size:13.5px;color:var(--ink2);line-height:1.55}
+.config{margin-top:16px;background:#fff;border-radius:10px;box-shadow:var(--card-shadow);padding:24px}
+.config-title{font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px}
+.config-row{display:grid;grid-template-columns:110px 1fr;gap:16px;align-items:baseline;padding:9px 0;font-size:13.5px;color:var(--ink3)}
+.config-row + .config-row{box-shadow:0 -1px 0 var(--line)}
+.config-row code{font-size:12.5px;word-break:break-all;background:#f2f2f2}
+.config-row .keys code{margin-right:6px;display:inline-block;margin-bottom:4px}
+
+/* ---------- footer ---------- */
+footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
+.foot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;font-size:14px;color:var(--ink3)}
+.foot a{color:var(--ink2)}
+
+/* ---------- reveal ---------- */
+.reveal{opacity:0;transform:translateY(12px);transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
+.reveal.on{opacity:1;transform:none}
+
+@media (prefers-reduced-motion:reduce){
+  .reveal{opacity:1;transform:none;transition:none}
+  .pulse{animation:none;opacity:0}
+  .transcript li{opacity:1;transform:none;transition:none}
+  .bench-fill,.pit-gate::after{transition:none}
+}
+
+/* ---------- responsive ---------- */
+@media (max-width:1000px){
+  .knobs{grid-template-columns:repeat(2,1fr)}
+  .start-grid{grid-template-columns:1fr}
+}
+@media (max-width:900px){
+  h1{font-size:42px}
+  .nav-links{display:none}
+  .compare{grid-template-columns:1fr}
+  .pit{grid-template-columns:1fr}
+  .flow{flex-direction:column}
+  .flow-arrow{transform:rotate(90deg);align-self:center}
+  .bench-row{grid-template-columns:1fr;gap:8px}
+  .bench-val{text-align:left}
+}
+@media (max-width:600px){
+  h1{font-size:32px}
+  h1 br{display:none}
+  .hero{padding:72px 0 40px}
+  .hero-sub{font-size:17px}
+  section{padding:64px 0}
+  .sec-title{font-size:28px}
+  .wrap{padding:0 20px}
+  .knobs{grid-template-columns:1fr}
+  .start-steps{grid-template-columns:1fr}
+  .stage{padding:16px}
+  .controls-note{margin-left:0;width:100%}
+  .config-row{grid-template-columns:1fr;gap:4px}
+  .pit-big{font-size:26px}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html">
+      <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></span>
+      xxl-whisper
+    </a>
+    <div class="nav-links">
+      <a href="#overview">概览</a>
+      <a href="#how">原理</a>
+      <a href="#bench">实测</a>
+      <a href="#tuning">调参</a>
+    </div>
+    <div class="nav-cta">
+      <a class="btn btn-ghost" href="continuous.en.html">EN</a>
+      <a class="btn btn-dark" href="index.html">返回官网</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap inner">
+    <span class="pill"><span class="dot"></span>新功能 · 免按键</span>
+    <h1>持续听写：不用按任何键，<br /><span class="thin">说完一句就上屏</span></h1>
+    <p class="hero-sub">内置 VAD 只在检测到人声时才识别——静音和背景噪音不会产生任何文字。</p>
+    <div class="hero-stats">
+      <span class="stat"><span class="k mono">16 kHz</span>麦克风常开</span>
+      <span class="stat"><span class="k mono">512</span>样本分块喂 VAD</span>
+      <span class="stat"><span class="k mono">0 字</span>静音 / 噪音输出</span>
+    </div>
+  </div>
+</header>
+
+<section id="overview">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">Compare</div>
+    <h2 class="sec-title">两种说话方式</h2>
+    <p class="sec-desc">按住说话需要每次腾出一根手指；持续听写把“什么时候在说话”这件事交给 VAD。</p></div>
+    <div class="compare">
+      <div class="mode-card reveal">
+        <div class="mode-top">
+          <div class="mic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></div>
+          <span class="badge gray">按住才收音</span>
+        </div>
+        <h3>按住说话</h3>
+        <p>按住 <kbd style="font-family:var(--mono);font-size:12px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;background:#f7f6f3;padding:2px 7px">CapsLock</kbd> 麦克风才开始拾音，松开后识别并上屏。每说一句都要按一次。</p>
+        <div class="mode-gate"><span class="g-line off"></span><span class="g-label">门控：手动</span></div>
+      </div>
+      <div class="mode-card active reveal">
+        <div class="mode-top">
+          <div class="mic"><span class="pulse"></span><span class="pulse d2"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></div>
+          <span class="badge blue">麦克风常开</span>
+        </div>
+        <h3>持续听写</h3>
+        <p>麦克风常开，内置 Silero VAD 判断“哪里在说话”，每句说完自动上屏到光标。<strong>静音与背景噪音不会产生任何文字。</strong></p>
+        <div class="mode-gate"><span class="g-line on"></span><span class="g-label">门控：VAD 自动</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="demo" style="padding-top:0">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">Live</div>
+    <h2 class="sec-title">一段真实语音的时序</h2>
+    <p class="sec-desc">三条轨道同步推进：波形、VAD 门控、识别分段。播放头扫过时，只有人声处门控点亮、才会生成文字。</p></div>
+    <div class="stage reveal">
+      <div class="stage-head">
+        <span class="stage-title">实时演示 · 9.9s TTS 语音</span>
+        <span class="stage-hint">滚动到此处自动播放</span>
+      </div>
+      <div class="canvas-wrap"><canvas id="vad-canvas" role="img" aria-label="持续听写 VAD 时序演示：波形轨、VAD 门控轨与识别分段轨"></canvas></div>
+      <ul class="transcript">
+        <li><span class="ts">2.95s</span><span class="tx">今天天气怎么样？</span></li>
+        <li><span class="ts">3.43s</span><span class="tx">我们一起去吃火锅吧。</span></li>
+        <li><span class="ts">0.79s</span><span class="tx">这个。</span></li>
+      </ul>
+      <div class="controls">
+        <button class="btn btn-dark" id="btn-play" type="button" aria-pressed="false">
+          <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>
+          <svg class="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+          <span class="btn-label">播放</span>
+        </button>
+        <button class="btn btn-ghost" id="btn-replay" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+          重播
+        </button>
+        <span class="controls-note mono">Silero VAD · threshold 0.5 · min_speech 250ms</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how" style="background:#fafafa;box-shadow:0 0 0 1px var(--ring)">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">Pipeline</div>
+    <h2 class="sec-title">五步流水线</h2>
+    <p class="sec-desc">从麦克风到光标，全程在本机完成，没有任何网络往返。</p></div>
+    <div class="flow">
+      <div class="flow-step reveal">
+        <div class="flow-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></div>
+        <span class="flow-k mono">STEP 1</span>
+        <h3>麦克风</h3>
+        <p>16 kHz 常开拾音，不按任何键。</p>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step reveal">
+        <div class="flow-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+        <span class="flow-k mono">STEP 2</span>
+        <h3>512 样本分块</h3>
+        <p>每 512 个样本切一帧，逐帧喂给 VAD。</p>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step reveal">
+        <div class="flow-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="5"/><circle cx="16" cy="12" r="3"/></svg></div>
+        <span class="flow-k mono">STEP 3</span>
+        <h3>VAD 门控</h3>
+        <p>Silero 判定是否人声；静音超过 <code>min_silence</code> 即判一句结束。</p>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step reveal">
+        <div class="flow-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></div>
+        <span class="flow-k mono">STEP 4</span>
+        <h3>离线识别</h3>
+        <p>本地模型只解码这段人声，断网可用。</p>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step reveal">
+        <div class="flow-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></div>
+        <span class="flow-k mono">STEP 5</span>
+        <h3>上屏</h3>
+        <p>识别结果直接注入当前光标处。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="bench">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">Measured</div>
+    <h2 class="sec-title">实测：噪音不会出字</h2>
+    <p class="sec-desc">真实 Silero VAD，threshold 0.5，min_speech 0.25s。条形长度 = 检出的语音时长占该段总时长的比例。</p></div>
+    <div class="bench reveal">
+      <div class="bench-row">
+        <div class="bench-name">真实语音 · 8.9s</div>
+        <div class="bench-track"><div class="bench-fill" style="--v:0.813"></div></div>
+        <div class="bench-val"><strong>7.24s</strong> · 2 段</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-name">4s 数字静音</div>
+        <div class="bench-track"><div class="bench-fill" style="--v:0"></div></div>
+        <div class="bench-val"><span class="badge rec">0 段</span></div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-name">4s 白噪 · <span class="rms">rms 0.02</span></div>
+        <div class="bench-track"><div class="bench-fill" style="--v:0"></div></div>
+        <div class="bench-val"><span class="badge rec">0 段</span></div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-name">4s 白噪 · <span class="rms">rms 0.10</span></div>
+        <div class="bench-track"><div class="bench-fill" style="--v:0"></div></div>
+        <div class="bench-val"><span class="badge rec">0 段</span></div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-name">4s 白噪 · <span class="rms">rms 0.30</span></div>
+        <div class="bench-track"><div class="bench-fill" style="--v:0"></div></div>
+        <div class="bench-val"><span class="badge rec">0 段</span></div>
+      </div>
+      <div class="bench-note">三档白噪强度依次放大 15 倍，VAD 依旧一段都不放行——门控看的是“像不像人声”，不是“响不响”。</div>
+    </div>
+  </div>
+</section>
+
+<section id="pitfall" style="padding-top:0">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">The catch</div>
+    <h2 class="sec-title">那个坑：喂法决定成败</h2>
+    <p class="sec-desc">同样一段 8.9s 的真实语音，VAD 怎么喂，结果差了 23 倍。</p></div>
+    <div class="pit">
+      <div class="pit-card bad reveal">
+        <div class="pit-head"><h3>整段一次性喂</h3><span class="pit-mark x">✗</span></div>
+        <div class="pit-gate" style="--v:0.035"></div>
+        <div class="pit-cap"><span>门控只亮起 3.5%</span><span>几乎全漏</span></div>
+        <div class="pit-big">0.31s</div>
+        <p>把整段音频当成一帧丢进去，VAD 只认出开头一小截，其余全部当成静音丢掉。</p>
+      </div>
+      <div class="pit-card good reveal">
+        <div class="pit-head"><h3>按 512 样本分块喂</h3><span class="pit-mark v">✓</span></div>
+        <div class="pit-gate" style="--v:0.81"></div>
+        <div class="pit-cap"><span>门控大面积亮起 81%</span><span>几乎全中</span></div>
+        <div class="pit-big">7.24s</div>
+        <p>切成 512 样本一帧、逐帧判断，VAD 才能跟着语音起伏开门关门，检出 7.24s。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="tuning" style="background:#fafafa;box-shadow:0 0 0 1px var(--ring)">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">Tuning</div>
+    <h2 class="sec-title">四个旋钮</h2>
+    <p class="sec-desc">默认值适合大多数场景；拖动滑块可以看到取值范围。</p></div>
+    <div class="knobs">
+      <div class="knob reveal">
+        <div class="knob-head"><code>vad_threshold</code><span class="badge blue">默认 0.5</span></div>
+        <input class="slider" type="range" min="0" max="1" step="0.01" value="0.5" data-unit="" aria-label="vad_threshold" />
+        <div class="knob-foot"><span>0</span><span class="knob-val">0.5</span><span>1</span></div>
+        <p>越高越保守：只有更像人声才开闸，误触更少。</p>
+      </div>
+      <div class="knob reveal">
+        <div class="knob-head"><code>vad_min_speech_ms</code><span class="badge blue">默认 250</span></div>
+        <input class="slider" type="range" min="0" max="1000" step="10" value="250" data-unit="ms" aria-label="vad_min_speech_ms" />
+        <div class="knob-foot"><span>0</span><span class="knob-val">250ms</span><span>1000ms</span></div>
+        <p>短于此长度的爆音直接丢弃，避免咔哒声出字。</p>
+      </div>
+      <div class="knob reveal">
+        <div class="knob-head"><code>vad_min_silence_ms</code><span class="badge blue">默认 500</span></div>
+        <input class="slider" type="range" min="100" max="2000" step="10" value="500" data-unit="ms" aria-label="vad_min_silence_ms" />
+        <div class="knob-foot"><span>100ms</span><span class="knob-val">500ms</span><span>2000ms</span></div>
+        <p>静音持续多久算一句结束；越小断句越快、越碎。</p>
+      </div>
+      <div class="knob reveal">
+        <div class="knob-head"><code>vad_max_speech_ms</code><span class="badge blue">默认 20000</span></div>
+        <input class="slider" type="range" min="2000" max="60000" step="500" value="20000" data-unit="ms" aria-label="vad_max_speech_ms" />
+        <div class="knob-foot"><span>2s</span><span class="knob-val">20s</span><span>60s</span></div>
+        <p>超长语音强制切段，防止一句话无限增长。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <div class="reveal"><div class="sec-label">Get started</div>
+    <h2 class="sec-title">怎么开启</h2>
+    <p class="sec-desc">托盘菜单里一个勾选项，其余交给程序自动完成。</p></div>
+    <div class="start-grid">
+      <div class="tray reveal">
+        <div class="tray-title mono">托盘菜单</div>
+        <ul class="tray-menu">
+          <li class="on"><span class="chk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg></span>持续听写</li>
+          <li class="dim">模型<span class="arr">▸</span></li>
+          <li class="dim">热键<span class="arr">▸</span></li>
+          <li class="dim">开机自启</li>
+          <li class="dim">退出</li>
+        </ul>
+      </div>
+      <ol class="start-steps">
+        <li><span class="n">1</span><div><strong>勾选「持续听写」</strong><p>托盘右键菜单里打开这个开关。</p></div></li>
+        <li><span class="n">2</span><div><strong>自动下载 VAD</strong><p>首次开启自动下载约 1.8MB 的 <code>silero_vad.onnx</code>，之后离线可用。</p></div></li>
+        <li><span class="n">3</span><div><strong>直接说话</strong><p>不用按任何键；说完一句，文字自动上屏到光标。</p></div></li>
+        <li><span class="n">4</span><div><strong>再点一次关闭</strong><p>取消勾选即停止；模式会被记住，下次启动沿用。</p></div></li>
+      </ol>
+    </div>
+    <div class="config reveal">
+      <div class="config-title mono">配置文件</div>
+      <div class="config-row"><span>Windows</span><code>%LOCALAPPDATA%\xxl-whisper\config.toml</code></div>
+      <div class="config-row"><span>macOS</span><code>~/Library/Application Support/xxl-whisper/config.toml</code></div>
+      <div class="config-row"><span>VAD 模型</span><code>…\xxl-whisper\models\vad\silero_vad.onnx</code></div>
+      <div class="config-row"><span>配置键</span><span class="keys"><code>vad_threshold</code><code>vad_min_speech_ms</code><code>vad_min_silence_ms</code><code>vad_max_speech_ms</code></span></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot">
+    <span class="mono">xxl-whisper · 持续听写 · MIT License</span>
+    <span><a href="https://github.com/xianglun918/xxl-whisper">仓库</a> · <a href="index.html">落地页</a> · <a href="architecture.html">架构图</a></span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  /* ---------- reveal on scroll ---------- */
+  var els = document.querySelectorAll('.reveal');
+  if(!('IntersectionObserver' in window)){
+    for(var r=0;r<els.length;r++) els[r].classList.add('on');
+  }else{
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){ if(en.isIntersecting){ en.target.classList.add('on'); io.unobserve(en.target); } });
+    },{threshold:0.12});
+    for(var r2=0;r2<els.length;r2++) io.observe(els[r2]);
+  }
+
+  /* ---------- slider readouts ---------- */
+  function fmt(v, unit){
+    if(!unit) return String(v);
+    if(v >= 1000) return (v/1000) + 's';
+    return v + 'ms';
+  }
+  document.querySelectorAll('.slider').forEach(function(s){
+    var out = s.parentElement.querySelector('.knob-val');
+    function sync(){
+      var v = Number(s.value), min = Number(s.min), max = Number(s.max);
+      s.style.setProperty('--p', ((v-min)/(max-min)*100) + '%');
+      if(out) out.textContent = fmt(v, s.dataset.unit);
+    }
+    s.addEventListener('input', sync);
+    sync();
+  });
+
+  /* ---------- canvas demo ---------- */
+  var canvas = document.getElementById('vad-canvas');
+  if(!canvas || !canvas.getContext) return;
+  var ctx = canvas.getContext('2d');
+
+  var FONT = '"Geist",-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif';
+  var MONO = '"Geist Mono",ui-monospace,"Consolas",monospace';
+  var COL = {
+    accent:'#0a72ef', rec:'#ff5b4f', ink:'#171717', ink3:'#666666',
+    barIdle:'#e9e9e9', barPast:'#d5d5d5', noise:'#cfcfcf', noiseIdle:'#ededed',
+    gateOff:'#e3e3e3', trackBg:'#fafafa', segBg:'rgba(10,114,239,0.10)'
+  };
+
+  var TOTAL = 11.6;
+  var VOICE = [
+    {start:0.70, end:3.65, dur:'2.95s'},
+    {start:4.35, end:7.78, dur:'3.43s'},
+    {start:8.38, end:9.17, dur:'0.79s'}
+  ];
+  var NOISE = {start:9.75, end:11.45};
+
+  var W=0,H=0,dpr=1,plotX=0,plotW=0,step=3,bars=[],trackY=null,noteY=0,legendY=0,short=false;
+  var st = {t:0, playing:false, last:0, raf:0, played:false};
+  var items = document.querySelectorAll('.transcript li');
+
+  function hash(n){ var s=Math.sin(n*127.1+311.7)*43758.5453; return s-Math.floor(s); }
+
+  function regionAt(t){
+    for(var i=0;i<VOICE.length;i++){ if(t>=VOICE[i].start && t<=VOICE[i].end) return {kind:'voice', i:i}; }
+    if(t>=NOISE.start && t<=NOISE.end) return {kind:'noise'};
+    return {kind:'silence'};
+  }
+
+  function segBottom(){ return trackY.seg.y + trackY.seg.h; }
+  function xOf(t){ return plotX + (Math.min(t,TOTAL)/TOTAL)*plotW; }
+
+  function rr(x,y,w,h,r){
+    if(w<0){x+=w;w=-w;} if(h<0){y+=h;h=-h;}
+    r = Math.min(r, h/2, w/2); if(r<0) r=0;
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+    ctx.closePath();
+  }
+
+  function buildBars(){
+    step = short ? 2.4 : 3;
+    var n = Math.max(8, Math.floor(plotW/step));
+    bars = [];
+    for(var i=0;i<n;i++){
+      var t = (i/(n-1))*TOTAL;
+      var reg = regionAt(t), amp;
+      if(reg.kind === 'voice'){
+        var s = VOICE[reg.i];
+        var u = (t - s.start)/(s.end - s.start);
+        var env = Math.min(1, u*7, (1-u)*7);
+        if(env < 0) env = 0;
+        amp = Math.max(0.10, env*(0.32 + 0.68*hash(i*1.7 + 1)));
+      }else if(reg.kind === 'noise'){
+        amp = 0.10 + 0.06*hash(i*2.3 + 5);
+      }else{
+        amp = 0.035 + 0.03*hash(i*3.1 + 9);
+      }
+      bars.push({t:t, amp:amp, kind:reg.kind});
+    }
+  }
+
+  function layout(){
+    var wrap = canvas.parentElement;
+    var cw = wrap.clientWidth || wrap.getBoundingClientRect().width || 320;
+    W = Math.max(300, Math.round(cw));
+    short = W < 560;
+    H = short ? 336 : 344;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(W*dpr);
+    canvas.height = Math.round(H*dpr);
+    canvas.style.width = '100%';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    var labw = short ? 50 : 64;
+    plotX = 14 + labw;
+    plotW = W - plotX - 14;
+    trackY = {
+      wave:{y:40,  h:60, label:'波形'},
+      gate:{y:126, h:44, label:'VAD 门控'},
+      seg: {y:194, h:50, label:'识别分段'}
+    };
+    noteY = H - 74;
+    legendY = H - 22;
+    buildBars();
+    draw();
+  }
+
+  function drawBgs(){
+    var names = ['wave','gate','seg'];
+    ctx.font = '12px ' + FONT;
+    for(var k=0;k<3;k++){
+      var tr = trackY[names[k]];
+      ctx.fillStyle = COL.trackBg;
+      rr(plotX, tr.y, plotW, tr.h, 6); ctx.fill();
+      ctx.fillStyle = COL.ink3;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tr.label, plotX - 10, tr.y + tr.h/2);
+    }
+    var nx1 = xOf(NOISE.start), nx2 = xOf(NOISE.end);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.07)';
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    ctx.moveTo(nx1, 28); ctx.lineTo(nx1, segBottom());
+    ctx.moveTo(nx2, 28); ctx.lineTo(nx2, segBottom());
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawWave(){
+    var tr = trackY.wave, cy = tr.y + tr.h/2, bw = Math.max(1.2, step-1);
+    for(var i=0;i<bars.length;i++){
+      var b = bars[i];
+      var h = Math.max(3, b.amp*tr.h*0.92);
+      var x = plotX + i*step;
+      var past = b.t <= st.t;
+      var col;
+      if(b.kind === 'voice') col = past ? COL.accent : COL.barIdle;
+      else if(b.kind === 'noise') col = past ? COL.noise : COL.noiseIdle;
+      else col = past ? COL.barPast : COL.barIdle;
+      ctx.fillStyle = col;
+      ctx.fillRect(x, cy - h/2, bw, h);
+    }
+  }
+
+  function drawGate(){
+    var tr = trackY.gate, cy = tr.y + tr.h/2, bw = Math.max(1.2, step-1);
+    ctx.fillStyle = 'rgba(0,0,0,0.05)';
+    ctx.fillRect(plotX, cy-1, plotW, 2);
+    for(var i=0;i<bars.length;i++){
+      var b = bars[i];
+      var open = (b.kind === 'voice' && b.t <= st.t);
+      var h = open ? tr.h*0.78 : 5;
+      ctx.fillStyle = open ? COL.accent : COL.gateOff;
+      ctx.fillRect(plotX + i*step, cy - h/2, bw, h);
+    }
+  }
+
+  function drawSegs(){
+    var tr = trackY.seg;
+    for(var i=0;i<VOICE.length;i++){
+      var s = VOICE[i];
+      if(st.t < s.end) continue;
+      var x1 = xOf(s.start), x2 = xOf(s.end);
+      var g = Math.min(1, (st.t - s.end)/0.28);
+      var gw = (x2 - x1)*(1 - Math.pow(1-g,3));
+      if(gw < 1) continue;
+      ctx.fillStyle = COL.accent;
+      rr(x1, tr.y, gw, tr.h, 6); ctx.fill();
+      if(g > 0.6){
+        ctx.fillStyle = COL.accent;
+        ctx.font = '600 11px ' + MONO;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(s.dur, (x1+x2)/2, tr.y - 8);
+      }
+    }
+  }
+
+  function drawNoiseNote(){
+    var a = Math.max(0, Math.min(1, (st.t - (NOISE.start - 0.1))/0.45));
+    if(a <= 0) return;
+    var cx = (xOf(NOISE.start) + xOf(NOISE.end))/2;
+    var label = '环境噪音 · 已忽略，0 字';
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.font = '12px ' + FONT;
+    var tw = ctx.measureText(label).width;
+    var pw = tw + 36, ph = 26;
+    var px = Math.min(Math.max(cx - pw/2, plotX), Math.max(plotX, plotX + plotW - pw));
+    ctx.fillStyle = '#f5f5f5';
+    rr(px, noteY, pw, ph, 9999); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+    ctx.lineWidth = 1;
+    rr(px+0.5, noteY+0.5, pw-1, ph-1, 9999); ctx.stroke();
+    ctx.fillStyle = COL.rec;
+    ctx.beginPath(); ctx.arc(px+17, noteY+ph/2, 3.5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = COL.ink3;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, px+28, noteY + ph/2 + 0.5);
+    ctx.restore();
+  }
+
+  function drawPlayhead(){
+    var x = xOf(st.t);
+    ctx.strokeStyle = COL.rec;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x, 26); ctx.lineTo(x, segBottom()); ctx.stroke();
+    ctx.fillStyle = COL.rec;
+    ctx.beginPath(); ctx.arc(x, 26, 3.5, 0, Math.PI*2); ctx.fill();
+  }
+
+  function drawLegend(){
+    var itemsArr = short
+      ? [{c:COL.accent,t:'人声'},{c:COL.noise,t:'噪音'},{c:COL.rec,t:'播放头'}]
+      : [{c:COL.accent,t:'人声（VAD 开启）'},{c:COL.noise,t:'背景噪音（忽略）'},{c:COL.rec,t:'播放头'}];
+    ctx.font = '11px ' + FONT;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    var x = plotX;
+    for(var i=0;i<itemsArr.length;i++){
+      ctx.fillStyle = itemsArr[i].c;
+      ctx.fillRect(x, legendY-4.5, 9, 9);
+      ctx.fillStyle = COL.ink3;
+      ctx.fillText(itemsArr[i].t, x+14, legendY + 0.5);
+      x += 14 + ctx.measureText(itemsArr[i].t).width + 22;
+    }
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    drawBgs();
+    drawWave();
+    drawGate();
+    drawSegs();
+    drawNoiseNote();
+    drawPlayhead();
+    drawLegend();
+  }
+
+  function updateTexts(){
+    for(var i=0;i<items.length;i++){
+      var s = VOICE[i];
+      if(!s) continue;
+      if(st.t >= s.end) items[i].classList.add('show');
+    }
+  }
+  function resetTexts(){
+    for(var i=0;i<items.length;i++) items[i].classList.remove('show');
+  }
+
+  var btnPlay = document.getElementById('btn-play');
+  var btnReplay = document.getElementById('btn-replay');
+  var btnLabel = btnPlay ? btnPlay.querySelector('.btn-label') : null;
+
+  function syncBtn(){
+    if(!btnPlay) return;
+    btnPlay.classList.toggle('is-playing', st.playing);
+    btnPlay.setAttribute('aria-pressed', st.playing ? 'true' : 'false');
+    if(btnLabel) btnLabel.textContent = st.playing ? '暂停' : '播放';
+  }
+
+  function renderFinal(){
+    st.t = TOTAL;
+    st.playing = false;
+    updateTexts();
+    draw();
+    syncBtn();
+  }
+
+  function tick(ts){
+    if(!st.playing) return;
+    if(!st.last) st.last = ts;
+    var dt = (ts - st.last)/1000;
+    st.last = ts;
+    if(dt > 0.06) dt = 0.06;
+    st.t += dt*1.25;
+    if(st.t >= TOTAL){
+      st.t = TOTAL;
+      st.playing = false;
+      updateTexts();
+      draw();
+      syncBtn();
+      return;
+    }
+    updateTexts();
+    draw();
+    st.raf = requestAnimationFrame(tick);
+  }
+
+  function play(){
+    if(reduce){ renderFinal(); return; }
+    if(st.t >= TOTAL){ st.t = 0; resetTexts(); }
+    if(st.playing) return;
+    st.playing = true;
+    st.last = 0;
+    syncBtn();
+    st.raf = requestAnimationFrame(tick);
+  }
+  function pause(){
+    st.playing = false;
+    if(st.raf) cancelAnimationFrame(st.raf);
+    syncBtn();
+  }
+
+  if(btnPlay) btnPlay.addEventListener('click', function(){ if(st.playing) pause(); else play(); });
+  if(btnReplay) btnReplay.addEventListener('click', function(){
+    pause();
+    st.t = 0;
+    resetTexts();
+    st.played = true;
+    play();
+  });
+
+  /* autoplay when scrolled into view */
+  var stage = document.querySelector('.stage');
+  if(stage && !reduce && 'IntersectionObserver' in window){
+    var vio = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(en.isIntersecting){
+          if(st.t < TOTAL && !st.playing){ st.played = true; play(); }
+        }else{
+          pause();
+        }
+      });
+    },{threshold:0.35});
+    vio.observe(stage);
+  }
+
+  layout();
+  if(reduce) renderFinal();
+
+  if(window.ResizeObserver){
+    var ro = new ResizeObserver(function(){ layout(); if(reduce) renderFinal(); });
+    ro.observe(canvas.parentElement);
+  }else{
+    window.addEventListener('resize', function(){ layout(); if(reduce) renderFinal(); });
+  }
+})();
+</script>
+</body>
+</html>

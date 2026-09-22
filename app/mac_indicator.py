@@ -5,8 +5,10 @@ app), so the panel is borderless, non-activating and floating, shown with
 ``orderFrontRegardless()`` while mouse events are ignored. Every method is
 thread-safe: UI work is dispatched to the main thread, where the tray's
 NSApplication run loop services it. Placement mirrors the Windows bar
-(bottom-centre of the active screen, suppressed while a fullscreen window owns
-the display). pyobjc is imported with ``importlib`` (M1 constraint).
+(right edge of the active screen, vertically centred, suppressed while a
+fullscreen window owns the display). The sticky "live" mode keeps the bar
+visible in an accent shade; the subtle pulse is a Windows-only Tk animation.
+pyobjc is imported with ``importlib`` (M1 constraint).
 """
 
 import importlib
@@ -25,11 +27,12 @@ log = logging.getLogger(__name__)
 _WIDTH = 240.0
 _HEIGHT = 44.0
 _LABEL_HEIGHT = 20.0
-_BOTTOM_MARGIN = 96.0
+_RIGHT_MARGIN = 24.0
 _RADIUS = 12.0
 _FONT_SIZE = 15.0
 _BG = (0.063, 0.078, 0.094, 0.92)
 _FG = (0.91, 0.92, 0.93, 1.0)
+_ACCENT = (0.49, 0.83, 0.99, 1.0)
 
 
 class Indicator:
@@ -52,6 +55,24 @@ class Indicator:
     def progress(self, pct: float, text: str) -> None:
         """Show download progress."""
         self._dispatch(lambda: self._render(f"{text} {pct * 100:.0f}%", flash_ms=None))
+
+    def listen(self, text: str) -> None:
+        """Show a sticky listening bar (continuous dictation)."""
+        self._dispatch(lambda: self._render_live(text))
+
+    def flash_listen(self, flash_text: str, listen_text: str, ms: int = 1500) -> None:
+        """Flash a confirmation, then return to sticky listening mode."""
+
+        def _run() -> None:
+            self._render(flash_text, flash_ms=ms)
+            generation = self._generation
+            timer = threading.Timer(
+                ms / 1000, lambda: self._resume_listen(generation, listen_text)
+            )
+            timer.daemon = True
+            timer.start()
+
+        self._dispatch(_run)
 
     def hide(self) -> None:
         """Hide the bar."""
@@ -98,19 +119,35 @@ class Indicator:
 
         self._dispatch(_check)
 
+    def _render_live(self, text: str) -> None:
+        """Main-thread: sticky listening render in the accent shade."""
+        self._render(text, flash_ms=None)
+        self._label.setTextColor_(
+            AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(*_ACCENT)
+        )
+
+    def _resume_listen(self, generation: int, text: str) -> None:
+        """Main-thread: return to sticky listening unless superseded."""
+
+        def _check() -> None:
+            if generation == self._generation:
+                self._render_live(text)
+
+        self._dispatch(_check)
+
     def _hide_now(self) -> None:
         """Main-thread: order the panel out."""
         if self._panel is not None:
             self._panel.orderOut_(None)
 
     def _place(self) -> None:
-        """Main-thread: bottom-centre of the active screen's work area."""
+        """Main-thread: right edge of the active screen, vertically centred."""
         screen = AppKit.NSScreen.mainScreen()
         if screen is None:
             return
         frame = screen.visibleFrame()
-        x = frame.origin.x + (frame.size.width - _WIDTH) / 2
-        y = frame.origin.y + _BOTTOM_MARGIN
+        x = frame.origin.x + frame.size.width - _WIDTH - _RIGHT_MARGIN
+        y = frame.origin.y + (frame.size.height - _HEIGHT) / 2
         self._panel.setFrameOrigin_(Foundation.NSMakePoint(x, y))
 
     def _ensure_panel(self) -> None:

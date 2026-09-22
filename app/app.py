@@ -10,7 +10,7 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import assert_never
 
 import numpy as np
@@ -19,7 +19,12 @@ from app import __version__, native
 from app.asr import Recognizer
 from app.config import MOUSE_VKS, Config, config_path, hotkey_vk, models_root, save_config
 from app.controls import Controls, ControlsDeps
-from app.downloader import DownloadError, ensure_model, manual_download_guide
+from app.downloader import (
+    DownloadError,
+    ensure_model,
+    ensure_vad_model,
+    manual_download_guide,
+)
 from app.emit import EmitSettings, emit_text
 from app.hotkey_logic import (
     Action,
@@ -30,14 +35,28 @@ from app.hotkey_logic import (
     Release,
     StartHold,
 )
+from app.partial import PartialBuffer, truncate_partial
 from app.recorder import Recorder
 from app.tray import Tray, TrayCallbacks, TrayState
 from app.update_flow import UpdateFlow
+from app.vad import Segmenter, VadSettings
 
 log = logging.getLogger(__name__)
 
 _VK_DISABLED: int = 0
 _VK_ESCAPE: int = 0x1B
+
+#: Bounded continuous-capture queue: the audio callback drops the oldest block
+#: when this fills, so a slow decode can never stall the microphone stream.
+_CONTINUOUS_QUEUE_MAX: int = 128
+
+#: Sticky pill shown while continuous mode is listening.
+_LISTEN_TEXT: str = "● 聆听中"
+#: Confirmation flashed at each endpoint before returning to listening.
+_COMMIT_TEXT: str = "✓ 已上屏"
+_COMMIT_FLASH_MS: int = 900
+#: Minimum gap between live partial decodes; a slower decode simply slips.
+_PARTIAL_INTERVAL_S: float = 0.35
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +96,11 @@ class SetDisfluency:
 
 
 @dataclass(frozen=True, slots=True)
+class SetContinuous:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class InitModel:
     pass
 
@@ -89,6 +113,7 @@ type WorkerMsg = (
     | CaptureHotkey
     | SetModel
     | SetDisfluency
+    | SetContinuous
     | InitModel
 )
 
@@ -112,6 +137,9 @@ class DictationApp:
         self._hold_confirm_timer: threading.Timer | None = None
         self._model_downloaded = False
         self._model_ready = False
+        self._continuous = False
+        self._continuous_thread: threading.Thread | None = None
+        self._continuous_queue: queue.Queue[np.ndarray] | None = None
         self._stop_event = threading.Event()
         self._tray = Tray(
             callbacks=TrayCallbacks(
@@ -127,6 +155,7 @@ class DictationApp:
                 on_select_model=lambda kind: self._queue.put(SetModel(kind=kind)),
                 on_show_diagnostics=self._show_diagnostics_deferred,
                 on_toggle_disfluency=lambda: self._queue.put(SetDisfluency()),
+                on_toggle_continuous=lambda: self._queue.put(SetContinuous()),
             ),
             state_provider=self._tray_state,
         )
@@ -197,8 +226,13 @@ class DictationApp:
         pct = downloaded / total if total else 0.0
         self._indicator.progress(pct, f"下载模型 {filename}")
 
+    def _on_vad_progress(self, filename: str, downloaded: int, total: int) -> None:
+        pct = downloaded / total if total else 0.0
+        self._indicator.progress(pct, f"下载 VAD {filename}")
+
     def _on_toggle_autostart(self) -> None:
         native.util.set_autostart(not native.util.autostart_enabled())
+        self._tray.refresh_menu()
 
     def _request_exit(self) -> None:
         """Stop the tray loop immediately; run() then tears the process down.
@@ -219,6 +253,7 @@ class DictationApp:
             current_hotkey=self._config.hotkey,
             current_model=self._config.model,
             disfluency=self._config.disfluency,
+            continuous=self._continuous,
         )
 
     def _set_config(self, config: Config) -> None:
@@ -231,6 +266,8 @@ class DictationApp:
         self._recorder = Recorder(
             device_name=name, on_stream_error=lambda msg: log.warning("%s", msg)
         )
+        if self._continuous and self._continuous_queue is not None:
+            self._recorder.start_sink(self._continuous_queue)  # keep the mode alive
         return self._recorder
 
     def _show_diagnostics(self) -> None:
@@ -261,16 +298,18 @@ class DictationApp:
                 self._indicator.update("出错了，详见日志")
                 self._tray.notify("语音处理出错，详见日志")
 
+    def _on_key_transition(self, pressed: bool, ts_ms: int) -> None:
+        event = Press(timestamp_ms=ts_ms) if pressed else Release(timestamp_ms=ts_ms)
+        action = self._detector.feed(event)
+        if action is not None:
+            self._handle(action)
+
     def _dispatch(self, message: WorkerMsg) -> None:
         match message:
             case KeyTransition(pressed=pressed, ts_ms=ts):
-                event = Press(timestamp_ms=ts) if pressed else Release(timestamp_ms=ts)
-                action = self._detector.feed(event)
-                if action is not None:
-                    self._handle(action)
+                self._on_key_transition(pressed=pressed, ts_ms=ts)
             case SetPaused(paused=paused):
-                self._paused = paused
-                log.info("paused=%s", paused)
+                self._set_paused(paused)
             case SetMic(name=name):
                 self._controls.swap_mic(name)
             case SetHotkey(key=key):
@@ -282,10 +321,23 @@ class DictationApp:
                 self._swap_model(kind)
             case SetDisfluency():
                 self._toggle_disfluency()
+            case SetContinuous():
+                self._toggle_continuous()
             case InitModel():
                 self._init_model()
             case unreachable:
                 assert_never(unreachable)
+
+    def _set_paused(self, paused: bool) -> None:
+        """Toggle pause; in continuous mode the live pill follows it."""
+        self._paused = paused
+        self._tray.refresh_menu()  # pystray caches the menu; re-render the check
+        if self._continuous:
+            if paused:
+                self._indicator.hide()
+            else:
+                self._indicator.listen(_LISTEN_TEXT)
+        log.info("paused=%s", paused)
 
     def _handle(self, action: Action) -> None:
         match action:
@@ -421,14 +473,165 @@ class DictationApp:
         if self._model_downloaded:
             self._indicator.flash("模型下载完成，可以开始使用了", 4000)
             self._tray.notify("模型下载完成，可以开始使用了", title="xxl-whisper")
+        if self._config.continuous:  # honour the persisted mode from last run
+            self._start_continuous()
+
+    # -- continuous dictation -------------------------------------------------
+
+    def _toggle_continuous(self) -> None:
+        """Tray switch for always-on VAD-gated dictation (持续听写)."""
+        if self._continuous:
+            self._stop_continuous()
+        else:
+            self._start_continuous()
+        self._tray.refresh_menu()  # pystray caches the menu; re-render the check
+
+    def _start_continuous(self) -> None:
+        """Lazily fetch the VAD model and start the always-on segment loop.
+
+        Runs on the worker thread. A download failure is reported like a model
+        download (manual guide) and re-raised so the worker's generic handler
+        surfaces the "出错了" indicator.
+        """
+        try:
+            vad_path = ensure_vad_model(
+                models_root(), self._on_vad_progress, proxy=self._config.proxy
+            )
+        except DownloadError as exc:
+            log.warning("VAD download failed: %s", exc)
+            guide = manual_download_guide("vad", models_root())
+            native.util.show_info(f"VAD 模型自动下载失败：{exc.reason}\n\n{guide}")
+            raise
+        segmenter = Segmenter(
+            VadSettings(
+                model_path=vad_path,
+                threshold=self._config.vad_threshold,
+                min_speech_s=self._config.vad_min_speech_ms / 1000,
+                min_silence_s=self._config.vad_min_silence_ms / 1000,
+                max_speech_s=self._config.vad_max_speech_ms / 1000,
+                num_threads=self._config.num_threads,
+            )
+        )
+        blocks: queue.Queue[np.ndarray] = queue.Queue(maxsize=_CONTINUOUS_QUEUE_MAX)
+        self._continuous_queue = blocks
+        if self._recorder is not None:
+            self._recorder.start_sink(blocks)
+        self._continuous = True
+        self._set_hooks_armed()  # stays disarmed: continuous owns the microphone
+        self._continuous_thread = threading.Thread(
+            target=self._continuous_loop,
+            args=(segmenter, blocks),
+            daemon=True,
+            name="continuous-vad",
+        )
+        self._continuous_thread.start()
+        self._persist_continuous(enabled=True)
+        self._indicator.flash_listen("持续听写已开启", _LISTEN_TEXT, 1500)
+        log.info("continuous: on")
+
+    def _stop_continuous(self) -> None:
+        """Stop the segment loop, release the microphone, restore push-to-talk."""
+        self._continuous = False
+        if self._recorder is not None:
+            self._recorder.stop_sink()
+        thread = self._continuous_thread
+        if thread is not None:
+            thread.join(timeout=2)
+        self._continuous_thread = None
+        self._continuous_queue = None
+        self._persist_continuous(enabled=False)
+        self._set_hooks_armed()
+        self._indicator.hide()  # leave live mode; the pulse loop is cancelled
+        log.info("continuous: off")
+
+    def _persist_continuous(self, *, enabled: bool) -> None:
+        """Remember the mode so a restart resumes it (mirrors 语义顺滑)."""
+        if self._config.continuous != enabled:
+            self._set_config(replace(self._config, continuous=enabled))
+
+    def _continuous_loop(
+        self, segmenter: Segmenter, blocks: queue.Queue[np.ndarray]
+    ) -> None:
+        """Daemon thread: segment blocks through the VAD, insert each sentence.
+
+        Live partials reuse the same VAD state without touching it: the VAD only
+        yields a finished segment at the endpoint, so the raw blocks fed while
+        it reports speech are accumulated separately (:class:`PartialBuffer`)
+        and decoded serially on this thread at most every
+        ``_PARTIAL_INTERVAL_S``. The recognizer is re-read per decode (it may be
+        swapped mid-stream) and held locally during decode so a concurrent swap
+        cannot drop it.
+        """
+        partial = PartialBuffer()
+        last_partial_at = 0.0
+        while self._continuous and not self._stop_event.is_set():
+            try:
+                block = blocks.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            segmenter.accept(block)
+            if segmenter.is_speech_detected():
+                partial = partial.push(block)
+                now = time.monotonic()
+                if now - last_partial_at >= _PARTIAL_INTERVAL_S and not self._paused:
+                    last_partial_at = now
+                    self._show_partial(partial)
+            segments = segmenter.drain()
+            if segments:  # endpoint: the utterance is complete, restart partials
+                partial = PartialBuffer()
+                last_partial_at = 0.0
+                if self._insert_segments(segments):
+                    self._indicator.flash_listen(
+                        _COMMIT_TEXT, _LISTEN_TEXT, _COMMIT_FLASH_MS
+                    )
+        segmenter.flush()
+        if self._insert_segments(segmenter.drain()):
+            self._indicator.flash_listen(_COMMIT_TEXT, _LISTEN_TEXT, _COMMIT_FLASH_MS)
+        log.info("continuous: loop exited")
+
+    def _show_partial(self, partial: PartialBuffer) -> None:
+        """Decode the in-progress audio and refresh the pill (this thread only)."""
+        recognizer = self._recognizer
+        samples = partial.samples()
+        if recognizer is None or samples is None:
+            return
+        text = recognizer.transcribe(samples)
+        if text:
+            self._indicator.update(f"● {truncate_partial(text)}")
+
+    def _insert_segments(self, segments: list[np.ndarray]) -> int:
+        """Decode and emit each finished segment; returns how many were emitted."""
+        emitted = 0
+        for samples in segments:
+            if self._stop_event.is_set() or self._paused:
+                return emitted
+            recognizer = self._recognizer
+            if recognizer is None:
+                continue
+            log.info("continuous: segment %.2f s", samples.shape[0] / 16_000)
+            text = recognizer.transcribe(samples)
+            if not text:
+                continue
+            log.info("continuous asr: %r", text)
+            emit_text(
+                text,
+                EmitSettings(
+                    restore_clipboard=self._config.restore_clipboard,
+                    paste_delay_ms=self._config.paste_delay_ms,
+                ),
+                self._indicator,
+            )
+            emitted += 1
+        return emitted
 
     def _set_hooks_armed(self) -> None:
         """Arm the hooks once the model is ready so dictation can suppress keys.
 
         While the model loads the hooks stay disarmed (CapsLock is native) so a
-        click toggles caps even though the worker is busy decoding.
+        click toggles caps even though the worker is busy decoding. Continuous
+        dictation keeps them disarmed for as long as it owns the microphone.
         """
-        armed = self._model_ready
+        armed = self._model_ready and not self._continuous
         if self._hook is not None:
             self._hook.set_armed(armed)
         if self._mouse_hook is not None:
@@ -457,6 +660,11 @@ class DictationApp:
         self._stop_event.set()
         self._cancel_hold_confirm()
         self._updates.stop()
+        self._continuous = False
+        if self._recorder is not None:
+            self._recorder.stop_sink()
+        if self._continuous_thread is not None:
+            self._continuous_thread.join(timeout=2)
         if self._hook is not None:
             self._hook.set_armed(False)
             self._hook.stop()

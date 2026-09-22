@@ -45,6 +45,7 @@ class TrayCallbacks:
     on_select_model: Callable[[str], None]
     on_show_diagnostics: Callable[[], None]
     on_toggle_disfluency: Callable[[], None]
+    on_toggle_continuous: Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,7 @@ class TrayState:
     current_hotkey: str | int
     current_model: str
     disfluency: str
+    continuous: bool
 
 
 class Tray:
@@ -113,6 +115,11 @@ class Tray:
                 "语义顺滑",
                 self._callbacks.on_toggle_disfluency,
                 checked=lambda _item: self._state_provider().disfluency == "smooth",
+            ),
+            pystray.MenuItem(
+                "持续听写",
+                self._callbacks.on_toggle_continuous,
+                checked=lambda _item: self._state_provider().continuous,
             ),
             pystray.MenuItem(
                 "开机自启",
@@ -217,6 +224,8 @@ class Tray:
         state = self._state_provider()
         if not state.ready:
             return "状态：启动中…"
+        if state.continuous:
+            return "状态：持续听写中（热键已停用，说话即上屏）"
         label = _hotkey_label(state.current_hotkey)
         if state.paused:
             return f"状态：已暂停（{label} 只保留原功能）"

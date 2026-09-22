@@ -37,6 +37,21 @@ _GH_BACKUP_SENSEVOICE: str = (
     "/sensevoice-backup.tar.bz2"
 )
 
+#: Silero VAD artifact for continuous dictation. Two upstream mirrors serve
+#: different revisions of the same model: hf-mirror ships the newer 1,807,522-
+#: byte export, the GitHub release asset ships the 643,854-byte one. Both
+#: segment identically, so either exact size is accepted; anything else is a
+#: truncated download. hf-mirror stays primary because it is reachable from
+#: mainland China, where GitHub often is not.
+_VAD_HF_URL: str = "https://hf-mirror.com/csukuangfj/vad/resolve/main/silero_vad.onnx"
+_VAD_HF_SIZE: int = 1_807_522
+_VAD_GH_URL: str = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+)
+_VAD_GH_SIZE: int = 643_854
+_VAD_SIZES: frozenset[int] = frozenset({_VAD_HF_SIZE, _VAD_GH_SIZE})
+_VAD_FILENAME: str = "silero_vad.onnx"
+
 ProgressFn = Callable[[str, int, int], None]  # (filename, downloaded_bytes, total_bytes)
 
 
@@ -117,6 +132,33 @@ def ensure_model(
     return ModelFiles(kind=kind, directory=model_dir)
 
 
+def ensure_vad_model(
+    models_root: Path, progress: ProgressFn, *, proxy: str = ""
+) -> Path:
+    """Make sure the Silero VAD model exists locally; return its path.
+
+    Continuous dictation downloads this lazily on first enable. hf-mirror is
+    the primary source, the GitHub release asset the fallback; the stored file
+    must match one of the two known exact sizes.
+    """
+    dest = models_root / "vad" / _VAD_FILENAME
+    if _is_vad_complete(dest):
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    last_error: DownloadError | None = None
+    for url, size in ((_VAD_HF_URL, _VAD_HF_SIZE), (_VAD_GH_URL, _VAD_GH_SIZE)):
+        try:
+            _download(_FileSpec(url=url, dest=dest, expected_size=size), progress, proxy=proxy)
+        except DownloadError as exc:
+            last_error = exc
+            log.info("VAD source failed, trying next: %s", exc)
+        else:
+            return dest
+    raise last_error if last_error is not None else DownloadError(
+        source="all", reason=f"{_VAD_FILENAME} missing"
+    )
+
+
 def manual_download_guide(kind: str, models_root: Path) -> str:
     """Return copy-paste instructions for fetching a model by hand.
 
@@ -125,6 +167,11 @@ def manual_download_guide(kind: str, models_root: Path) -> str:
     model directory so the app proceeds on the next launch.
     """
     model_dir = models_root / kind
+    sources = (
+        [(_VAD_FILENAME, _VAD_HF_URL), (_VAD_FILENAME, _VAD_GH_URL)]
+        if kind == "vad"
+        else [(dest, url) for url, dest, _size in _MODEL_FILES[kind]]
+    )
     lines = [
         f"模型 {kind} 自动下载失败。",
         "",
@@ -132,16 +179,22 @@ def manual_download_guide(kind: str, models_root: Path) -> str:
         str(model_dir),
         "",
     ]
-    for url, dest, _size in _MODEL_FILES[kind]:
-        lines.append(f"{dest}  <-  {url}")
+    lines.extend(f"{dest}  <-  {url}" for dest, url in sources)
     lines.append("")
-    lines.append("含子目录的文件（如 Qwen3-0.6B/）需先创建对应目录。")
+    if kind == "vad":
+        lines.append("上方两个地址任选其一即可（文件大小 1,807,522 或 643,854 字节）。")
+    else:
+        lines.append("含子目录的文件（如 Qwen3-0.6B/）需先创建对应目录。")
     lines.append("下载完成后重启 xxl-whisper 即可。")
     return "\n".join(lines)
 
 
 def _is_complete(spec: _FileSpec) -> bool:
     return spec.dest.exists() and spec.dest.stat().st_size == spec.expected_size
+
+
+def _is_vad_complete(dest: Path) -> bool:
+    return dest.exists() and dest.stat().st_size in _VAD_SIZES
 
 
 def _fetch(spec: _FileSpec, progress: ProgressFn, *, proxy: str = "") -> None:

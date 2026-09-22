@@ -23,6 +23,7 @@ Windows / macOS 双平台离线语音听写工具：**按住热键说话（Windo
 - 上屏通道自动降级，兼容各类输入框（Windows 四级 / macOS 两级）
 - 热键自由：CapsLock / F 键 / 鼠标侧键 / 自定义
 - 语义顺滑：一键去「嗯/呃/啊」语气词、重复、口误（Fun-ASR-Nano）
+- 持续听写：常开免按键，VAD 自动切句，说完即上屏，静音与噪音不识别
 - 状态条永不抢焦点，独占全屏自动隐藏；启动静默检查更新
 
 ## 文档
@@ -32,6 +33,7 @@ Windows / macOS 双平台离线语音听写工具：**按住热键说话（Windo
 | 🌐 官网 / 落地页 | https://xianglun918.github.io/xxl-whisper/ |
 | 📖 使用与分发说明 | [docs/使用与分发说明.md](docs/使用与分发说明.md) — 安装、常见问题、配置、模型 / 代理 / 手动下载、已知边界、macOS 详情、维护者发版 |
 | 🗺️ 交互式架构图 | [线上版](https://xianglun918.github.io/xxl-whisper/architecture.html) · [JSON 源](docs/architecture.json) |
+| 🎬 持续听写可视化 | [docs/continuous.html](docs/continuous.html) — 动画演示：VAD 如何只放行人声、静音与噪音为何一个字都不出 |
 
 ## 开发
 

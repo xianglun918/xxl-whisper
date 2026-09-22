@@ -23,6 +23,7 @@ A dual-platform (Windows/macOS) offline voice dictation tool: hold the hotkey (C
 - Automatic insertion fallback for every kind of input field (4 levels on Windows / 2 on macOS)
 - Hotkeys your way: CapsLock / F keys / mouse side buttons / custom
 - Semantic smoothing: one click removes "um/uh/ah" fillers, repetitions and slips (Fun-ASR-Nano)
+- Continuous dictation: always-on and key-free — a VAD splits sentences and inserts each one as you speak, ignoring silence and noise
 - The indicator never steals focus and auto-hides in exclusive fullscreen; silent update checks on launch
 
 ## Documentation
@@ -32,6 +33,7 @@ A dual-platform (Windows/macOS) offline voice dictation tool: hold the hotkey (C
 | 🌐 Website | https://xianglun918.github.io/xxl-whisper/ |
 | 📖 Usage & Distribution Guide | [docs/使用与分发说明.en.md](docs/使用与分发说明.en.md) — install, FAQ, config, models / proxy / manual download, known limits, macOS details, maintainer release |
 | 🗺️ Interactive architecture | [online](https://xianglun918.github.io/xxl-whisper/architecture.en.html) · [JSON source](docs/architecture.en.json) |
+| 🎬 Continuous dictation (visual) | [docs/continuous.en.html](docs/continuous.en.html) — animated walkthrough: how VAD gates speech and why silence/noise never produces text |
 
 ## Development
 
