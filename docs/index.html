@@ -133,6 +133,7 @@ section{padding:96px 0}
 .arch h3{font-size:28px;font-weight:600;letter-spacing:-0.02em;margin-bottom:8px;color:#fff}
 .arch p{color:#b8b8b8;font-size:15px}
 .arch .btn{background:#fff;color:var(--ink)}
+.arch-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 
 /* footer */
 footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
@@ -173,6 +174,7 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
       <a href="#features">功能</a>
       <a href="#models">模型</a>
       <a href="#arch">架构</a>
+      <a href="continuous.html">持续听写</a>
     </div>
     <div class="nav-cta">
       <a class="btn btn-ghost" href="index.en.html">EN</a>
@@ -268,6 +270,8 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
       <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg></div><h3>热键自由</h3><p>Windows：CapsLock / F 键 / 鼠标侧键 / 自定义；macOS：右 Command / F2-F8 / 自定义。托盘即时切换。</p></div>
       <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><h3>永不抢焦点</h3><p>Windows 状态条跟随前台显示器；macOS 用非激活 NSPanel，不抢键盘焦点、不打断输入。</p></div>
       <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg></div><h3>一键升级</h3><p>启动静默检查新版本，托盘提示直达下载页；覆盖旧版本即完成升级。</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg></div><h3>持续听写</h3><p>常开免按键：内置 VAD 只在检测到人声时识别，说完一句自动上屏；静音与背景噪音一个字都不出。</p></div>
+      <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg></div><h3>语义顺滑</h3><p>一键去掉「嗯/呃/啊」语气词、重复与口误，输出流畅文本（Fun-ASR-Nano）。</p></div>
     </div>
   </div>
 </section>
@@ -322,7 +326,10 @@ footer{padding:40px 0 64px;box-shadow:0 -1px 0 var(--ring)}
         <h3>想了解它怎么工作？</h3>
         <p>共享核心 + app/native.py 平台门面 + Windows / macOS 两套实现：钩子 → 录音 → 识别 → 上屏，以及离线模型与交互面。</p>
       </div>
-      <a class="btn" href="architecture.html">打开架构图 →</a>
+      <div class="arch-actions">
+        <a class="btn" href="architecture.html">打开架构图 →</a>
+        <a class="btn" href="continuous.html">持续听写演示 →</a>
+      </div>
     </div>
   </div>
 </section>
