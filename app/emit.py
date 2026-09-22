@@ -29,6 +29,24 @@ class Channel(StrEnum):
     CLIPBOARD = "clipboard"
 
 
+class DeliveryPath(StrEnum):
+    """How text is delivered when the KEYS channel is reachable."""
+
+    CLIPBOARD_PASTE = "clipboard_paste"
+    TYPE_TEXT = "type_text"
+
+
+def choose_delivery_path(clipboard_has_non_text: bool) -> DeliveryPath:
+    """Pure decision: a non-text clipboard must never be overwritten.
+
+    The clipboard-paste path stages the text with ``set_clipboard_text`` and
+    can only restore a previous *text* clipboard (``_clipboard_text`` reads
+    CF_UNICODETEXT alone), so an image/file/rich clipboard would be destroyed.
+    A non-text clipboard therefore takes the clipboard-free typing path.
+    """
+    return DeliveryPath.TYPE_TEXT if clipboard_has_non_text else DeliveryPath.CLIPBOARD_PASTE
+
+
 @dataclass(frozen=True, slots=True)
 class TargetProbe:
     """Facts about the current paste target, gathered at emit time."""
@@ -100,10 +118,11 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
         control_class,
         alive,
     )
-    try:
-        native.io.set_clipboard_text(text)  # always staged: manual paste also works
-    except (native.io.PasteError, OSError) as exc:
-        log.warning("emit: clipboard staging failed (%s); channels may still deliver", exc)
+    path = choose_delivery_path(native.io.clipboard_has_non_text())
+    log.info("emit: delivery path=%s", path)
+    if path is DeliveryPath.TYPE_TEXT:
+        return _emit_clipboard_free(text, alive, indicator)
+    _stage_clipboard(text)  # always staged: manual paste also works
     probe = TargetProbe(
         injection_alive=alive,
         is_classic_control=is_classic_control(control_class),
@@ -135,6 +154,41 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
     )
     indicator.flash(f"已复制到剪贴板，请手动 {native.io.PASTE_COMBO}", 2500)
     return Channel.CLIPBOARD
+
+
+def _stage_clipboard(text: str) -> None:
+    """Best-effort stage of the text for the paste channels."""
+    try:
+        native.io.set_clipboard_text(text)
+    except (native.io.PasteError, OSError) as exc:
+        log.warning("emit: clipboard staging failed (%s); channels may still deliver", exc)
+
+
+def _emit_clipboard_free(text: str, injection_alive: bool, indicator: _IndicatorLike) -> Channel:
+    """Type the text without ever touching the clipboard.
+
+    Used when the clipboard holds non-text content: staging the text would
+    destroy it and the text-only restore cannot put it back, so the only safe
+    delivery is ``type_text``. When injection is dead the text cannot be typed
+    either; the clipboard is left untouched and the terminal CLIPBOARD state is
+    reported (the caller must not claim the text was copied).
+    """
+    if injection_alive and _try_type_text(text, indicator):
+        return Channel.KEYS
+    log.warning("emit: clipboard-free typing unavailable; clipboard left untouched")
+    indicator.flash("无法输入：剪贴板含非文本内容，未改动", 2500)
+    return Channel.CLIPBOARD
+
+
+def _try_type_text(text: str, indicator: _IndicatorLike) -> bool:
+    try:
+        native.io.type_text(text)
+    except (native.io.PasteError, OSError) as exc:
+        log.warning("emit: clipboard-free typing failed: %s", exc)
+        return False
+    log.info("emit: delivered via clipboard-free unicode typing")
+    indicator.hide()
+    return True
 
 
 def _try_keys(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> bool:

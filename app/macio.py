@@ -157,6 +157,22 @@ def set_clipboard_text(text: str) -> None:
     pasteboard.setString_forType_(text, _PB_TYPE)
 
 
+def clipboard_has_non_text() -> bool:
+    """Probe whether the pasteboard holds content without a plain-text flavour.
+
+    Mirrors :func:`app.winio.clipboard_has_non_text`: when the pasteboard
+    carries an image/file/rich type and no plain text, staging the dictated
+    text for Cmd+V would churn that content, so emit prefers the clipboard-free
+    typing path. An empty pasteboard is not "non-text" (nothing to lose), and
+    rich content copied alongside plain text (browsers) is treated as text.
+    """
+    pasteboard = AppKit.NSPasteboard.generalPasteboard()
+    flavours = [str(ptype) for ptype in (pasteboard.types() or [])]
+    if not flavours:
+        return False
+    return not any(flavour == str(_PB_TYPE) for flavour in flavours)
+
+
 def keyboard_injection_alive() -> bool:
     """Whether synthetic keystrokes can be posted (Accessibility granted)."""
     return bool(Quartz.CGPreflightPostEventAccess())

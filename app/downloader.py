@@ -1,19 +1,33 @@
-"""Model acquisition: direct downloads — no cloud-drive dependency.
+"""Model catalog and acquisition policy — no cloud-drive dependency.
 
 Primary source is hf-mirror.com (HuggingFace mirror, CN-friendly) serving the
 sherpa-onnx team's model exports. Fallback is the GitHub release tarballs.
 Each supported model lives in its own directory under the models root.
+
+This module owns *what* to fetch and where it goes (URLs, exact sizes, recorded
+SHA256 values, source order, tarball fallback, manual guide). The resumable,
+retrying, hash-verified byte transfer lives in :mod:`app.download_io`.
 """
 
 import logging
 import tarfile
 import tempfile
-import urllib.request
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.download_io import DownloadError, FileSpec, ProgressFn, verify_sha256
+from app.download_io import download as _download
+
 log = logging.getLogger(__name__)
+
+__all__ = [
+    "DownloadError",
+    "ModelFiles",
+    "ProgressFn",
+    "ensure_model",
+    "ensure_vad_model",
+    "manual_download_guide",
+]
 
 _HF_SENSEVOICE: str = (
     "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
@@ -40,28 +54,21 @@ _GH_BACKUP_SENSEVOICE: str = (
 #: Silero VAD artifact for continuous dictation. Two upstream mirrors serve
 #: different revisions of the same model: hf-mirror ships the newer 1,807,522-
 #: byte export, the GitHub release asset ships the 643,854-byte one. Both
-#: segment identically, so either exact size is accepted; anything else is a
-#: truncated download. hf-mirror stays primary because it is reachable from
-#: mainland China, where GitHub often is not.
+#: segment identically, so either exact size and either known SHA256 is
+#: accepted; anything else is a truncated or tampered download. hf-mirror stays
+#: primary because it is reachable from mainland China, where GitHub often is not.
 _VAD_HF_URL: str = "https://hf-mirror.com/csukuangfj/vad/resolve/main/silero_vad.onnx"
 _VAD_HF_SIZE: int = 1_807_522
+_VAD_HF_SHA256: str = "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28"
 _VAD_GH_URL: str = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
 )
 _VAD_GH_SIZE: int = 643_854
+_VAD_GH_SHA256: str = "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
 _VAD_SIZES: frozenset[int] = frozenset({_VAD_HF_SIZE, _VAD_GH_SIZE})
+#: Both upstream revisions are legitimate; either recorded hash is accepted.
+_VAD_SHA256: frozenset[str] = frozenset({_VAD_HF_SHA256, _VAD_GH_SHA256})
 _VAD_FILENAME: str = "silero_vad.onnx"
-
-ProgressFn = Callable[[str, int, int], None]  # (filename, downloaded_bytes, total_bytes)
-
-
-class DownloadError(Exception):
-    """Raised when model files cannot be fetched from any source."""
-
-    def __init__(self, source: str, reason: str) -> None:
-        super().__init__(f"{source}: {reason}")
-        self.source = source
-        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,26 +79,63 @@ class ModelFiles:
     directory: Path
 
 
-@dataclass(frozen=True, slots=True)
-class _FileSpec:
-    url: str
-    dest: Path
-    expected_size: int | None  # None = skip the post-download size check
-
-
-#: Exact artifact sizes — a truncated download must never look complete.
-_MODEL_FILES: dict[str, tuple[tuple[str, str, int], ...]] = {
+#: Exact artifact sizes and SHA256 values, recorded from the official upstream
+#: files. A truncated or tampered download must never look complete: the size
+#: check catches truncation, the hash check catches a poisoned mirror. The
+#: known-hash set holds more than one entry only where upstream legitimately
+#: serves more than one revision (the Silero VAD).
+_MODEL_FILES: dict[str, tuple[tuple[str, str, int, frozenset[str]], ...]] = {
     "sensevoice": (
-        (f"{_HF_SENSEVOICE}/model.int8.onnx", "model.onnx", 239_233_841),
-        (f"{_HF_SENSEVOICE}/tokens.txt", "tokens.txt", 315_894),
+        (
+            f"{_HF_SENSEVOICE}/model.int8.onnx",
+            "model.onnx",
+            239_233_841,
+            frozenset({"c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51"}),
+        ),
+        (
+            f"{_HF_SENSEVOICE}/tokens.txt",
+            "tokens.txt",
+            315_894,
+            frozenset({"f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"}),
+        ),
     ),
     "funasr_nano": (
-        (f"{_HF_FUNASR_NANO}/encoder_adaptor.int8.onnx", "encoder_adaptor.int8.onnx", 237_792_748),
-        (f"{_HF_FUNASR_NANO}/embedding.int8.onnx", "embedding.int8.onnx", 155_584_380),
-        (f"{_HF_FUNASR_NANO}/llm.int8.onnx", "llm.int8.onnx", 600_356_593),
-        (f"{_HF_FUNASR_NANO}/Qwen3-0.6B/merges.txt", "Qwen3-0.6B/merges.txt", 1_671_853),
-        (f"{_HF_FUNASR_NANO}/Qwen3-0.6B/tokenizer.json", "Qwen3-0.6B/tokenizer.json", 11_422_654),
-        (f"{_HF_FUNASR_NANO}/Qwen3-0.6B/vocab.json", "Qwen3-0.6B/vocab.json", 2_776_833),
+        (
+            f"{_HF_FUNASR_NANO}/encoder_adaptor.int8.onnx",
+            "encoder_adaptor.int8.onnx",
+            237_792_748,
+            frozenset({"f36dea2e30fbc33b5db1d7a7265cc976c5e5586c77b042d5adb1ad27c72db422"}),
+        ),
+        (
+            f"{_HF_FUNASR_NANO}/embedding.int8.onnx",
+            "embedding.int8.onnx",
+            155_584_380,
+            frozenset({"95e61cd0c9c3b9543339a4cf973c95c116815e745ccc1e0285cbd81f76d18644"}),
+        ),
+        (
+            f"{_HF_FUNASR_NANO}/llm.int8.onnx",
+            "llm.int8.onnx",
+            600_356_593,
+            frozenset({"dfbf9aa3be41bccc257587f151e15c63fbe1b549f2b517f5ccd5bdce3bf4322a"}),
+        ),
+        (
+            f"{_HF_FUNASR_NANO}/Qwen3-0.6B/merges.txt",
+            "Qwen3-0.6B/merges.txt",
+            1_671_853,
+            frozenset({"8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"}),
+        ),
+        (
+            f"{_HF_FUNASR_NANO}/Qwen3-0.6B/tokenizer.json",
+            "Qwen3-0.6B/tokenizer.json",
+            11_422_654,
+            frozenset({"aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"}),
+        ),
+        (
+            f"{_HF_FUNASR_NANO}/Qwen3-0.6B/vocab.json",
+            "Qwen3-0.6B/vocab.json",
+            2_776_833,
+            frozenset({"ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"}),
+        ),
     ),
 }
 
@@ -116,8 +160,13 @@ def ensure_model(
     model_dir = models_root / kind
     model_dir.mkdir(parents=True, exist_ok=True)
     specs = [
-        _FileSpec(url=url, dest=model_dir / dest, expected_size=size)
-        for url, dest, size in files
+        FileSpec(
+            url=url,
+            dest=model_dir / dest,
+            expected_size=size,
+            expected_sha256=sha256,
+        )
+        for url, dest, size, sha256 in files
     ]
     try:
         for spec in specs:
@@ -139,7 +188,7 @@ def ensure_vad_model(
 
     Continuous dictation downloads this lazily on first enable. hf-mirror is
     the primary source, the GitHub release asset the fallback; the stored file
-    must match one of the two known exact sizes.
+    must match one of the two known exact sizes and SHA256 values.
     """
     dest = models_root / "vad" / _VAD_FILENAME
     if _is_vad_complete(dest):
@@ -148,7 +197,16 @@ def ensure_vad_model(
     last_error: DownloadError | None = None
     for url, size in ((_VAD_HF_URL, _VAD_HF_SIZE), (_VAD_GH_URL, _VAD_GH_SIZE)):
         try:
-            _download(_FileSpec(url=url, dest=dest, expected_size=size), progress, proxy=proxy)
+            _download(
+                FileSpec(
+                    url=url,
+                    dest=dest,
+                    expected_size=size,
+                    expected_sha256=_VAD_SHA256,
+                ),
+                progress,
+                proxy=proxy,
+            )
         except DownloadError as exc:
             last_error = exc
             log.info("VAD source failed, trying next: %s", exc)
@@ -170,7 +228,7 @@ def manual_download_guide(kind: str, models_root: Path) -> str:
     sources = (
         [(_VAD_FILENAME, _VAD_HF_URL), (_VAD_FILENAME, _VAD_GH_URL)]
         if kind == "vad"
-        else [(dest, url) for url, dest, _size in _MODEL_FILES[kind]]
+        else [(dest, url) for url, dest, _size, _sha256 in _MODEL_FILES[kind]]
     )
     lines = [
         f"模型 {kind} 自动下载失败。",
@@ -189,7 +247,7 @@ def manual_download_guide(kind: str, models_root: Path) -> str:
     return "\n".join(lines)
 
 
-def _is_complete(spec: _FileSpec) -> bool:
+def _is_complete(spec: FileSpec) -> bool:
     return spec.dest.exists() and spec.dest.stat().st_size == spec.expected_size
 
 
@@ -197,58 +255,12 @@ def _is_vad_complete(dest: Path) -> bool:
     return dest.exists() and dest.stat().st_size in _VAD_SIZES
 
 
-def _fetch(spec: _FileSpec, progress: ProgressFn, *, proxy: str = "") -> None:
+def _fetch(spec: FileSpec, progress: ProgressFn, *, proxy: str = "") -> None:
     _download(spec, progress, proxy=proxy)
 
 
-def _download(
-    spec: _FileSpec, progress: ProgressFn, *, proxy: str = ""
-) -> None:
-    """Stream one URL to dest via a .part file; verify size when known."""
-    url, dest, expected_size = spec.url, spec.dest, spec.expected_size
-    display_name = dest.name
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    part = dest.with_name(dest.name + ".part")
-    opener = _build_opener(proxy)
-    try:
-        with (
-            # URLs are module-level https constants, not user input.
-            opener.open(url, timeout=60) as response,
-            part.open("wb") as out,
-        ):
-            header_size = response.headers.get("Content-Length")
-            total = int(header_size) if header_size else (expected_size or 0)
-            downloaded = 0
-            while chunk := response.read(1 << 20):
-                out.write(chunk)
-                downloaded += len(chunk)
-                progress(display_name, downloaded, total)
-    except OSError as exc:
-        part.unlink(missing_ok=True)
-        raise DownloadError(source=url, reason=str(exc)) from exc
-    if expected_size is not None and part.stat().st_size != expected_size:
-        actual = part.stat().st_size
-        part.unlink(missing_ok=True)
-        raise DownloadError(source=url, reason=f"size mismatch: {actual}")
-    part.replace(dest)
-
-
-def _build_opener(proxy: str) -> urllib.request.OpenerDirector:
-    """Build a urllib opener with an optional HTTP/HTTPS proxy.
-
-    When *proxy* is non-empty, both HTTP and HTTPS requests go through it.
-    Otherwise falls back to the default urllib behaviour (which honours
-    HTTP_PROXY / HTTPS_PROXY env vars if set).
-    """
-    if proxy:
-        handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-    else:
-        handler = urllib.request.ProxyHandler()  # respect env vars
-    return urllib.request.build_opener(handler)
-
-
 def _fetch_tarball_fallback(
-    model_dir: Path, specs: list[_FileSpec], progress: ProgressFn, *, proxy: str = ""
+    model_dir: Path, specs: list[FileSpec], progress: ProgressFn, *, proxy: str = ""
 ) -> None:
     """Extract model files from a release tarball, trying each source in order."""
     kind = model_dir.name
@@ -270,10 +282,10 @@ def _fetch_tarball_fallback(
     )
 
 
-def _member_to_spec(specs: list[_FileSpec], kind: str) -> dict[str, _FileSpec]:
+def _member_to_spec(specs: list[FileSpec], kind: str) -> dict[str, FileSpec]:
     """Map every possible tarball member name to its file spec."""
     aliases = _TARBALL_MEMBER_ALIASES.get(kind, {})
-    wanted: dict[str, _FileSpec] = {spec.dest.name: spec for spec in specs}
+    wanted: dict[str, FileSpec] = {spec.dest.name: spec for spec in specs}
     for member_name, dest_name in aliases.items():
         for spec in specs:
             if spec.dest.name == dest_name:
@@ -284,7 +296,7 @@ def _member_to_spec(specs: list[_FileSpec], kind: str) -> dict[str, _FileSpec]:
 def _extract_tarball(
     tarball_url: str,
     model_dir: Path,
-    wanted: dict[str, _FileSpec],
+    wanted: dict[str, FileSpec],
     progress: ProgressFn,
     *,
     proxy: str = "",
@@ -292,10 +304,11 @@ def _extract_tarball(
     with tempfile.TemporaryDirectory(dir=model_dir) as tmp:
         tar_path = Path(tmp) / "model.tar.bz2"
         _download(
-            _FileSpec(
+            FileSpec(
                 url=tarball_url,
                 dest=tar_path,
                 expected_size=None,
+                expected_sha256=frozenset(),
             ),
             progress,
             proxy=proxy,
@@ -303,7 +316,10 @@ def _extract_tarball(
         with tarfile.open(tar_path, "r:bz2") as tar:
             for member in tar.getmembers():
                 spec = wanted.get(Path(member.name).name)
-                if spec is None or _is_complete(spec):
+                if spec is None:
+                    continue
+                if _is_complete(spec):
+                    _discard_part(spec)
                     continue
                 extracted = tar.extractfile(member)
                 if extracted is None:
@@ -311,9 +327,23 @@ def _extract_tarball(
                 data = extracted.read()
                 spec.dest.parent.mkdir(parents=True, exist_ok=True)
                 spec.dest.write_bytes(data)
-                if spec.dest.stat().st_size != spec.expected_size:
+                actual = spec.dest.stat().st_size
+                if spec.expected_size is not None and actual != spec.expected_size:
                     spec.dest.unlink(missing_ok=True)
                     raise DownloadError(
                         source=tarball_url,
                         reason=f"extracted {spec.dest.name} has wrong size",
                     )
+                digest = verify_sha256(spec.dest, spec.expected_sha256, source=tarball_url)
+                log.info(
+                    "extracted %s (%d bytes, sha256 %s)",
+                    spec.dest.name,
+                    actual,
+                    digest or "unchecked",
+                )
+                _discard_part(spec)
+
+
+def _discard_part(spec: FileSpec) -> None:
+    """Remove a stale ``.part`` once the real artifact is in place."""
+    spec.dest.with_name(spec.dest.name + ".part").unlink(missing_ok=True)

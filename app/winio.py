@@ -21,7 +21,23 @@ _VK_RETURN: int = 0x0D
 _VK_F13: int = 0x7C
 _WM_PASTE: int = 0x0302
 _CF_UNICODETEXT: int = 13
+_CF_BITMAP: int = 2
+_CF_METAFILEPICT: int = 3
+_CF_DIB: int = 8
+_CF_HDROP: int = 15
+_CF_DIBV5: int = 17
 _GMEM_MOVEABLE: int = 0x0002
+
+#: Clipboard formats whose presence proves the clipboard holds content that a
+#: text-only restore (``_clipboard_text`` reads CF_UNICODETEXT alone) would
+#: silently destroy: images (CF_BITMAP/CF_DIB/CF_DIBV5/PNG), file lists
+#: (CF_HDROP) and metafiles (CF_METAFILEPICT).
+_LOSSY_FORMATS: tuple[int, ...] = (_CF_BITMAP, _CF_METAFILEPICT, _CF_DIB, _CF_HDROP, _CF_DIBV5)
+#: Registered-by-name flavours with the same meaning (PNG has no CF_* id).
+_LOSSY_FORMAT_NAMES: tuple[str, ...] = ("PNG",)
+#: Rich-text flavours that only count as non-text when no plain text is present:
+#: browsers publish "HTML Format" alongside CF_UNICODETEXT, and the text survives.
+_RICH_TEXT_FORMAT_NAMES: tuple[str, ...] = ("HTML Format",)
 _CLIPBOARD_OPEN_RETRIES: int = 20
 _CLIPBOARD_OPEN_RETRY_DELAY_S: float = 0.05
 _UNICODE_EVENTS_PER_CHAR: int = 2  # key down + key up
@@ -93,6 +109,10 @@ user32.GetClipboardData.argtypes = (wintypes.UINT,)
 user32.GetClipboardData.restype = wintypes.HANDLE
 user32.SetClipboardData.argtypes = (wintypes.UINT, wintypes.HANDLE)
 user32.SetClipboardData.restype = wintypes.HANDLE
+user32.IsClipboardFormatAvailable.argtypes = (wintypes.UINT,)
+user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+user32.RegisterClipboardFormatW.argtypes = (wintypes.LPCWSTR,)
+user32.RegisterClipboardFormatW.restype = wintypes.UINT
 kernel32.GlobalAlloc.argtypes = (wintypes.UINT, ctypes.c_size_t)
 kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
 kernel32.GlobalLock.argtypes = (wintypes.HGLOBAL,)
@@ -183,6 +203,31 @@ def foreground_window_title() -> str:
 def set_clipboard_text(text: str) -> None:
     """Public clipboard setter (the emit chain always stages text here)."""
     _set_clipboard_text(text)
+
+
+def clipboard_has_non_text() -> bool:
+    """Probe whether the clipboard holds content a text-only restore would lose.
+
+    ``emit`` consults this before staging: the restore step can only put back
+    ``CF_UNICODETEXT``, so images (CF_BITMAP/CF_DIB/CF_DIBV5/PNG), file lists
+    (CF_HDROP) and metafiles (CF_METAFILEPICT) would be silently destroyed.
+    "HTML Format" counts as non-text only when no plain-text flavour
+    accompanies it — browsers publish both, and the text survives a restore.
+    """
+    if any(user32.IsClipboardFormatAvailable(fmt) for fmt in _LOSSY_FORMATS):
+        return True
+    if _any_registered_format(_LOSSY_FORMAT_NAMES):
+        return True
+    if user32.IsClipboardFormatAvailable(_CF_UNICODETEXT):
+        return False
+    return _any_registered_format(_RICH_TEXT_FORMAT_NAMES)
+
+
+def _any_registered_format(names: tuple[str, ...]) -> bool:
+    """Whether any named clipboard format is currently on the clipboard."""
+    return any(
+        user32.IsClipboardFormatAvailable(user32.RegisterClipboardFormatW(name)) for name in names
+    )
 
 
 class _GUITHREADINFO(ctypes.Structure):

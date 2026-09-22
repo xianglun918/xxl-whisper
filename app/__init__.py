@@ -1,3 +1,3 @@
 """App package for xxl-whisper: offline push-to-talk dictation (Windows/macOS)."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
