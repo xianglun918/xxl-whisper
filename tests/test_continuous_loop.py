@@ -17,7 +17,6 @@ import numpy as np
 from app.app import DictationApp
 from app.decode_scheduler import FinishedBatch, LatestSlot
 from app.emit import Channel
-from app.partial import PartialBuffer
 
 
 class _TransientError(RuntimeError):
@@ -58,8 +57,8 @@ class _ScriptedSegmenter:
             raise _TransientError
         self.app._continuous = False  # clean exit on the second block
 
-    def is_speech_detected(self) -> bool:
-        return False
+    def current_samples(self) -> np.ndarray | None:
+        return None
 
     def drain(self) -> list[np.ndarray]:
         return []
@@ -126,8 +125,8 @@ class _SpeechSegmenter:
     def accept(self, _block: np.ndarray) -> None:
         self.app._continuous = False  # exit after this one block
 
-    def is_speech_detected(self) -> bool:
-        return True
+    def current_samples(self) -> np.ndarray | None:
+        return np.ones(8, dtype=np.float32)
 
     def drain(self) -> list[np.ndarray]:
         if self.drained:
@@ -152,6 +151,49 @@ def test_vad_loop_queues_finished_segments_without_decoding() -> None:
     assert app._partial_slot.take() is None  # the endpoint cleared the snapshot
 
 
+@dataclass(slots=True)
+class _GrowingSegmenter:
+    """Reports a distinct in-progress snapshot per block, then exits."""
+
+    app: DictationApp
+    calls: int = 0
+
+    def accept(self, _block: np.ndarray) -> None:
+        self.calls += 1
+
+    def current_samples(self) -> np.ndarray | None:
+        if self.calls >= 2:
+            self.app._continuous = False  # exit after the second block
+        return np.full(self.calls, float(self.calls), dtype=np.float32)
+
+    def drain(self) -> list[np.ndarray]:
+        return []
+
+    def flush(self) -> None:
+        pass
+
+
+def test_vad_loop_publishes_the_vads_current_samples_not_accumulated_blocks() -> None:
+    """The live partial must be the VAD's own segment, not the raw fed blocks.
+
+    Regression: the loop used to accumulate the blocks it fed while the VAD
+    reported speech, which misses the onset (``is_speech_detected`` flips only
+    after the VAD buffered it) and so decoded different audio from the insert.
+    """
+    app = _bare_app()
+    blocks: queue.Queue[np.ndarray] = queue.Queue()
+    blocks.put(np.zeros(4, dtype=np.float32))  # every fed block is zeros
+    blocks.put(np.zeros(4, dtype=np.float32))
+
+    app._continuous_loop(_GrowingSegmenter(app), blocks)
+
+    snapshot = app._partial_slot.take()
+    assert snapshot is not None
+    # The VAD's second snapshot is [2.0, 2.0]; an accumulated block buffer would
+    # be zeros, so this pins the partial audio to the VAD's own segment.
+    assert np.array_equal(snapshot, np.array([2.0, 2.0], dtype=np.float32))
+
+
 def test_decode_loop_emits_a_finished_sentence_before_a_partial(monkeypatch) -> None:
     """A pending sentence must never wait behind partial work."""
     app = _bare_app()
@@ -171,8 +213,8 @@ def test_decode_loop_emits_a_finished_sentence_before_a_partial(monkeypatch) -> 
             segments=(np.ones(8, dtype=np.float32),),
         )
     )
-    slot: LatestSlot[PartialBuffer] = LatestSlot()
-    slot.publish(PartialBuffer().push(np.ones(8, dtype=np.float32)))
+    slot: LatestSlot[np.ndarray] = LatestSlot()
+    slot.publish(np.ones(8, dtype=np.float32))
     vad_done = threading.Event()
     vad_done.set()  # nothing more will arrive; exit once the queue drains
 

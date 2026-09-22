@@ -119,8 +119,8 @@ def test_disfluency_defaults_smooth_for_funasr_nano() -> None:
 
 def test_continuous_keys_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    original = Config(hotkey="caps_lock", hold_threshold_ms=400, mic="", num_threads=2,
-                      language="zh", restore_clipboard=True, paste_delay_ms=200,
+    original = Config(hotkey=native.hotkey.DEFAULT_HOTKEY, hold_threshold_ms=400, mic="",
+                      num_threads=2, language="zh", restore_clipboard=True, paste_delay_ms=200,
                       check_updates=True, model="sensevoice", proxy="", disfluency="verbatim",
                       continuous=True, vad_threshold=0.35, vad_min_speech_ms=150,
                       vad_min_silence_ms=800, vad_max_speech_ms=30_000)

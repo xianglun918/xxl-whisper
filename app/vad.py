@@ -6,7 +6,8 @@ time; handing it a whole utterance in a single call collapses to a near-empty
 segment. The framing that guarantees this is a pure function
 (:func:`split_full_windows`) so it is unit-tested without the model; the
 model-backed :class:`Segmenter` only glues framing to sherpa-onnx and exposes
-finished speech segments for decoding.
+finished speech segments for decoding plus the in-progress segment for live
+partials.
 """
 
 import logging
@@ -109,14 +110,23 @@ class Segmenter:
         for window in self._framer.push(block):
             self._vad.accept_waveform(window)
 
-    def is_speech_detected(self) -> bool:
-        """Whether the VAD currently considers the stream to be in speech.
+    def current_samples(self) -> np.ndarray | None:
+        """Return the in-progress speech segment's samples so far, or ``None`` when idle.
 
-        Used by continuous mode to accumulate the in-progress utterance for
-        live partials; the finished segment itself only appears at the
-        endpoint via :meth:`drain`.
+        The VAD accumulates the current utterance itself — onset included — so
+        this is the same audio that :meth:`drain` will hand back at the
+        endpoint. Decoding it makes the live partial a faithful preview of the
+        sentence that will be inserted, instead of a separately accumulated
+        buffer that misses the speech onset.
+
+        Returns an owned float32 copy (the VAD's segment list keeps growing
+        until the endpoint) so the caller can publish it to another thread
+        without racing the VAD.
         """
-        return bool(self._vad.is_speech_detected())
+        segment = self._vad.current_segment
+        if segment is None or not segment.samples:
+            return None
+        return np.array(segment.samples, dtype=np.float32, copy=True)
 
     def drain(self) -> list[np.ndarray]:
         """Speech segments finished since the last drain, in order."""

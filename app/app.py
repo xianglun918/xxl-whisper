@@ -44,7 +44,7 @@ from app.hotkey_logic import (
     Release,
     StartHold,
 )
-from app.partial import PartialBuffer, level_from_block, new_text_or_none, truncate_partial
+from app.partial import level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
 from app.tray import Tray, TrayCallbacks, TrayState
 from app.update_flow import UpdateFlow
@@ -179,7 +179,7 @@ class DictationApp:
         self._decode_thread: threading.Thread | None = None
         self._continuous_queue: queue.Queue[np.ndarray] | None = None
         self._decode_queue: queue.Queue[FinishedBatch] | None = None
-        self._partial_slot: LatestSlot[PartialBuffer] | None = None
+        self._partial_slot: LatestSlot[np.ndarray] | None = None
         self._vad_done: threading.Event | None = None
         self._stop_event = threading.Event()
         self._tray = Tray(
@@ -618,13 +618,13 @@ class DictationApp:
 
         This is the responsiveness-critical path. It consumes audio blocks, runs
         the VAD, hands finished segments to the decode queue, and publishes the
-        newest in-progress snapshot into the single-slot holder (stale snapshots
-        are dropped — only the newest matters). It performs no decoding at all,
-        so a slow model (Fun-ASR-Nano) can neither stall the VAD feed nor delay
-        endpointing: the pause is detected on time and the sentence is emitted by
-        the decode thread the moment it is decoded.
+        VAD's own in-progress segment (the exact audio that will become the
+        finished sentence, onset included) into the single-slot holder so a
+        stale snapshot is dropped — only the newest matters. It performs no
+        decoding at all, so a slow model (Fun-ASR-Nano) can neither stall the
+        VAD feed nor delay endpointing: the pause is detected on time and the
+        sentence is emitted by the decode thread the moment it is decoded.
         """
-        partial = PartialBuffer()
         decode_queue = self._decode_queue
         slot = self._partial_slot
         vad_done = self._vad_done
@@ -642,13 +642,15 @@ class DictationApp:
             try:
                 self._indicator.level(level_from_block(block))
                 segmenter.accept(block)
-                if segmenter.is_speech_detected():
-                    partial = partial.push(block)
-                    if self._publish_partial(slot, partial):
-                        skipped_partials += 1  # a stale snapshot was superseded
+                # Decode the VAD's own in-progress segment, never an ad-hoc
+                # buffer: the VAD flips "speech detected" only after buffering
+                # the onset, so accumulating raw blocks would drop the start of
+                # the utterance and the partial would not match the insert.
+                samples = segmenter.current_samples()
+                if samples is not None and self._publish_partial(slot, samples):
+                    skipped_partials += 1  # a stale snapshot was superseded
                 segments = segmenter.drain()
                 if segments:  # endpoint: the utterance is complete
-                    partial = PartialBuffer()
                     self._finish_utterance(slot, decode_queue, segments)
             except Exception:
                 log.exception("continuous: block processing failed; loop continues")
@@ -658,16 +660,16 @@ class DictationApp:
         log.info("continuous: vad loop exited (skipped %d stale partials)", skipped_partials)
 
     def _publish_partial(
-        self, slot: LatestSlot[PartialBuffer] | None, partial: PartialBuffer
+        self, slot: LatestSlot[np.ndarray] | None, samples: np.ndarray
     ) -> bool:
-        """Publish the newest in-progress snapshot; True when one was superseded."""
+        """Publish the newest in-progress samples; True when one was superseded."""
         if slot is None or self._paused:
             return False
-        return slot.publish(partial)
+        return slot.publish(samples)
 
     def _finish_utterance(
         self,
-        slot: LatestSlot[PartialBuffer] | None,
+        slot: LatestSlot[np.ndarray] | None,
         decode_queue: queue.Queue[FinishedBatch] | None,
         segments: Sequence[np.ndarray],
     ) -> None:
@@ -696,7 +698,7 @@ class DictationApp:
     def _decode_loop(
         self,
         decode_queue: queue.Queue[FinishedBatch],
-        slot: LatestSlot[PartialBuffer],
+        slot: LatestSlot[np.ndarray],
         vad_done: threading.Event,
     ) -> None:
         """Daemon thread: decode finished sentences first, partials only when idle.
@@ -753,17 +755,18 @@ class DictationApp:
                 partials += 1
         log.info("continuous: decode loop exited (partials decoded=%d)", partials)
 
-    def _show_partial(self, partial: PartialBuffer, previous: str) -> str | None:
-        """Decode the in-progress audio and refresh the pill; return the caption.
+    def _show_partial(self, samples: np.ndarray, previous: str) -> str | None:
+        """Decode the in-progress samples and refresh the pill; return the caption.
 
         Runs on the decode thread only, so a slow partial decode never blocks the
-        VAD. Returns the caption now shown, or ``None`` when there was nothing new
-        to show (empty decode, or the same caption as the last frame — so the pill
-        cannot flicker).
+        VAD. *samples* is the VAD's own current segment — the audio that will
+        become the finished sentence — so the caption is a faithful preview of
+        the text that will be inserted. Returns the caption now shown, or
+        ``None`` when there was nothing new to show (empty decode, or the same
+        caption as the last frame — so the pill cannot flicker).
         """
         recognizer = self._recognizer
-        samples = partial.samples()
-        if recognizer is None or samples is None:
+        if recognizer is None:
             return None
         text = recognizer.transcribe(samples)
         if not text:

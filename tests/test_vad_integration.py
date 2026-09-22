@@ -7,11 +7,13 @@ also accepted so the test runs before the app has downloaded it.
 
 import tempfile
 import wave
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
 import pytest
-from app.config import models_root
+from app.asr import Recognizer
+from app.config import model_dir, models_root
 from app.vad import SAMPLE_RATE, Segmenter, VadSettings
 
 pytestmark = pytest.mark.integration
@@ -77,3 +79,73 @@ def test_speech_segments_and_silence_noise_do_not() -> None:
         quiet = Segmenter(settings)
         _feed(quiet, samples, 700)
         assert quiet.drain() == []
+
+
+def test_current_samples_grows_during_speech_and_is_none_when_quiet() -> None:
+    """The live partial must come from the VAD's own in-progress segment."""
+    model = _find_vad_model()
+    if model is None:
+        pytest.skip("VAD model not downloaded")
+
+    settings = _settings(model)
+    speech = _load_samples(Path(__file__).parent / "assets" / "zh_test.wav")
+    segmenter = Segmenter(settings)
+    lengths: list[int] = []
+    for start in range(0, speech.shape[0], 1024):
+        segmenter.accept(speech[start : start + 1024])
+        current = segmenter.current_samples()
+        if current is not None:
+            assert current.dtype == np.float32
+            lengths.append(current.shape[0])
+        else:
+            lengths.append(0)
+    # The in-progress segment accumulates across blocks (and includes the onset,
+    # which is the whole point: it is the audio that will be inserted).
+    assert max(lengths) >= SAMPLE_RATE // 2
+    assert any(later > earlier for earlier, later in pairwise(lengths))
+
+    # No speech ⇒ no current segment to preview.
+    silence = np.zeros(SAMPLE_RATE * 4, dtype=np.float32)
+    noise = (np.random.default_rng(0).standard_normal(SAMPLE_RATE * 4) * 0.1).astype(np.float32)
+    for quiet_samples in (silence, noise):
+        quiet = Segmenter(settings)
+        for start in range(0, quiet_samples.shape[0], 700):
+            quiet.accept(quiet_samples[start : start + 700])
+        assert quiet.current_samples() is None
+
+
+def test_current_samples_decode_previews_the_finished_segment() -> None:
+    """Decoding the VAD's current samples previews the sentence that is inserted."""
+    model = _find_vad_model()
+    asr_dir = model_dir()
+    if model is None:
+        pytest.skip("VAD model not downloaded")
+    if not (asr_dir / "model.onnx").exists() or not (asr_dir / "tokens.txt").exists():
+        pytest.skip("ASR model not downloaded")
+
+    settings = _settings(model)
+    speech = _load_samples(Path(__file__).parent / "assets" / "zh_test.wav")
+    segmenter = Segmenter(settings)
+    recognizer = Recognizer(
+        kind="sensevoice", model_dir=asr_dir, num_threads=2, language="zh"
+    )
+
+    last_partial: np.ndarray | None = None
+    checked = 0
+    for start in range(0, speech.shape[0], 1024):
+        segmenter.accept(speech[start : start + 1024])
+        current = segmenter.current_samples()
+        if current is not None:
+            last_partial = current  # the newest preview before any endpoint
+        for segment in segmenter.drain():
+            assert last_partial is not None
+            partial_text = recognizer.transcribe(last_partial)
+            final_text = recognizer.transcribe(segment)
+            assert partial_text
+            assert final_text
+            # Same source audio (the VAD's own segment): the preview shares the
+            # inserted sentence's wording instead of diverging from it.
+            assert partial_text.startswith(final_text) or final_text.startswith(partial_text)
+            checked += 1
+            last_partial = None
+    assert checked >= 1

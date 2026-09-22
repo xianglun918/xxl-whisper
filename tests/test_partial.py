@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 from app.partial import (
     PARTIAL_DISPLAY_CHARS,
-    PartialBuffer,
     level_from_block,
     new_text_or_none,
     truncate_partial,
@@ -27,36 +26,6 @@ def test_truncate_keeps_tail_with_leading_ellipsis() -> None:
 
 def test_truncate_honours_custom_limit() -> None:
     assert truncate_partial("abcdef", limit=2) == "…ef"
-
-
-def test_empty_buffer_has_no_samples() -> None:
-    assert PartialBuffer().samples() is None
-
-
-def test_push_accumulates_in_order() -> None:
-    buffer = PartialBuffer()
-    buffer = buffer.push(np.array([1.0, 2.0], dtype=np.float32))
-    buffer = buffer.push(np.array([3.0], dtype=np.float32))
-    samples = buffer.samples()
-    assert samples is not None
-    assert np.array_equal(samples, np.array([1.0, 2.0, 3.0], dtype=np.float32))
-
-
-def test_push_flattens_a_column_block() -> None:
-    samples = PartialBuffer().push(np.zeros((4, 1), dtype=np.float32)).samples()
-    assert samples is not None
-    assert samples.shape == (4,)
-
-
-def test_push_is_immutable() -> None:
-    original = PartialBuffer().push(np.ones(2, dtype=np.float32))
-    grown = original.push(np.zeros(2, dtype=np.float32))
-    original_samples = original.samples()
-    grown_samples = grown.samples()
-    assert original_samples is not None
-    assert grown_samples is not None
-    assert original_samples.shape == (2,)  # the original is untouched
-    assert grown_samples.shape == (4,)
 
 
 def test_new_text_or_none_skips_an_unchanged_caption() -> None:

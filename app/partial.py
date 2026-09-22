@@ -1,14 +1,13 @@
-"""Live partial-transcription helpers: rebuild in-progress audio, trim the text.
+"""Live partial-transcription helpers: trim the caption, gate its updates.
 
-The VAD only hands over a finished segment at the endpoint, so the live
-"partial" display must rebuild the utterance from the raw blocks fed while
-speech is active. Both helpers are pure (numpy/text only): the continuous loop
-stays the only place that touches the recognizer and the indicator.
+The VAD hands over the in-progress utterance's own audio (see
+:meth:`app.vad.Segmenter.current_samples`), so the continuous loop needs no
+separate audio accumulator; these pure helpers only shape the decoded text and
+the pill's breath. All are pure (numpy/text only): the continuous loop stays the
+only place that touches the recognizer and the indicator.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 import numpy as np
 
@@ -19,29 +18,6 @@ _ELLIPSIS: str = "…"
 #: Block RMS that maps to a full-brightness breath; speech is typically
 #: ~0.05-0.30 RMS, so 0.25 puts normal speech near the top of the range.
 _LEVEL_FULL_SCALE_RMS: float = 0.25
-
-
-@dataclass(frozen=True, slots=True)
-class PartialBuffer:
-    """Immutable accumulator of the raw blocks spoken so far.
-
-    ``push`` returns a new buffer (the caller rebinds), ``samples`` returns the
-    buffered audio concatenated (``None`` when empty). Immutability keeps it
-    trivially testable and lets the loop hold a plain local binding.
-    """
-
-    _blocks: tuple[np.ndarray, ...] = ()
-
-    def push(self, block: np.ndarray) -> PartialBuffer:
-        """Return a new buffer with *block* (flattened float32) appended."""
-        flat = block.reshape(-1).astype(np.float32, copy=False)
-        return PartialBuffer((*self._blocks, flat))
-
-    def samples(self) -> np.ndarray | None:
-        """All buffered samples concatenated, or ``None`` when empty."""
-        if not self._blocks:
-            return None
-        return np.concatenate(self._blocks)
 
 
 def truncate_partial(text: str, limit: int = PARTIAL_DISPLAY_CHARS) -> str:
