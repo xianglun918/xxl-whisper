@@ -83,12 +83,27 @@ class EmitSettings:
 def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> Channel:
     """Stage the text on the clipboard, then deliver via the best live channel.
 
-    Returns the channel that delivered, or CLIPBOARD when nothing could.
+    Returns the channel that delivered, or CLIPBOARD when nothing could. Every
+    probe is recomputed per call (nothing is cached), so a focus change between
+    sentences is picked up on the next emit; the INFO log records the exact
+    foreground window, focused control and channel so a stuck delivery can be
+    pinpointed from ``app.log``.
     """
-    log.info("emit: target window %r", native.io.foreground_window_title())
-    native.io.set_clipboard_text(text)  # always staged: manual paste also works
-    alive = native.io.keyboard_injection_alive()
+    window = native.io.foreground_window_title()
+    focus_hwnd = native.io.focused_control_hwnd()
     control_class = native.io.focused_control_class()
+    alive = native.io.keyboard_injection_alive()
+    log.info(
+        "emit: target window=%r focus_hwnd=0x%X class=%r injection_alive=%s",
+        window,
+        focus_hwnd,
+        control_class,
+        alive,
+    )
+    try:
+        native.io.set_clipboard_text(text)  # always staged: manual paste also works
+    except (native.io.PasteError, OSError) as exc:
+        log.warning("emit: clipboard staging failed (%s); channels may still deliver", exc)
     probe = TargetProbe(
         injection_alive=alive,
         is_classic_control=is_classic_control(control_class),
@@ -101,9 +116,10 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
                     return Channel.KEYS
             case Channel.WM_PASTE:
                 if native.io.post_wm_paste_to_focus():
-                    log.info("emit: posted WM_PASTE (class=%r)", control_class)
+                    log.info("emit: delivered via WM_PASTE (class=%r)", control_class)
                     indicator.flash("已粘贴（WM_PASTE）", 1200)
                     return Channel.WM_PASTE
+                log.info("emit: WM_PASTE skipped (no focused control resolved)")
             case Channel.UIA:
                 if _try_uia(text, control_class, indicator):
                     return Channel.UIA
@@ -111,7 +127,12 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
                 pass  # terminal fallback handled after the loop
             case unreachable:
                 assert_never(unreachable)
-    log.warning("emit: no channel delivered (class=%r); text on clipboard", control_class)
+    log.warning(
+        "emit: no channel delivered (window=%r class=%r focus_hwnd=0x%X); text on clipboard",
+        window,
+        control_class,
+        focus_hwnd,
+    )
     indicator.flash(f"已复制到剪贴板，请手动 {native.io.PASTE_COMBO}", 2500)
     return Channel.CLIPBOARD
 

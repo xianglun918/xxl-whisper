@@ -1,6 +1,6 @@
 # ─── How to run ───
 # .venv\Scripts\python.exe scripts\probe_focus.py
-# Verifies: bar visible, right-edge/vertically-centred, no focus theft (incl. live pulse).
+# Verifies: bar visible, bottom-centre, no focus theft (incl. live breath).
 
 import ctypes
 import sys
@@ -17,9 +17,9 @@ from app import winio
 
 _user32 = ctypes.WinDLL("user32")
 
-# Visual tolerances for "close enough to the right edge / vertical center" (px).
+# Visual tolerances for "close enough to the bottom centre" (px).
 _CENTER_TOLERANCE_PX = 200
-_RIGHT_BAND_PX = 80
+_BOTTOM_BAND_PX = 160
 _MIN_BAR_WIDTH_PX = 60
 
 
@@ -55,23 +55,25 @@ after_live = winio.foreground_window_title()
 rect = _RECT()
 _user32.GetWindowRect(indicator.hwnd(), ctypes.byref(rect))
 visible = bool(_user32.IsWindowVisible(indicator.hwnd()))
-_left, top, right, bottom = winio.active_monitor_work_area()
+left, _top, right, bottom = winio.active_monitor_work_area()
 width = rect.right - rect.left
 height = rect.bottom - rect.top
-near_right = (right - rect.right) < _RIGHT_BAND_PX
-centered = abs((rect.top + height // 2) - (top + bottom) // 2) < _CENTER_TOLERANCE_PX
+bar_center_x = (rect.left + rect.right) // 2
+screen_center_x = (left + right) // 2
+centered_x = abs(bar_center_x - screen_center_x) < _CENTER_TOLERANCE_PX
+near_bottom = (bottom - rect.bottom) < _BOTTOM_BAND_PX
 
 print(f"before={before!r}")
 print(f"after={after!r}")
 print(f"after_live={after_live!r}")
 print(f"visible={visible} rect=({rect.left},{rect.top},{rect.right},{rect.bottom})")
-print(f"near_right={near_right} centered={centered}")
+print(f"centered_x={centered_x} near_bottom={near_bottom}")
 
 ok = (
     before == after == after_live
     and visible
-    and near_right
-    and centered
+    and centered_x
+    and near_bottom
     and width > _MIN_BAR_WIDTH_PX
 )
 print("VERDICT:", "OK" if ok else "BROKEN")

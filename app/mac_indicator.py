@@ -5,10 +5,10 @@ app), so the panel is borderless, non-activating and floating, shown with
 ``orderFrontRegardless()`` while mouse events are ignored. Every method is
 thread-safe: UI work is dispatched to the main thread, where the tray's
 NSApplication run loop services it. Placement mirrors the Windows bar
-(right edge of the active screen, vertically centred, suppressed while a
-fullscreen window owns the display). The sticky "live" mode keeps the bar
-visible in an accent shade; the subtle pulse is a Windows-only Tk animation.
-pyobjc is imported with ``importlib`` (M1 constraint).
+(bottom-centre of the active screen, suppressed while a fullscreen window owns
+the display). The sticky "live" mode keeps the bar visible and breathes a
+calm accent shade via a main-thread NSTimer. pyobjc is imported with
+``importlib`` (M1 constraint).
 """
 
 import importlib
@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import Any
 
 from app import macio
+from app.pulse import LEVEL_DECAY, LEVEL_GAIN, blend_rgb, breath_phase
 
 AppKit = importlib.import_module("AppKit")
 Foundation = importlib.import_module("Foundation")
@@ -27,12 +28,14 @@ log = logging.getLogger(__name__)
 _WIDTH = 240.0
 _HEIGHT = 44.0
 _LABEL_HEIGHT = 20.0
-_RIGHT_MARGIN = 24.0
+_BOTTOM_MARGIN = 96.0
 _RADIUS = 12.0
 _FONT_SIZE = 15.0
+_FRAME_MS = 40  # breath frame (~25 fps), mirrors the Windows pill
 _BG = (0.063, 0.078, 0.094, 0.92)
 _FG = (0.91, 0.92, 0.93, 1.0)
-_ACCENT = (0.49, 0.83, 0.99, 1.0)
+_ACCENT_RGB = (0.49, 0.83, 0.99)
+_ACCENT_SOFT_RGB = (0.37, 0.61, 0.75)
 
 
 class Indicator:
@@ -43,6 +46,11 @@ class Indicator:
         self._panel: Any = None
         self._label: Any = None
         self._window_number = 0
+        self._live = False
+        self._breath_timer: Any = None
+        self._breath_elapsed_ms = 0
+        self._level = 0.0
+        self._level_lock = threading.Lock()
 
     def show(self, text: str) -> None:
         """Show the bar with ``text``."""
@@ -82,6 +90,16 @@ class Indicator:
         """Show a transient message that auto-hides."""
         self._dispatch(lambda: self._render(text, flash_ms=ms))
 
+    def level(self, value: float) -> None:
+        """Feed the latest normalized (0..1) mic level for a livelier breath.
+
+        Called from the continuous loop (possibly per audio block), so it only
+        stores a float under a lock; the main-thread breath timer reads and
+        decays it. No dispatch, so a fast caller cannot flood the run loop.
+        """
+        with self._level_lock:
+            self._level = min(1.0, max(0.0, value))
+
     def quit(self) -> None:
         """Hide the bar; the panel dies with the process."""
         self._dispatch(self._hide_now)
@@ -97,6 +115,7 @@ class Indicator:
     def _render(self, text: str, flash_ms: int | None) -> None:
         """Main-thread: show or update the panel with ``text``."""
         self._ensure_panel()
+        self._stop_breath()
         self._generation += 1
         generation = self._generation
         self._label.setStringValue_(text)
@@ -120,11 +139,52 @@ class Indicator:
         self._dispatch(_check)
 
     def _render_live(self, text: str) -> None:
-        """Main-thread: sticky listening render in the accent shade."""
+        """Main-thread: sticky listening render with a calm accent breath."""
         self._render(text, flash_ms=None)
-        self._label.setTextColor_(
-            AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(*_ACCENT)
+        self._live = True
+        self._breath_elapsed_ms = 0
+        self._label.setTextColor_(self._accent_color(0.0))  # trough: breath rises in
+        self._start_breath()
+
+    def _accent_color(self, intensity: float) -> object:
+        """Return a calibrated accent colour blended towards its soft end."""
+        red, green, blue = blend_rgb(_ACCENT_SOFT_RGB, _ACCENT_RGB, intensity)
+        return AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(
+            red, green, blue, 1.0
         )
+
+    def _start_breath(self) -> None:
+        """Main-thread: arm the repeating breath timer (one per live render)."""
+        previous = self._breath_timer
+        if previous is not None:
+            previous.invalidate()
+        self._breath_timer = (
+            Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+                _FRAME_MS / 1000.0, True, self._breath_tick
+            )
+        )
+
+    def _breath_tick(self, _timer: object) -> None:
+        """Main-thread: step the breath one frame (slow, smooth, mic-aware)."""
+        if not self._live:
+            return
+        with self._level_lock:
+            level = self._level
+            self._level *= LEVEL_DECAY
+        intensity = min(1.0, breath_phase(self._breath_elapsed_ms) + level * LEVEL_GAIN)
+        self._label.setTextColor_(self._accent_color(intensity))
+        self._breath_elapsed_ms += _FRAME_MS
+
+    def _stop_breath(self) -> None:
+        """Main-thread: leave live mode and invalidate the timer (no leaks)."""
+        self._live = False
+        self._breath_elapsed_ms = 0
+        with self._level_lock:
+            self._level = 0.0
+        timer = self._breath_timer
+        self._breath_timer = None
+        if timer is not None:
+            timer.invalidate()
 
     def _resume_listen(self, generation: int, text: str) -> None:
         """Main-thread: return to sticky listening unless superseded."""
@@ -136,18 +196,19 @@ class Indicator:
         self._dispatch(_check)
 
     def _hide_now(self) -> None:
-        """Main-thread: order the panel out."""
+        """Main-thread: order the panel out and stop the breath."""
+        self._stop_breath()
         if self._panel is not None:
             self._panel.orderOut_(None)
 
     def _place(self) -> None:
-        """Main-thread: right edge of the active screen, vertically centred."""
+        """Main-thread: bottom-centre of the active screen's work area."""
         screen = AppKit.NSScreen.mainScreen()
         if screen is None:
             return
         frame = screen.visibleFrame()
-        x = frame.origin.x + frame.size.width - _WIDTH - _RIGHT_MARGIN
-        y = frame.origin.y + (frame.size.height - _HEIGHT) / 2
+        x = frame.origin.x + (frame.size.width - _WIDTH) / 2
+        y = frame.origin.y + _BOTTOM_MARGIN
         self._panel.setFrameOrigin_(Foundation.NSMakePoint(x, y))
 
     def _ensure_panel(self) -> None:

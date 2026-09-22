@@ -60,30 +60,41 @@ def probe_focused() -> UiaTarget:
 
     Never raises: any COM/UIA failure maps to writable=False.
     """
-    auto = _auto()
-    if auto is None:
-        return UiaTarget(writable=False)
     try:
+        auto = _auto()
+        if auto is None:
+            return UiaTarget(writable=False)
         control = auto.GetFocusedControl()
         if control is None:
             return UiaTarget(writable=False)
         return UiaTarget(writable=_is_writable(control, auto))
-    except OSError as exc:  # COM/element-gone races are routine
+    except Exception as exc:  # noqa: BLE001 — the documented never-raises probe
+        # A focus change can retire the previously focused element; resolving
+        # it then raises comtypes.COMError (not OSError), which used to escape
+        # this "never raises" probe and abort the whole emit/continuous loop.
         log.info("uia probe failed: %s", exc)
         return UiaTarget(writable=False)
 
 
 def append_text(text: str) -> None:
     """Append ``text`` to the focused control's value, or raise."""
-    auto = _auto()
+    try:
+        auto = _auto()
+    except Exception as exc:
+        raise UiaUnavailableError(reason=str(exc)) from exc
     if auto is None:
         raise UiaUnavailableError(reason="uiautomation import failed")
     try:
         control = auto.GetFocusedControl()
-        if control is None:
-            raise UiaUnavailableError(reason="no focused control")
+    except Exception as exc:
+        # Focus-change element-gone races surface as comtypes.COMError; map any
+        # such failure to the one error the emit ladder knows how to handle.
+        raise UiaUnavailableError(reason=str(exc)) from exc
+    if control is None:
+        raise UiaUnavailableError(reason="no focused control")
+    try:
         _write(control, auto, text)
-    except OSError as exc:
+    except Exception as exc:
         raise UiaUnavailableError(reason=str(exc)) from exc
 
 

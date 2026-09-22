@@ -1,10 +1,10 @@
-"""Right-edge status bar ("正在听… / 识别中… / 下载中…") on a Tk thread.
+"""Bottom-of-screen status bar ("正在听… / 识别中… / 下载中…") on a Tk thread.
 
 Tk must own exactly one thread; every other thread talks to it through a
 command queue polled by ``after``. The window is borderless and topmost,
-vertically centred against the active monitor's right edge. A sticky "live"
-mode (continuous dictation) keeps the bar visible and pulses a cheap accent
-shade from a Tk ``after`` loop.
+horizontally centred near the bottom of the active monitor. A sticky "live"
+mode (continuous dictation) keeps the bar visible and breathes a soft accent
+shade from a slow Tk ``after`` loop, optionally lifted by the live mic level.
 """
 
 import ctypes
@@ -17,6 +17,7 @@ from functools import partial
 from typing import assert_never
 
 from app import winio
+from app.pulse import LEVEL_DECAY, LEVEL_GAIN, blend_hex, breath_phase
 
 _user32 = ctypes.WinDLL("user32")
 _GWL_EXSTYLE: int = -20
@@ -38,8 +39,8 @@ _user32.SetWindowPos.argtypes = (
 )
 
 _POLL_MS: int = 60
-_PULSE_MS: int = 350  # ~2.9 toggles/s: subtle, cheap, easy on the eye
-_RIGHT_MARGIN: int = 24  # px between the pill and the work-area right edge
+_PULSE_MS: int = 40  # breath frame (~25 fps): smooth motion, still cheap
+_BOTTOM_MARGIN: int = 96  # px between the pill and the work-area bottom edge
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,8 +97,8 @@ type Command = Show | Update | Progress | Listen | FlashListen | Hide | Flash | 
 
 _BG: str = "#101418"
 _FG: str = "#e8eaed"
-_ACCENT: str = "#7dd3fc"
-_ACCENT_DIM: str = "#3d6b82"  # second pulse shade
+_ACCENT: str = "#7dd3fc"  # bright (inhale) end of the breath
+_ACCENT_SOFT: str = "#5e9cbf"  # dim (exhale) end: a soft shift, not a dark flip
 
 
 class Indicator:
@@ -135,6 +136,17 @@ class Indicator:
     def flash(self, text: str, ms: int = 1500) -> None:
         self._queue.put(Flash(text=text, ms=ms))
 
+    def level(self, value: float) -> None:
+        """Feed the latest normalized (0..1) mic level for a livelier breath.
+
+        Called from the continuous loop (possibly per audio block), so it only
+        stores a float under a lock — it never touches Tk off-thread. The Tk
+        pulse tick reads and decays it, letting the pill breathe with the voice
+        while staying calm in silence.
+        """
+        with self._level_lock:
+            self._level = min(1.0, max(0.0, value))
+
     def quit(self) -> None:
         self._queue.put(Quit())
         self._thread.join(timeout=2)
@@ -171,10 +183,14 @@ class Indicator:
         )
         self._label.pack(anchor="center")
         self._root.withdraw()
-        # Tk-thread-only live-mode state (never touched off this thread).
+        # Tk-thread-only live-mode state (never touched off this thread); the
+        # mic level is the one field written from the continuous thread, under
+        # a lock.
         self._live = False
-        self._pulse_on = False
         self._pulse_job: str | None = None
+        self._pulse_elapsed_ms = 0
+        self._level = 0.0
+        self._level_lock = threading.Lock()
         self._started.set()
         self._root.after(_POLL_MS, self._drain)
         self._root.mainloop()
@@ -225,7 +241,7 @@ class Indicator:
         return False
 
     def _update_text(self, text: str) -> None:
-        """Live mode owns the fg (the pulse), so refresh text without re-placing."""
+        """Live mode owns the fg (the breath), so refresh text without re-placing."""
         self._label.configure(text=text)
         if not self._root.winfo_viewable():
             self._place()
@@ -253,13 +269,13 @@ class Indicator:
         if generation == self._generation and self._root.winfo_viewable():
             self._root.withdraw()
 
-    # -- live pulse (Tk thread only) ---------------------------------------
+    # -- live breath (Tk thread only) --------------------------------------
 
     def _start_live(self, text: str) -> None:
-        """Enter sticky listening mode and start the accent pulse."""
+        """Enter sticky listening mode and start the slow breath."""
         self._live = True
-        self._pulse_on = True
-        self._label.configure(text=text, fg=_ACCENT)
+        self._pulse_elapsed_ms = 0
+        self._label.configure(text=text, fg=_ACCENT_SOFT)  # trough: breath rises in
         self._place()
         self._schedule_pulse()
 
@@ -269,30 +285,43 @@ class Indicator:
             self._start_live(text)
 
     def _schedule_pulse(self) -> None:
-        """(Re)arm the single pending pulse callback."""
+        """(Re)arm the single pending breath callback."""
         if self._pulse_job is not None:
             self._root.after_cancel(self._pulse_job)
         self._pulse_job = self._root.after(_PULSE_MS, self._pulse_tick)
 
     def _pulse_tick(self) -> None:
-        """Toggle the accent shade; the entire animation is this one line."""
+        """Step the breath one frame: a slow, smooth accent-shade cycle.
+
+        The resting motion is a ~2 s sine (calm, continuous); the live mic
+        level lifts it a little so the pill also responds to the voice. Only
+        the label's foreground changes, so the animation costs one widget
+        reconfigure per frame.
+        """
         self._pulse_job = None
         if not self._live:
             return
-        self._pulse_on = not self._pulse_on
-        self._label.configure(fg=_ACCENT if self._pulse_on else _ACCENT_DIM)
+        with self._level_lock:
+            level = self._level
+            self._level *= LEVEL_DECAY
+        intensity = min(1.0, breath_phase(self._pulse_elapsed_ms) + level * LEVEL_GAIN)
+        self._label.configure(fg=blend_hex(_ACCENT_SOFT, _ACCENT, intensity))
+        self._pulse_elapsed_ms += _PULSE_MS
         self._pulse_job = self._root.after(_PULSE_MS, self._pulse_tick)
 
     def _stop_pulse(self) -> None:
-        """Leave live mode and cancel any pending pulse callback (no leaks)."""
+        """Leave live mode and cancel any pending breath callback (no leaks)."""
         self._live = False
+        self._pulse_elapsed_ms = 0
+        with self._level_lock:
+            self._level = 0.0
         job = self._pulse_job
         self._pulse_job = None
         if job is not None:
             self._root.after_cancel(job)
 
     def _place(self) -> None:
-        """Show on the ACTIVE monitor's right edge, vertically centred.
+        """Show on the ACTIVE monitor, bottom-centre, pinned topmost.
 
         Follows the foreground window's monitor (multi-monitor: the bar must
         appear on the screen the user is looking at), sizes explicitly in the
@@ -307,9 +336,9 @@ class Indicator:
         self._root.update_idletasks()
         width = self._root.winfo_reqwidth()
         height = self._root.winfo_reqheight()
-        left, top, right, bottom = winio.active_monitor_work_area()
-        x = max(right - width - _RIGHT_MARGIN, left)
-        y = top + max((bottom - top) - height, 0) // 2
+        left, _top, right, bottom = winio.active_monitor_work_area()
+        x = left + max((right - left) - width, 0) // 2
+        y = bottom - _BOTTOM_MARGIN
         _user32.SetWindowPos(
             self._hwnd,
             _HWND_TOPMOST,

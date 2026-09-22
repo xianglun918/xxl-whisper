@@ -214,3 +214,8 @@ def tap_mouse_x(vk: int) -> None:
 def focused_control_class() -> str:
     """No Win32 control classes on macOS; the WM_PASTE channel never applies."""
     return ""
+
+
+def focused_control_hwnd() -> int:
+    """No Win32 handles on macOS; emit logging reports 0."""
+    return 0

@@ -6,10 +6,12 @@ worker owns the detector + recorder state machine so no locks are needed
 around them. Tray-driven control actions live in app.controls.
 """
 
+import contextlib
 import logging
 import queue
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import assert_never
 
@@ -19,6 +21,13 @@ from app import __version__, native
 from app.asr import Recognizer
 from app.config import MOUSE_VKS, Config, config_path, hotkey_vk, models_root, save_config
 from app.controls import Controls, ControlsDeps
+from app.decode_scheduler import (
+    DecodeKind,
+    FinishedBatch,
+    LatestSlot,
+    next_decode,
+    partial_interval,
+)
 from app.downloader import (
     DownloadError,
     ensure_model,
@@ -35,7 +44,7 @@ from app.hotkey_logic import (
     Release,
     StartHold,
 )
-from app.partial import PartialBuffer, truncate_partial
+from app.partial import PartialBuffer, level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
 from app.tray import Tray, TrayCallbacks, TrayState
 from app.update_flow import UpdateFlow
@@ -49,6 +58,14 @@ _VK_ESCAPE: int = 0x1B
 #: Bounded continuous-capture queue: the audio callback drops the oldest block
 #: when this fills, so a slow decode can never stall the microphone stream.
 _CONTINUOUS_QUEUE_MAX: int = 128
+
+#: Bounded finished-sentence queue: the VAD thread drops the oldest batch when
+#: the decoder lags, so a slow model can never make memory grow without limit.
+_DECODE_QUEUE_MAX: int = 16
+
+#: How long the decode thread blocks for a finished batch before it considers a
+#: live partial; small so an endpoint is picked up promptly.
+_DECODE_POLL_S: float = 0.05
 
 #: Sticky pill shown while continuous mode is listening.
 _LISTEN_TEXT: str = "● 聆听中"
@@ -118,6 +135,26 @@ type WorkerMsg = (
 )
 
 
+def _offer_finished(sink: queue.Queue[FinishedBatch], batch: FinishedBatch) -> None:
+    """Enqueue a finished batch, dropping the oldest when the decoder lags.
+
+    The decode queue is bounded so a slow decoder can never make memory grow
+    without limit; the newest sentence is the one the user most wants, so the
+    oldest pending batch is sacrificed and the drop is logged.
+    """
+    try:
+        sink.put_nowait(batch)
+    except queue.Full:
+        with contextlib.suppress(queue.Empty):
+            dropped = sink.get_nowait()
+            log.warning(
+                "continuous: decode queue full; dropped %d finished segment(s)",
+                len(dropped.segments),
+            )
+        with contextlib.suppress(queue.Full):
+            sink.put_nowait(batch)
+
+
 class DictationApp:
     """Owns every component; ``run()`` blocks until the user exits the tray."""
 
@@ -139,7 +176,11 @@ class DictationApp:
         self._model_ready = False
         self._continuous = False
         self._continuous_thread: threading.Thread | None = None
+        self._decode_thread: threading.Thread | None = None
         self._continuous_queue: queue.Queue[np.ndarray] | None = None
+        self._decode_queue: queue.Queue[FinishedBatch] | None = None
+        self._partial_slot: LatestSlot[PartialBuffer] | None = None
+        self._vad_done: threading.Event | None = None
         self._stop_event = threading.Event()
         self._tray = Tray(
             callbacks=TrayCallbacks(
@@ -514,17 +555,29 @@ class DictationApp:
         )
         blocks: queue.Queue[np.ndarray] = queue.Queue(maxsize=_CONTINUOUS_QUEUE_MAX)
         self._continuous_queue = blocks
+        self._decode_queue = queue.Queue(maxsize=_DECODE_QUEUE_MAX)
+        self._partial_slot = LatestSlot()
+        self._vad_done = threading.Event()
         if self._recorder is not None:
             self._recorder.start_sink(blocks)
         self._continuous = True
         self._set_hooks_armed()  # stays disarmed: continuous owns the microphone
+        # Two threads: the VAD consumer stays real-time (never decodes), while
+        # the decoder drains finished sentences and refreshes live partials.
         self._continuous_thread = threading.Thread(
             target=self._continuous_loop,
             args=(segmenter, blocks),
             daemon=True,
             name="continuous-vad",
         )
+        self._decode_thread = threading.Thread(
+            target=self._decode_loop,
+            args=(self._decode_queue, self._partial_slot, self._vad_done),
+            daemon=True,
+            name="continuous-decode",
+        )
         self._continuous_thread.start()
+        self._decode_thread.start()
         self._persist_continuous(enabled=True)
         self._indicator.flash_listen("持续听写已开启", _LISTEN_TEXT, 1500)
         log.info("continuous: on")
@@ -534,11 +587,20 @@ class DictationApp:
         self._continuous = False
         if self._recorder is not None:
             self._recorder.stop_sink()
-        thread = self._continuous_thread
-        if thread is not None:
-            thread.join(timeout=2)
+        # Join the VAD thread first: its final flush queues the last utterance
+        # for the decoder, which then drains it before exiting.
+        vad_thread = self._continuous_thread
+        if vad_thread is not None:
+            vad_thread.join(timeout=2)
+        decode_thread = self._decode_thread
+        if decode_thread is not None:
+            decode_thread.join(timeout=2)
         self._continuous_thread = None
+        self._decode_thread = None
         self._continuous_queue = None
+        self._decode_queue = None
+        self._partial_slot = None
+        self._vad_done = None
         self._persist_continuous(enabled=False)
         self._set_hooks_armed()
         self._indicator.hide()  # leave live mode; the pulse loop is cancelled
@@ -552,75 +614,214 @@ class DictationApp:
     def _continuous_loop(
         self, segmenter: Segmenter, blocks: queue.Queue[np.ndarray]
     ) -> None:
-        """Daemon thread: segment blocks through the VAD, insert each sentence.
+        """Daemon thread: feed the VAD and publish partials; never decode.
 
-        Live partials reuse the same VAD state without touching it: the VAD only
-        yields a finished segment at the endpoint, so the raw blocks fed while
-        it reports speech are accumulated separately (:class:`PartialBuffer`)
-        and decoded serially on this thread at most every
-        ``_PARTIAL_INTERVAL_S``. The recognizer is re-read per decode (it may be
-        swapped mid-stream) and held locally during decode so a concurrent swap
-        cannot drop it.
+        This is the responsiveness-critical path. It consumes audio blocks, runs
+        the VAD, hands finished segments to the decode queue, and publishes the
+        newest in-progress snapshot into the single-slot holder (stale snapshots
+        are dropped — only the newest matters). It performs no decoding at all,
+        so a slow model (Fun-ASR-Nano) can neither stall the VAD feed nor delay
+        endpointing: the pause is detected on time and the sentence is emitted by
+        the decode thread the moment it is decoded.
         """
         partial = PartialBuffer()
-        last_partial_at = 0.0
+        decode_queue = self._decode_queue
+        slot = self._partial_slot
+        vad_done = self._vad_done
+        skipped_partials = 0
         while self._continuous and not self._stop_event.is_set():
             try:
                 block = blocks.get(timeout=0.2)
             except queue.Empty:
                 continue
-            segmenter.accept(block)
-            if segmenter.is_speech_detected():
-                partial = partial.push(block)
-                now = time.monotonic()
-                if now - last_partial_at >= _PARTIAL_INTERVAL_S and not self._paused:
-                    last_partial_at = now
-                    self._show_partial(partial)
-            segments = segmenter.drain()
-            if segments:  # endpoint: the utterance is complete, restart partials
-                partial = PartialBuffer()
-                last_partial_at = 0.0
-                if self._insert_segments(segments):
+            # A transient failure (clipboard contention, a UIA element that went
+            # away mid-focus-change, a decode hiccup) must never kill this
+            # long-lived thread: continuous dictation has no restart path, so an
+            # escaped exception would silently wedge the mode until the user
+            # toggles it off and on again.
+            try:
+                self._indicator.level(level_from_block(block))
+                segmenter.accept(block)
+                if segmenter.is_speech_detected():
+                    partial = partial.push(block)
+                    if self._publish_partial(slot, partial):
+                        skipped_partials += 1  # a stale snapshot was superseded
+                segments = segmenter.drain()
+                if segments:  # endpoint: the utterance is complete
+                    partial = PartialBuffer()
+                    self._finish_utterance(slot, decode_queue, segments)
+            except Exception:
+                log.exception("continuous: block processing failed; loop continues")
+        self._flush_segments(segmenter, decode_queue)
+        if vad_done is not None:
+            vad_done.set()  # tells the decoder to drain the tail and exit
+        log.info("continuous: vad loop exited (skipped %d stale partials)", skipped_partials)
+
+    def _publish_partial(
+        self, slot: LatestSlot[PartialBuffer] | None, partial: PartialBuffer
+    ) -> bool:
+        """Publish the newest in-progress snapshot; True when one was superseded."""
+        if slot is None or self._paused:
+            return False
+        return slot.publish(partial)
+
+    def _finish_utterance(
+        self,
+        slot: LatestSlot[PartialBuffer] | None,
+        decode_queue: queue.Queue[FinishedBatch] | None,
+        segments: Sequence[np.ndarray],
+    ) -> None:
+        """Endpoint: drop the stale snapshot and queue the sentence for decoding."""
+        if slot is not None:
+            slot.clear()
+        if decode_queue is not None and not self._paused:
+            _offer_finished(
+                decode_queue,
+                FinishedBatch(endpoint_ts=time.monotonic(), segments=tuple(segments)),
+            )
+
+    def _flush_segments(
+        self, segmenter: Segmenter, decode_queue: queue.Queue[FinishedBatch] | None
+    ) -> None:
+        """End the VAD stream and queue whatever tail it releases for decoding."""
+        try:
+            segmenter.flush()
+            final = segmenter.drain()
+        except Exception:
+            log.exception("continuous: final flush failed")
+            return
+        if final:
+            self._finish_utterance(None, decode_queue, final)
+
+    def _decode_loop(
+        self,
+        decode_queue: queue.Queue[FinishedBatch],
+        slot: LatestSlot[PartialBuffer],
+        vad_done: threading.Event,
+    ) -> None:
+        """Daemon thread: decode finished sentences first, partials only when idle.
+
+        A finished sentence always wins: the loop drains the queue before it ever
+        considers a partial, so an endpoint's text is never delayed behind
+        partial work. Partials run only when the queue is empty and the adaptive
+        interval elapsed; each decode's duration feeds that interval so a slow
+        model backs the cadence off instead of saturating the CPU. The recognizer
+        is re-read per decode (it may be swapped mid-stream).
+        """
+        last_decode_s: float | None = None
+        last_partial_at = 0.0
+        last_partial_text = ""
+        partials = 0
+        while True:
+            try:
+                batch = decode_queue.get(timeout=_DECODE_POLL_S)
+            except queue.Empty:
+                batch = None
+            if batch is not None:
+                started = time.monotonic()
+                emitted = self._insert_segments(
+                    batch.segments, endpoint_ts=batch.endpoint_ts
+                )
+                finished_at = time.monotonic()
+                last_decode_s = finished_at - started
+                last_partial_at = finished_at  # measure the next partial gap from here
+                last_partial_text = ""  # endpoint boundary: next utterance is fresh
+                if emitted:
                     self._indicator.flash_listen(
                         _COMMIT_TEXT, _LISTEN_TEXT, _COMMIT_FLASH_MS
                     )
-        segmenter.flush()
-        if self._insert_segments(segmenter.drain()):
-            self._indicator.flash_listen(_COMMIT_TEXT, _LISTEN_TEXT, _COMMIT_FLASH_MS)
-        log.info("continuous: loop exited")
+                continue
+            if vad_done.is_set():
+                break
+            snapshot = slot.take()
+            if snapshot is None:
+                continue
+            now = time.monotonic()
+            partial_due = not self._paused and (
+                now - last_partial_at >= partial_interval(_PARTIAL_INTERVAL_S, last_decode_s)
+            )
+            # No finished batch is waiting (handled above), so the only choice
+            # left is whether a partial is due; the pure decision keeps it clear.
+            if next_decode(has_finished=False, partial_due=partial_due) is not DecodeKind.PARTIAL:
+                continue
+            last_partial_at = now
+            started = time.monotonic()
+            shown = self._show_partial(snapshot, last_partial_text)
+            last_decode_s = time.monotonic() - started
+            if shown is not None:
+                last_partial_text = shown
+                partials += 1
+        log.info("continuous: decode loop exited (partials decoded=%d)", partials)
 
-    def _show_partial(self, partial: PartialBuffer) -> None:
-        """Decode the in-progress audio and refresh the pill (this thread only)."""
+    def _show_partial(self, partial: PartialBuffer, previous: str) -> str | None:
+        """Decode the in-progress audio and refresh the pill; return the caption.
+
+        Runs on the decode thread only, so a slow partial decode never blocks the
+        VAD. Returns the caption now shown, or ``None`` when there was nothing new
+        to show (empty decode, or the same caption as the last frame — so the pill
+        cannot flicker).
+        """
         recognizer = self._recognizer
         samples = partial.samples()
         if recognizer is None or samples is None:
-            return
+            return None
         text = recognizer.transcribe(samples)
-        if text:
-            self._indicator.update(f"● {truncate_partial(text)}")
+        if not text:
+            return None
+        shown = new_text_or_none(previous, truncate_partial(text))
+        if shown is None:
+            return None
+        self._indicator.update(f"● {shown}")
+        return shown
 
-    def _insert_segments(self, segments: list[np.ndarray]) -> int:
-        """Decode and emit each finished segment; returns how many were emitted."""
+    def _insert_segments(
+        self,
+        segments: Sequence[np.ndarray],
+        *,
+        endpoint_ts: float | None = None,
+    ) -> int:
+        """Decode and emit each finished segment; returns how many were emitted.
+
+        Runs on the decode thread, which prioritises these finished sentences
+        over live partials. Each segment is isolated: a single failed decode or
+        emit is logged and skipped so the remaining sentences still land and the
+        loop survives. ``endpoint_ts`` (when the VAD saw the pause) turns each
+        successful emit into an endpoint→emit latency line in ``app.log``.
+        """
         emitted = 0
         for samples in segments:
             if self._stop_event.is_set() or self._paused:
                 return emitted
-            recognizer = self._recognizer
-            if recognizer is None:
+            try:
+                recognizer = self._recognizer
+                if recognizer is None:
+                    continue
+                log.info("continuous: segment %.2f s", samples.shape[0] / 16_000)
+                started = time.monotonic()
+                text = recognizer.transcribe(samples)
+                log.info("continuous: decode %.3f s", time.monotonic() - started)
+                if not text:
+                    continue
+                log.info("continuous asr: %r", text)
+                channel = emit_text(
+                    text,
+                    EmitSettings(
+                        restore_clipboard=self._config.restore_clipboard,
+                        paste_delay_ms=self._config.paste_delay_ms,
+                    ),
+                    self._indicator,
+                )
+            except Exception:
+                log.exception("continuous: segment decode/emit failed; continuing")
                 continue
-            log.info("continuous: segment %.2f s", samples.shape[0] / 16_000)
-            text = recognizer.transcribe(samples)
-            if not text:
-                continue
-            log.info("continuous asr: %r", text)
-            emit_text(
-                text,
-                EmitSettings(
-                    restore_clipboard=self._config.restore_clipboard,
-                    paste_delay_ms=self._config.paste_delay_ms,
-                ),
-                self._indicator,
-            )
+            if endpoint_ts is not None:
+                log.info(
+                    "continuous: endpoint→emit %.3f s via %s",
+                    time.monotonic() - endpoint_ts,
+                    channel,
+                )
+            else:
+                log.info("continuous: inserted via %s", channel)
             emitted += 1
         return emitted
 
@@ -665,6 +866,8 @@ class DictationApp:
             self._recorder.stop_sink()
         if self._continuous_thread is not None:
             self._continuous_thread.join(timeout=2)
+        if self._decode_thread is not None:
+            self._decode_thread.join(timeout=2)
         if self._hook is not None:
             self._hook.set_armed(False)
             self._hook.stop()
