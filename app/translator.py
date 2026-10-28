@@ -12,14 +12,23 @@ Design notes:
   utterance — the hold-to-talk release or a VAD endpoint — which is exactly
   the right granularity: word-by-word streaming would garble word order
   between languages with different syntax.
-* **Greedy decode, no beam search.** Beam 2+ roughly doubles CPU time for a
-  marginal quality gain on dictation-length input; single-threaded greedy
-  keeps the added latency in the 100-300 ms range on a laptop CPU.
-* **No KV cache.** The decoder is run over the whole prefix each step. That is
-  O(n²) in the number of generated tokens, but n is capped (96 by default) and
-  it removes an entire class of shape/cache bugs — the merged-past exports are
-  the most fragile part of the ONNX Marian graph. Swap in a cached decoder
-  later if profiling says it matters.
+* **The tokenizer is not the SentencePiece model.** These ONNX exports use a
+  65,001-entry Marian vocabulary (``</s>``=0, ``<unk>``=1, ``<pad>``=65000)
+  whose ids do *not* match the 32,000-entry ``source.spm``/``target.spm`` ids.
+  ``tokenizer.json`` (a Unigram table) is the authoritative piece→id map:
+  SentencePiece turns text into *pieces*, that table turns pieces into ids, and
+  the target model turns pieces back into text. Skipping this mapping produces
+  fluent but completely unrelated English — verified the hard way.
+* **Greedy decode + no-repeat guard.** Beam search doubles CPU time for a
+  marginal gain on dictation-length input. A 3-gram repetition block removes
+  the "world world, world" loops greedy decoding falls into, which is the only
+  quality problem that actually shows up on short sentences.
+* **No KV cache.** The decoder is re-run over the whole prefix each step. The
+  ``decoder_with_past`` export is not usable here: this export's first-step
+  decoder does not emit ``present.*.encoder.key``, so the cached graph's
+  required encoder past cannot be produced (the merged graph crashes in its
+  ``If`` branch). Cost is ~0.15 s/token on a 4-core Celeron-class NAS and
+  roughly 2-3x faster on a laptop.
 * **Optional dependencies.** ``onnxruntime`` and ``sentencepiece`` are imported
   lazily, so unit tests (and users who never enable translation) never pay for
   them and the module still imports cleanly.
@@ -37,6 +46,7 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "BILINGUAL_SEPARATOR",
+    "MarianTokenizer",
     "NmtSettings",
     "NullTranslator",
     "OnnxNmtTranslator",
@@ -44,6 +54,7 @@ __all__ = [
     "TRANSLATE_TARGETS",
     "TranslationError",
     "Translator",
+    "blocked_tokens",
     "compose_text",
     "has_translatable_text",
     "load_translator",
@@ -65,17 +76,29 @@ TRANSLATE_MODES: dict[str, str] = {
 #: Anything shorter than this is not worth a model pass ("嗯", "ok", "1").
 _MIN_CHARS: int = 2
 
-#: Marian/opus-mt default special ids. A ``translator.json`` next to the model
-#: may override them (NLLB exports differ).
-_DEFAULT_START_TOKEN_ID: int = 65_000  # == pad_token_id for opus-mt
-_DEFAULT_EOS_TOKEN_ID: int = 0  # == </s> for opus-mt
+#: Marian special ids (``</s>``, ``<unk>``, ``<pad>``) in this export's vocab.
+_DEFAULT_START_TOKEN_ID: int = 65_000  # == <pad>, the decoder start token
+_DEFAULT_EOS_TOKEN_ID: int = 0
+_DEFAULT_UNK_TOKEN_ID: int = 1
 
-#: File names to look for inside the model directory, in preference order.
-_ENCODER_FILES: tuple[str, ...] = ("encoder_model.onnx", "encoder.onnx")
-_DECODER_FILES: tuple[str, ...] = ("decoder_model.onnx", "decoder.onnx")
+#: Graph files, probed in order. The Xenova exports keep them under ``onnx/``;
+#: a hand-assembled directory may put them at the root, so both are tried.
+_ENCODER_FILES: tuple[str, ...] = (
+    "onnx/encoder_model_int8.onnx",
+    "onnx/encoder_model.onnx",
+    "encoder_model_int8.onnx",
+    "encoder_model.onnx",
+    "encoder.onnx",
+)
+_DECODER_FILES: tuple[str, ...] = (
+    "onnx/decoder_model_int8.onnx",
+    "onnx/decoder_model.onnx",
+    "decoder_model_int8.onnx",
+    "decoder_model.onnx",
+    "decoder.onnx",
+)
 
-#: Input names the Marian ONNX graphs normally use; a graph that names them
-#: differently is fed by position instead (see ``_feed``).
+#: Input names the Marian ONNX graphs normally use.
 _ENC_IDS: str = "input_ids"
 _ENC_MASK: str = "attention_mask"
 _DEC_IDS: str = "input_ids"
@@ -140,6 +163,117 @@ def compose_text(
     return translated
 
 
+def blocked_tokens(generated: list[int], n: int) -> set[int]:
+    """Token ids that would repeat an n-gram already present in *generated*.
+
+    Greedy decoding on Marian falls into loops ("world world, world"); banning
+    the token that completes an already-seen n-gram breaks them without the cost
+    of beam search. Returns an empty set for n < 2 or a too-short history.
+    """
+    if n < 2 or len(generated) < n - 1:
+        return set()
+    context = tuple(generated[len(generated) - (n - 1):])
+    banned: set[int] = set()
+    for i in range(len(generated) - n + 1):
+        if tuple(generated[i:i + n - 1]) == context:
+            banned.add(generated[i + n - 1])
+    return banned
+
+
+class MarianTokenizer:
+    """SentencePiece pieces + the model's own piece→id table.
+
+    ``tokenizer.json`` carries the authoritative vocabulary for these exports
+    (a Unigram table of 65,001 entries plus added tokens). SentencePiece is only
+    used for segmentation (text ↔ pieces); ids come from, and go back through,
+    that table.
+    """
+
+    def __init__(
+        self,
+        source_spm: Any,
+        target_spm: Any,
+        piece2id: dict[str, int],
+        id2piece: dict[int, str],
+        specials: set[int],
+        unk_id: int = _DEFAULT_UNK_TOKEN_ID,
+    ) -> None:
+        self._source_spm = source_spm
+        self._target_spm = target_spm
+        self._piece2id = piece2id
+        self._id2piece = id2piece
+        self._specials = specials
+        self._unk_id = unk_id
+        self.unknown_pieces = 0
+
+    @classmethod
+    def load(cls, model_dir: Path, *, unk_id: int = _DEFAULT_UNK_TOKEN_ID) -> "MarianTokenizer":
+        """Load the tokenizer from *model_dir*, or raise TranslationError."""
+        try:
+            import sentencepiece  # noqa: PLC0415 — optional, lazy
+        except ImportError as exc:  # pragma: no cover - dependency guard
+            raise TranslationError(
+                "缺少 sentencepiece（翻译分词依赖），请重新安装依赖后再启用翻译"
+            ) from exc
+        source = model_dir / "source.spm"
+        target = model_dir / "target.spm"
+        vocab_file = model_dir / "tokenizer.json"
+        for path in (source, target, vocab_file):
+            if not path.exists():
+                raise TranslationError(f"缺少分词文件：{path.name}")
+        try:
+            data = json.loads(vocab_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise TranslationError(f"tokenizer.json 无法解析：{exc}") from exc
+
+        piece2id: dict[str, int] = {}
+        id2piece: dict[int, str] = {}
+        for index, row in enumerate(data.get("model", {}).get("vocab") or []):
+            piece = row[0] if isinstance(row, list) else row
+            piece2id.setdefault(str(piece), index)
+            id2piece[index] = str(piece)
+        specials: set[int] = set()
+        for token in data.get("added_tokens") or []:
+            content = str(token.get("content", ""))
+            token_id = int(token.get("id", -1))
+            piece2id.setdefault(content, token_id)
+            id2piece[token_id] = content
+            specials.add(token_id)
+        if not piece2id:
+            raise TranslationError("tokenizer.json 里没有词表（model.vocab 为空）")
+        return cls(
+            sentencepiece.SentencePieceProcessor(model_file=str(source)),
+            sentencepiece.SentencePieceProcessor(model_file=str(target)),
+            piece2id,
+            id2piece,
+            specials,
+            unk_id=unk_id,
+        )
+
+    def encode(self, text: str) -> list[int]:
+        """Text -> model ids (unknown pieces fall back to ``<unk>``)."""
+        pieces = self._source_spm.encode(text, out_type=str)
+        ids: list[int] = []
+        for piece in pieces:
+            token_id = self._piece2id.get(piece)
+            if token_id is None:
+                self.unknown_pieces += 1
+                token_id = self._unk_id
+            ids.append(token_id)
+        return ids
+
+    def decode(self, ids: list[int]) -> str:
+        """Model ids -> text, via pieces so SentencePiece handles spacing."""
+        pieces = [
+            self._id2piece[i]
+            for i in ids
+            if i in self._id2piece and i not in self._specials
+        ]
+        if not pieces:
+            return ""
+        return str(self._target_spm.decode(pieces)).strip()
+
+
 @dataclass(frozen=True, slots=True)
 class NmtSettings:
     """Everything needed to build a translator, resolved from config."""
@@ -147,10 +281,11 @@ class NmtSettings:
     model_dir: Path
     target: str = "en"
     num_threads: int = 2
-    max_new_tokens: int = 96
+    max_new_tokens: int = 64
+    no_repeat_ngram: int = 3
     start_token_id: int = _DEFAULT_START_TOKEN_ID
     eos_token_id: int = _DEFAULT_EOS_TOKEN_ID
-    append_eos: bool = True
+    unk_token_id: int = _DEFAULT_UNK_TOKEN_ID
 
 
 def _read_meta(model_dir: Path) -> dict[str, Any]:
@@ -175,10 +310,10 @@ def _first_existing(model_dir: Path, names: tuple[str, ...]) -> Path | None:
 
 
 class OnnxNmtTranslator:
-    """Greedy-decoding Marian/NLLB translator backed by onnxruntime.
+    """Greedy-decoding Marian translator backed by onnxruntime.
 
-    ``encoder``/``decoder``/``source_tokenizer``/``target_tokenizer`` can be
-    injected for tests; in production they are loaded from *model_dir*.
+    ``encoder``/``decoder``/``tokenizer`` can be injected for tests; in
+    production they are loaded from ``settings.model_dir``.
     """
 
     def __init__(
@@ -187,34 +322,30 @@ class OnnxNmtTranslator:
         *,
         encoder: Any = None,
         decoder: Any = None,
-        source_tokenizer: Any = None,
-        target_tokenizer: Any = None,
+        tokenizer: Any = None,
     ) -> None:
         self._settings = settings
         self._meta = _read_meta(settings.model_dir)
         self._start_id = int(self._meta.get("start_token_id", settings.start_token_id))
         self._eos_id = int(self._meta.get("eos_token_id", settings.eos_token_id))
         self._max_new = int(self._meta.get("max_new_tokens", settings.max_new_tokens))
-        self._append_eos = bool(self._meta.get("append_eos", settings.append_eos))
+        self._no_repeat = int(self._meta.get("no_repeat_ngram", settings.no_repeat_ngram))
+        self._append_eos = bool(self._meta.get("append_eos", True))
         self._encoder = encoder if encoder is not None else self._load_encoder()
         self._decoder = decoder if decoder is not None else self._load_decoder()
-        self._source_spm = (
-            source_tokenizer
-            if source_tokenizer is not None
-            else self._load_spm(str(self._meta.get("source_spm_file", "source.spm")))
-        )
-        self._target_spm = (
-            target_tokenizer
-            if target_tokenizer is not None
-            else self._load_spm(str(self._meta.get("target_spm_file", "target.spm")))
+        self._tokenizer = (
+            tokenizer
+            if tokenizer is not None
+            else MarianTokenizer.load(settings.model_dir, unk_id=settings.unk_token_id)
         )
         log.info(
-            "translator ready: dir=%s target=%s start=%d eos=%d max_new=%d",
+            "translator ready: dir=%s target=%s start=%d eos=%d max_new=%d no_repeat=%d",
             settings.model_dir,
             settings.target,
             self._start_id,
             self._eos_id,
             self._max_new,
+            self._no_repeat,
         )
 
     # -- loading -------------------------------------------------------------
@@ -253,18 +384,6 @@ class OnnxNmtTranslator:
             raise TranslationError(f"缺少解码器模型：{self._settings.model_dir}")
         return self._session(path)
 
-    def _load_spm(self, name: str) -> Any:
-        path = self._settings.model_dir / name
-        if not path.exists():
-            raise TranslationError(f"缺少分词模型：{path}")
-        try:
-            import sentencepiece  # noqa: PLC0415 — optional, lazy
-        except ImportError as exc:  # pragma: no cover - dependency guard
-            raise TranslationError(
-                "缺少 sentencepiece（翻译分词依赖），请重新安装依赖后再启用翻译"
-            ) from exc
-        return sentencepiece.SentencePieceProcessor(model_file=str(path))
-
     # -- inference -----------------------------------------------------------
 
     def translate(self, text: str) -> str:
@@ -272,7 +391,7 @@ class OnnxNmtTranslator:
         stripped = text.strip()
         if not stripped:
             return ""
-        ids = [int(i) for i in self._source_spm.encode(stripped, out_type=int)]
+        ids = self._tokenizer.encode(stripped)
         if not ids:
             return ""
         if self._append_eos:
@@ -285,71 +404,55 @@ class OnnxNmtTranslator:
         except Exception as exc:  # noqa: BLE001 - ORT raises many types
             raise TranslationError(f"编码失败：{exc}") from exc
 
-        generated = [self._start_id]
+        sequence = [self._start_id]
         produced: list[int] = []
         for _ in range(max(1, self._max_new)):
-            feed = self._decoder_feed(generated, hidden, mask)
             try:
-                logits = self._decoder.run(None, feed)[0]
+                logits = self._decoder.run(None, self._decoder_feed(sequence, hidden, mask))[0]
             except Exception as exc:  # noqa: BLE001
                 raise TranslationError(f"解码失败：{exc}") from exc
-            next_id = int(np.argmax(logits[0, -1]))
+            row = np.array(logits[0, -1], dtype=np.float32, copy=True)
+            for banned in blocked_tokens(produced, self._no_repeat):
+                row[banned] = -np.inf
+            next_id = int(np.argmax(row))
             if next_id == self._eos_id:
                 break
             produced.append(next_id)
-            generated.append(next_id)
+            sequence.append(next_id)
         if not produced:
             return ""
-        try:
-            return str(self._target_spm.decode(produced)).strip()
-        except Exception as exc:  # noqa: BLE001
-            raise TranslationError(f"译文还原失败：{exc}") from exc
+        return self._tokenizer.decode(produced)
 
-    def _decoder_feed(
-        self, generated: list[int], hidden: Any, mask: Any
-    ) -> dict[str, Any]:
+    def _decoder_feed(self, sequence: list[int], hidden: Any, mask: Any) -> dict[str, Any]:
         """Build the decoder feed from whatever inputs the graph declares.
 
         A Marian export asks for ``input_ids`` + ``encoder_attention_mask`` +
         ``encoder_hidden_states``; an older one may ask for a subset. Feeding by
-        name (and skipping unknown names) keeps both working without branching
-        on the export flavour.
+        name (and skipping unknown names) keeps both working, and onnxruntime
+        rejects unexpected names outright.
         """
-        ids = np.asarray([generated], dtype=np.int64)
         available = {
-            _DEC_IDS: ids,
+            _DEC_IDS: np.asarray([sequence], dtype=np.int64),
             _DEC_MASK: mask,
             _DEC_HIDDEN: hidden,
         }
+        return self._feed(self._decoder, available, role="decoder")
+
+    def _encoder_feed(self, source: np.ndarray, mask: np.ndarray) -> dict[str, Any]:
+        """Build the encoder feed from the graph's declared inputs."""
+        available = {_ENC_IDS: source, _ENC_MASK: mask}
+        return self._feed(self._encoder, available, role="encoder")
+
+    @staticmethod
+    def _feed(session: Any, available: dict[str, Any], *, role: str) -> dict[str, Any]:
         feed: dict[str, Any] = {}
-        for item in self._decoder.get_inputs():
+        for item in session.get_inputs():
             value = available.get(item.name)
             if value is None:
-                log.warning("decoder input %r unsupported; feeding zeros", item.name)
+                log.warning("%s input %r unsupported; feeding zeros", role, item.name)
                 shape = [d if isinstance(d, int) else 1 for d in item.shape]
                 value = np.zeros(shape, dtype=np.int64)
             feed[item.name] = value
-        return feed
-
-    def _encoder_feed(self, source: np.ndarray, mask: np.ndarray) -> dict[str, Any]:
-        """Build the encoder feed from the graph's declared inputs.
-
-        Same reasoning as :meth:`_decoder_feed`: an export that asks only for
-        ``input_ids`` must not be handed an unexpected ``attention_mask``
-        (onnxruntime rejects unknown names outright), and an export that asks for
-        a differently-named mask must still receive one.
-        """
-        feed: dict[str, Any] = {}
-        for item in self._encoder.get_inputs():
-            name = item.name
-            if name == _ENC_IDS:
-                feed[name] = source
-            elif name == _ENC_MASK:
-                feed[name] = mask
-            else:
-                log.warning("encoder input %r unsupported; feeding zeros", name)
-                shape = [d if isinstance(d, int) else 1 for d in item.shape]
-                feed[name] = np.zeros(shape, dtype=np.int64)
         return feed
 
 

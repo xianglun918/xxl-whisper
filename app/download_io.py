@@ -18,6 +18,9 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+#: Sent with every request: several mirrors 403 the urllib default agent.
+_USER_AGENT: str = "Mozilla/5.0 (compatible; xxl-whisper/1.0)"
+
 ProgressFn = Callable[[str, int, int], None]  # (filename, downloaded_bytes, total_bytes)
 
 #: Retry policy for a single source: up to _MAX_ATTEMPTS tries with a short
@@ -132,6 +135,9 @@ def _stream_once(
         part.stat().st_size if part.exists() else 0, spec.expected_size
     )
     request = urllib.request.Request(spec.url)  # noqa: S310 - module-level https constants
+    # Some mirrors (Cloudflare-fronted CDNs) reject the default
+    # "Python-urllib/x.y" agent outright; a plain browser string is accepted.
+    request.add_header("User-Agent", _USER_AGENT)
     range_header = _range_header(offset)
     if range_header is not None:
         request.add_header("Range", range_header)
