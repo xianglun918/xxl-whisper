@@ -238,13 +238,17 @@ class OnnxNmtTranslator:
             raise TranslationError(f"加载翻译模型失败：{path.name}: {exc}") from exc
 
     def _load_encoder(self) -> Any:
-        path = _first_existing(self._settings.model_dir, _ENCODER_FILES)
+        override = self._meta.get("encoder_file")
+        candidates = (str(override), *_ENCODER_FILES) if override else _ENCODER_FILES
+        path = _first_existing(self._settings.model_dir, candidates)
         if path is None:
             raise TranslationError(f"缺少编码器模型：{self._settings.model_dir}")
         return self._session(path)
 
     def _load_decoder(self) -> Any:
-        path = _first_existing(self._settings.model_dir, _DECODER_FILES)
+        override = self._meta.get("decoder_file")
+        candidates = (str(override), *_DECODER_FILES) if override else _DECODER_FILES
+        path = _first_existing(self._settings.model_dir, candidates)
         if path is None:
             raise TranslationError(f"缺少解码器模型：{self._settings.model_dir}")
         return self._session(path)
@@ -277,7 +281,7 @@ class OnnxNmtTranslator:
         mask = np.ones_like(source)
 
         try:
-            hidden = self._encoder.run(None, {_ENC_IDS: source, _ENC_MASK: mask})[0]
+            hidden = self._encoder.run(None, self._encoder_feed(source, mask))[0]
         except Exception as exc:  # noqa: BLE001 - ORT raises many types
             raise TranslationError(f"编码失败：{exc}") from exc
 
@@ -325,6 +329,27 @@ class OnnxNmtTranslator:
                 shape = [d if isinstance(d, int) else 1 for d in item.shape]
                 value = np.zeros(shape, dtype=np.int64)
             feed[item.name] = value
+        return feed
+
+    def _encoder_feed(self, source: np.ndarray, mask: np.ndarray) -> dict[str, Any]:
+        """Build the encoder feed from the graph's declared inputs.
+
+        Same reasoning as :meth:`_decoder_feed`: an export that asks only for
+        ``input_ids`` must not be handed an unexpected ``attention_mask``
+        (onnxruntime rejects unknown names outright), and an export that asks for
+        a differently-named mask must still receive one.
+        """
+        feed: dict[str, Any] = {}
+        for item in self._encoder.get_inputs():
+            name = item.name
+            if name == _ENC_IDS:
+                feed[name] = source
+            elif name == _ENC_MASK:
+                feed[name] = mask
+            else:
+                log.warning("encoder input %r unsupported; feeding zeros", name)
+                shape = [d if isinstance(d, int) else 1 for d in item.shape]
+                feed[name] = np.zeros(shape, dtype=np.int64)
         return feed
 
 

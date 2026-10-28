@@ -175,3 +175,20 @@ def test_empty_input_short_circuits(tmp_path: object) -> None:
 def test_missing_model_files_raise(tmp_path: object) -> None:
     with pytest.raises(TranslationError):
         OnnxNmtTranslator(NmtSettings(model_dir=tmp_path))  # type: ignore[arg-type]
+
+
+def test_encoder_feed_only_declared_inputs(tmp_path: object) -> None:
+    """An export that declares only input_ids must not receive a mask."""
+    src = _FakeSpm()
+    encoder = _FakeSession(["input_ids"], [np.zeros((1, 2, 8), np.float32)])
+    decoder = _FakeSession(["input_ids", "encoder_attention_mask"], [_step_logits(16, 0)])
+    translator = OnnxNmtTranslator(
+        NmtSettings(model_dir=tmp_path),  # type: ignore[arg-type]
+        encoder=encoder,
+        decoder=decoder,
+        source_tokenizer=src,
+        target_tokenizer=src,
+    )
+
+    translator.translate("你好")
+    assert set(encoder.feeds[0]) == {"input_ids"}
