@@ -123,6 +123,11 @@ class SetTranslate:
 
 
 @dataclass(frozen=True, slots=True)
+class SetTranslateTarget:
+    target: str
+
+
+@dataclass(frozen=True, slots=True)
 class InitModel:
     pass
 
@@ -137,6 +142,7 @@ type WorkerMsg = (
     | SetDisfluency
     | SetContinuous
     | SetTranslate
+    | SetTranslateTarget
     | InitModel
 )
 
@@ -207,6 +213,9 @@ class DictationApp:
                 on_toggle_disfluency=lambda: self._queue.put(SetDisfluency()),
                 on_toggle_continuous=lambda: self._queue.put(SetContinuous()),
                 on_toggle_translate=lambda: self._queue.put(SetTranslate()),
+                on_select_translate_target=lambda target: self._queue.put(
+                    SetTranslateTarget(target=target)
+                ),
             ),
             state_provider=self._tray_state,
         )
@@ -315,6 +324,7 @@ class DictationApp:
             disfluency=self._config.disfluency,
             continuous=self._continuous,
             translate=self._config.translate,
+            translate_target=self._config.translate_target,
         )
 
     def _set_config(self, config: Config) -> None:
@@ -386,6 +396,8 @@ class DictationApp:
                 self._toggle_continuous()
             case SetTranslate():
                 self._toggle_translate()
+            case SetTranslateTarget(target=target):
+                self._set_translate_target(target)
             case InitModel():
                 self._init_model()
             case unreachable:
@@ -559,6 +571,20 @@ class DictationApp:
         log.info(
             "translate enabled=%s translator=%s",
             enabled,
+            type(self._translator).__name__ if self._translator is not None else "none",
+        )
+
+    def _set_translate_target(self, target: str) -> None:
+        """Switch 中→英 / 英→中; each direction is its own ~300MB local model."""
+        if not self._controls.set_translate_target(target):
+            return
+        self._translator = None  # drop the old direction before loading the new one
+        if self._config.translate:
+            self._translator = self._controls.build_translator()
+        self._tray.refresh_menu()
+        log.info(
+            "translate target=%s translator=%s",
+            self._config.translate_target,
             type(self._translator).__name__ if self._translator is not None else "none",
         )
 

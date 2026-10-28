@@ -18,6 +18,7 @@ from app.config import (
     Config,
     Disfluency,
     ModelKind,
+    TranslateTarget,
     config_path,
     hotkey_vk,
     save_config,
@@ -207,6 +208,29 @@ class Controls:
             config.translate_mode,
         )
         return enabled
+
+    def set_translate_target(self, target: str) -> bool:
+        """Switch translation direction (en = 中→英, zh = 英→中).
+
+        Returns True when the target actually changed, so the caller knows it
+        must rebuild the translator (each direction is a different model file).
+        """
+        config = self._deps.get_config()
+        if target not in ("en", "zh"):
+            log.warning("unknown translate target %r", target)
+            return False
+        new: TranslateTarget = "en" if target == "en" else "zh"
+        if new == config.translate_target:
+            return False
+        self._deps.set_config(dataclasses.replace(config, translate_target=new))
+        save_config(config_path(), self._deps.get_config())
+        self._deps.tray.refresh_menu()
+        log.info("translate target -> %s", new)
+        if new == "zh" and config.language == "zh":
+            # The recogniser is still pinned to Chinese; English speech needs
+            # auto (or en) to transcribe well, and that only lives in the config.
+            self._deps.indicator.flash("提示：识别语言仍是 zh，说英文建议改 language = auto", 3000)
+        return True
 
     def build_translator(self) -> Translator | None:
         """Download-if-needed and load the local NMT model for the target language.

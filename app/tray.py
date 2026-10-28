@@ -47,6 +47,7 @@ class TrayCallbacks:
     on_toggle_disfluency: Callable[[], None]
     on_toggle_continuous: Callable[[], None]
     on_toggle_translate: Callable[[], None]
+    on_select_translate_target: Callable[[str], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,7 @@ class TrayState:
     disfluency: str
     continuous: bool
     translate: bool
+    translate_target: str
 
 
 class Tray:
@@ -124,9 +126,8 @@ class Tray:
                 checked=lambda _item: self._state_provider().continuous,
             ),
             pystray.MenuItem(
-                "离线翻译（说中文出英文）",
-                self._callbacks.on_toggle_translate,
-                checked=lambda _item: self._state_provider().translate,
+                "离线翻译",
+                pystray.Menu(self._translate_items),
             ),
             pystray.MenuItem(
                 "开机自启",
@@ -212,6 +213,50 @@ class Tray:
             for kind, label in _MODEL_LABELS.items()
         ]
 
+    def _translate_items(self) -> list[pystray.MenuItem]:
+        """Translation submenu: on/off plus the direction (which model to use)."""
+        state = self._state_provider()
+        return [
+            pystray.MenuItem(
+                "开启离线翻译",
+                self._callbacks.on_toggle_translate,
+                checked=lambda _item: self._state_provider().translate,
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "中 → 英（说中文，出英文）",
+                self._select_translate_target("en"),
+                checked=self._translate_target_checked("en"),
+                radio=True,
+            ),
+            pystray.MenuItem(
+                "英 → 中（说英文，出中文）",
+                self._select_translate_target("zh"),
+                checked=self._translate_target_checked("zh"),
+                radio=True,
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                _translate_model_hint(state),
+                None,
+                enabled=False,
+            ),
+        ]
+
+    def _select_translate_target(self, target: str) -> Callable[[], None]:
+        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
+
+        def action() -> None:
+            self._callbacks.on_select_translate_target(target)
+
+        return action
+
+    def _translate_target_checked(self, target: str) -> Callable[[object], bool]:
+        def checked(_item: object) -> bool:
+            return self._state_provider().translate_target == target
+
+        return checked
+
     def _hotkey_items(self) -> list[pystray.MenuItem]:
         """Hotkey presets plus a custom-key capture entry; re-evaluated per open."""
         return [
@@ -231,14 +276,22 @@ class Tray:
         state = self._state_provider()
         if not state.ready:
             return "状态：启动中…"
+        arrow = "中→英" if state.translate_target == "en" else "英→中"
         if state.continuous:
-            suffix = " · 翻译开" if state.translate else ""
+            suffix = f" · 翻译开（{arrow}）" if state.translate else ""
             return f"状态：持续听写中（热键已停用，说话即上屏）{suffix}"
         label = _hotkey_label(state.current_hotkey)
         if state.paused:
             return f"状态：已暂停（{label} 只保留原功能）"
-        suffix = " · 翻译开" if state.translate else ""
+        suffix = f" · 翻译开（{arrow}）" if state.translate else ""
         return f"状态：就绪 — 按住 {label} 说话，松开出字{suffix}"
+
+
+def _translate_model_hint(state: TrayState) -> str:
+    """Explain which local model the current direction uses (disabled label)."""
+    if state.translate_target == "en":
+        return "模型：opus-mt-zh-en"
+    return "模型：opus-mt-en-zh"
 
 
 def _draw_icon() -> Image.Image:
