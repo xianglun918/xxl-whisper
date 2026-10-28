@@ -8,6 +8,8 @@ dependencies = [
     "sounddevice>=0.5",
     "sherpa-onnx>=1.13.6",
     "sherpa-onnx-core>=1.13.6",
+    "onnxruntime>=1.18",
+    "sentencepiece>=0.2",
     "pystray>=0.19",
     "pillow>=10.0",
     "pyobjc-framework-quartz>=12.2.2 ; sys_platform == 'darwin'",

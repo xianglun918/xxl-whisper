@@ -22,10 +22,17 @@ from app.config import (
     hotkey_vk,
     save_config,
 )
-from app.downloader import DownloadError, ensure_model, manual_download_guide
+from app.downloader import (
+    DownloadError,
+    ensure_model,
+    ensure_translate_model,
+    manual_download_guide,
+    translate_manual_guide,
+)
 from app.emit import is_classic_control
 from app.recorder import Recorder
 from app.tray import Tray
+from app.translator import NmtSettings, TranslationError, Translator, load_translator
 
 log = logging.getLogger(__name__)
 
@@ -183,6 +190,75 @@ class Controls:
             config.model,
         )
         return None
+
+    # -- translation ------------------------------------------------------------
+
+    def toggle_translate(self) -> bool:
+        """Flip offline translation on/off, persist it, return the new state."""
+        config = self._deps.get_config()
+        enabled = not config.translate
+        self._deps.set_config(dataclasses.replace(config, translate=enabled))
+        save_config(config_path(), self._deps.get_config())
+        self._deps.tray.refresh_menu()
+        log.info(
+            "translate -> %s (target=%s mode=%s)",
+            enabled,
+            config.translate_target,
+            config.translate_mode,
+        )
+        return enabled
+
+    def build_translator(self) -> Translator | None:
+        """Download-if-needed and load the local NMT model for the target language.
+
+        Runs on the worker thread (blocking download + model load). A failure
+        disables translation rather than retrying on every utterance: a user who
+        cannot fetch the model should get one clear dialog, not a stall on each
+        sentence. Returns None when translation is off or could not start.
+        """
+        config = self._deps.get_config()
+        if not config.translate:
+            return None
+
+        def _progress(name: str, done: int, total: int) -> None:
+            pct = done / total if total else 0.0
+            self._deps.indicator.progress(pct, f"下载翻译模型 {Path(name).name}")
+
+        try:
+            files = ensure_translate_model(
+                config.translate_target,
+                self._deps.models_root,
+                _progress,
+                proxy=config.proxy,
+            )
+            translator = load_translator(
+                NmtSettings(
+                    model_dir=files.directory,
+                    target=config.translate_target,
+                    num_threads=self._deps.num_threads(),
+                )
+            )
+        except (DownloadError, TranslationError) as exc:
+            reason = getattr(exc, "reason", str(exc))
+            log.warning("translator unavailable: %s", reason)
+            self._deps.indicator.hide()
+            guide = translate_manual_guide(config.translate_target, self._deps.models_root)
+            native.util.show_info(
+                f"翻译模型不可用：{reason}\n\n{guide}\n（翻译已关闭，语音听写不受影响）"
+            )
+            self.disable_translate()
+            return None
+        self._deps.indicator.flash("翻译已开启（本地模型）", 1500)
+        return translator
+
+    def disable_translate(self) -> None:
+        """Turn translation off and persist it (used after a load failure)."""
+        config = self._deps.get_config()
+        if not config.translate:
+            return
+        self._deps.set_config(dataclasses.replace(config, translate=False))
+        save_config(config_path(), self._deps.get_config())
+        self._deps.tray.refresh_menu()
 
     def _build_recognizer(self, kind: ModelKind) -> Recognizer:
         return Recognizer(

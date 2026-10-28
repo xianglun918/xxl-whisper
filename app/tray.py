@@ -46,6 +46,7 @@ class TrayCallbacks:
     on_show_diagnostics: Callable[[], None]
     on_toggle_disfluency: Callable[[], None]
     on_toggle_continuous: Callable[[], None]
+    on_toggle_translate: Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +59,7 @@ class TrayState:
     current_model: str
     disfluency: str
     continuous: bool
+    translate: bool
 
 
 class Tray:
@@ -120,6 +122,11 @@ class Tray:
                 "持续听写",
                 self._callbacks.on_toggle_continuous,
                 checked=lambda _item: self._state_provider().continuous,
+            ),
+            pystray.MenuItem(
+                "离线翻译（说中文出英文）",
+                self._callbacks.on_toggle_translate,
+                checked=lambda _item: self._state_provider().translate,
             ),
             pystray.MenuItem(
                 "开机自启",
@@ -225,11 +232,13 @@ class Tray:
         if not state.ready:
             return "状态：启动中…"
         if state.continuous:
-            return "状态：持续听写中（热键已停用，说话即上屏）"
+            suffix = " · 翻译开" if state.translate else ""
+            return f"状态：持续听写中（热键已停用，说话即上屏）{suffix}"
         label = _hotkey_label(state.current_hotkey)
         if state.paused:
             return f"状态：已暂停（{label} 只保留原功能）"
-        return f"状态：就绪 — 按住 {label} 说话，松开出字"
+        suffix = " · 翻译开" if state.translate else ""
+        return f"状态：就绪 — 按住 {label} 说话，松开出字{suffix}"
 
 
 def _draw_icon() -> Image.Image:

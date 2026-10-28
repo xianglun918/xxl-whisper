@@ -33,7 +33,7 @@ from app.downloader import (
     ensure_vad_model,
     manual_download_guide,
 )
-from app.emit import EmitSettings, emit_text
+from app.emit import Channel, EmitSettings, emit_text
 from app.hotkey_logic import (
     Action,
     Click,
@@ -46,6 +46,7 @@ from app.hotkey_logic import (
 from app.partial import level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
 from app.tray import Tray, TrayCallbacks, TrayState
+from app.translator import Translator, TranslationError, compose_text, has_translatable_text
 from app.update_flow import UpdateFlow, UpdateFlowDeps
 from app.vad import SAMPLE_RATE, Segmenter, VadSettings
 
@@ -117,6 +118,11 @@ class SetContinuous:
 
 
 @dataclass(frozen=True, slots=True)
+class SetTranslate:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class InitModel:
     pass
 
@@ -130,6 +136,7 @@ type WorkerMsg = (
     | SetModel
     | SetDisfluency
     | SetContinuous
+    | SetTranslate
     | InitModel
 )
 
@@ -163,6 +170,7 @@ class DictationApp:
         self._detector = HoldClickDetector(config.hold_threshold_ms)
         self._indicator = native.indicator.Indicator()
         self._recognizer: Recognizer | None = None
+        self._translator: Translator | None = None
         self._recorder: Recorder | None = None
         self._hook: native.hotkey.HotkeyHook | None = None
         self._mouse_hook: native.mousehook.MouseHook | None = None
@@ -198,6 +206,7 @@ class DictationApp:
                 on_show_diagnostics=self._show_diagnostics_deferred,
                 on_toggle_disfluency=lambda: self._queue.put(SetDisfluency()),
                 on_toggle_continuous=lambda: self._queue.put(SetContinuous()),
+                on_toggle_translate=lambda: self._queue.put(SetTranslate()),
             ),
             state_provider=self._tray_state,
         )
@@ -305,6 +314,7 @@ class DictationApp:
             current_model=self._config.model,
             disfluency=self._config.disfluency,
             continuous=self._continuous,
+            translate=self._config.translate,
         )
 
     def _set_config(self, config: Config) -> None:
@@ -374,6 +384,8 @@ class DictationApp:
                 self._toggle_disfluency()
             case SetContinuous():
                 self._toggle_continuous()
+            case SetTranslate():
+                self._toggle_translate()
             case InitModel():
                 self._init_model()
             case unreachable:
@@ -463,14 +475,7 @@ class DictationApp:
         text = recognizer.transcribe(audio)
         log.info("asr: %r", text)
         if text:
-            emit_text(
-                text,
-                EmitSettings(
-                    restore_clipboard=self._config.restore_clipboard,
-                    paste_delay_ms=self._config.paste_delay_ms,
-                ),
-                self._indicator,
-            )
+            self._emit(text)
         else:
             self._indicator.hide()
 
@@ -534,11 +539,66 @@ class DictationApp:
         self._model_ready = True
         self._set_hooks_armed()
         log.info("model ready: %s", self._config.model)
+        if self._config.translate:
+            # Lazy: the NMT model is only fetched/loaded when the user has
+            # translation on, and a failure here must never block dictation.
+            self._translator = self._controls.build_translator()
         if self._model_downloaded:
             self._indicator.flash("模型下载完成，可以开始使用了", 4000)
             self._tray.notify("模型下载完成，可以开始使用了", title="xxl-whisper")
         if self._config.continuous:  # honour the persisted mode from last run
             self._start_continuous()
+
+    # -- translation ------------------------------------------------------------
+
+    def _toggle_translate(self) -> None:
+        """Tray switch for local NMT: load the model on enable, drop it on disable."""
+        enabled = self._controls.toggle_translate()
+        self._translator = self._controls.build_translator() if enabled else None
+        self._tray.refresh_menu()
+        log.info(
+            "translate enabled=%s translator=%s",
+            enabled,
+            type(self._translator).__name__ if self._translator is not None else "none",
+        )
+
+    def _emit(self, text: str) -> Channel:
+        """Deliver one utterance, translating it first when that is enabled."""
+        return emit_text(
+            self._payload(text),
+            EmitSettings(
+                restore_clipboard=self._config.restore_clipboard,
+                paste_delay_ms=self._config.paste_delay_ms,
+            ),
+            self._indicator,
+        )
+
+    def _payload(self, text: str) -> str:
+        """Return what should be typed: source, translation, or both.
+
+        Translation is best-effort by design: any model error falls back to the
+        original text with a short pill message. Losing the translation is an
+        annoyance; losing the user's words is not acceptable.
+        """
+        translator = self._translator
+        if translator is None or not self._config.translate or not has_translatable_text(text):
+            return text
+        self._indicator.update("翻译中…")
+        started = time.monotonic()
+        try:
+            translated = translator.translate(text)
+        except TranslationError as exc:
+            log.warning("translate failed: %s", exc.reason)
+            translated = ""
+        except Exception:  # noqa: BLE001 - never let MT break dictation
+            log.exception("translate failed unexpectedly")
+            translated = ""
+        elapsed = time.monotonic() - started
+        log.info("translate: %.3f s -> %r", elapsed, translated)
+        if not translated.strip():
+            self._indicator.flash("翻译失败，已上屏原文", 1800)
+            return text
+        return compose_text(text, translated, self._config.translate_mode)
 
     # -- continuous dictation -------------------------------------------------
 
@@ -908,14 +968,7 @@ class DictationApp:
                 if not text:
                     continue
                 log.info("continuous asr: %r", text)
-                channel = emit_text(
-                    text,
-                    EmitSettings(
-                        restore_clipboard=self._config.restore_clipboard,
-                        paste_delay_ms=self._config.paste_delay_ms,
-                    ),
-                    self._indicator,
-                )
+                channel = self._emit(text)
             except Exception:
                 log.exception("continuous: segment decode/emit failed; continuing")
                 continue

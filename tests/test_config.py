@@ -25,6 +25,9 @@ def test_missing_file_returns_defaults(tmp_path: Path) -> None:
     assert config.vad_min_speech_ms == 250
     assert config.vad_min_silence_ms == 500
     assert config.vad_max_speech_ms == 20_000
+    assert config.translate is False
+    assert config.translate_target == "en"
+    assert config.translate_mode == "bilingual"
 
 
 def test_partial_file_merges_with_defaults(tmp_path: Path) -> None:
@@ -42,7 +45,8 @@ def test_roundtrip(tmp_path: Path) -> None:
                       language="auto", restore_clipboard=False, paste_delay_ms=100,
                       check_updates=False, model="funasr_nano", proxy="http://proxy:7890",
                       disfluency="smooth", continuous=True, vad_threshold=0.6,
-                      vad_min_speech_ms=200, vad_min_silence_ms=600, vad_max_speech_ms=15_000)
+                      vad_min_speech_ms=200, vad_min_silence_ms=600, vad_max_speech_ms=15_000,
+                      translate=True, translate_target="zh", translate_mode="replace")
     save_config(path, original)
     assert load_config(path) == original
 
@@ -60,7 +64,8 @@ def test_custom_vk_hotkey_roundtrip(tmp_path: Path) -> None:
                       language="zh", restore_clipboard=True, paste_delay_ms=200,
                       check_updates=True, model="sensevoice", proxy="", disfluency="verbatim",
                       continuous=False, vad_threshold=0.5, vad_min_speech_ms=250,
-                      vad_min_silence_ms=500, vad_max_speech_ms=20_000)
+                      vad_min_silence_ms=500, vad_max_speech_ms=20_000,
+                      translate=False, translate_target="en", translate_mode="bilingual")
     save_config(path, original)
     assert load_config(path) == original
 
@@ -123,7 +128,8 @@ def test_continuous_keys_roundtrip(tmp_path: Path) -> None:
                       num_threads=2, language="zh", restore_clipboard=True, paste_delay_ms=200,
                       check_updates=True, model="sensevoice", proxy="", disfluency="verbatim",
                       continuous=True, vad_threshold=0.35, vad_min_speech_ms=150,
-                      vad_min_silence_ms=800, vad_max_speech_ms=30_000)
+                      vad_min_silence_ms=800, vad_max_speech_ms=30_000,
+                      translate=False, translate_target="en", translate_mode="bilingual")
     save_config(path, original)
     loaded = load_config(path)
     assert loaded == original
@@ -173,5 +179,31 @@ def test_vad_ms_keys_clamped(tmp_path: Path) -> None:
 def test_continuous_rejects_non_bool(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text('continuous = "yes"\n', encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
+def test_translate_fields_roundtrip(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'translate = true\ntranslate_target = "zh"\ntranslate_mode = "replace"\n',
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.translate is True
+    assert config.translate_target == "zh"
+    assert config.translate_mode == "replace"
+
+
+def test_invalid_translate_mode_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('translate_mode = "both"\n', encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
+def test_invalid_translate_target_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('translate_target = "fr"\n', encoding="utf-8")
     with pytest.raises(ConfigError):
         load_config(path)

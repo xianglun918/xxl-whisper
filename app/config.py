@@ -22,6 +22,13 @@ type ModelKind = Literal["sensevoice", "funasr_nano"]
 #: clean them for chat-style output.
 type Disfluency = Literal["verbatim", "smooth"]
 
+#: Translation target language. "en" means Chinese speech -> English text
+#: (zh-en model); "zh" is the reverse (en-zh model).
+type TranslateTarget = Literal["en", "zh"]
+
+#: What finally reaches the cursor: only the translation, or source + translation.
+type TranslateMode = Literal["replace", "bilingual"]
+
 #: Preset hotkey names -> platform keycodes (owned by the platform hook module).
 #: Any other keycode (1..254) is also accepted as a raw integer for
 #: user-defined keys. Keys that are dangerous to remap (modifiers) are
@@ -38,6 +45,12 @@ _MODELS: Mapping[str, None] = MappingProxyType(
 
 _DISFLUENCY: Mapping[str, None] = MappingProxyType(
     {"verbatim": None, "smooth": None}
+)
+
+_TRANSLATE_TARGETS: Mapping[str, None] = MappingProxyType({"en": None, "zh": None})
+
+_TRANSLATE_MODES: Mapping[str, None] = MappingProxyType(
+    {"replace": None, "bilingual": None}
 )
 
 _MIN_CUSTOM_VK: int = 1
@@ -75,6 +88,9 @@ class Config:
     vad_min_speech_ms: int
     vad_min_silence_ms: int
     vad_max_speech_ms: int
+    translate: bool
+    translate_target: TranslateTarget
+    translate_mode: TranslateMode
 
 
 def default_config() -> Config:
@@ -96,6 +112,9 @@ def default_config() -> Config:
         vad_min_speech_ms=250,
         vad_min_silence_ms=500,
         vad_max_speech_ms=20_000,
+        translate=False,
+        translate_target="en",
+        translate_mode="bilingual",
     )
 
 
@@ -157,6 +176,9 @@ def load_config(path: Path) -> Config:
         vad_min_speech_ms=p.int_in("vad_min_speech_ms", 250, 50, 5_000),
         vad_min_silence_ms=p.int_in("vad_min_silence_ms", 500, 50, 10_000),
         vad_max_speech_ms=p.int_in("vad_max_speech_ms", 20_000, 1_000, 60_000),
+        translate=p.bool_flag("translate", False),
+        translate_target=p.translate_target("translate_target", "en"),
+        translate_mode=p.translate_mode("translate_mode", "bilingual"),
     )
 
 
@@ -180,6 +202,9 @@ def save_config(path: Path, config: Config) -> None:
         f"vad_min_speech_ms = {config.vad_min_speech_ms}",
         f"vad_min_silence_ms = {config.vad_min_silence_ms}",
         f"vad_max_speech_ms = {config.vad_max_speech_ms}",
+        f"translate = {str(config.translate).lower()}",
+        f"translate_target = {_quote(config.translate_target)}",
+        f"translate_mode = {_quote(config.translate_mode)}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -237,6 +262,14 @@ class _Parser:
         if value == "verbatim":
             return "verbatim"
         return "smooth"
+
+    def translate_target(self, name: str, default: TranslateTarget) -> TranslateTarget:
+        value = self.choice(name, default, _TRANSLATE_TARGETS)
+        return "en" if value == "en" else "zh"
+
+    def translate_mode(self, name: str, default: TranslateMode) -> TranslateMode:
+        value = self.choice(name, default, _TRANSLATE_MODES)
+        return "replace" if value == "replace" else "bilingual"
 
     def hotkey(self, name: str, default: str | int) -> str | int:
         """Accept a preset name or a raw virtual-key code (1..254)."""
