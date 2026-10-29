@@ -132,8 +132,8 @@ class Config:
     vad_min_speech_ms: int
     vad_min_silence_ms: int
     vad_max_speech_ms: int
-    continuous_min_silence_ms: int
-    continuous_max_speech_ms: int
+    subtitle_min_silence_ms: int
+    subtitle_max_speech_ms: int
     translate: bool
     translate_target: TranslateTarget
     translate_source: TranslateSource
@@ -170,11 +170,13 @@ def default_config() -> Config:
         vad_min_speech_ms=250,
         vad_min_silence_ms=500,
         vad_max_speech_ms=20_000,
-        # Continuous dictation is for subtitles: a 20 s cap means the first
-        # line appears long after the speaker has moved on, so the live mode
-        # cuts sentences far sooner and accepts a shorter pause as a boundary.
-        continuous_min_silence_ms=400,
-        continuous_max_speech_ms=6_000,
+        # Live subtitles only: a 20 s cap means the first line appears long
+        # after the speaker has moved on, so subtitle mode cuts far sooner and
+        # accepts a shorter pause as a boundary. Push-to-talk and plain
+        # continuous typing keep the looser ``vad_*`` values — a held key is one
+        # utterance and must never be cut mid-sentence.
+        subtitle_min_silence_ms=400,
+        subtitle_max_speech_ms=6_000,
         translate=False,
         translate_target="en",
         translate_source="zh",
@@ -230,6 +232,20 @@ def translate_route(source: str, target: str) -> TranslateRoute | None:
     return cast("TranslateRoute", key) if key in _TRANSLATE_ROUTES else None
 
 
+def segmenter_limits(config: Config, *, subtitles: bool) -> tuple[int, int]:
+    """Return ``(min_silence_ms, max_speech_ms)`` for a continuous session.
+
+    Subtitle mode cuts far sooner than plain continuous typing: a viewer needs
+    the line while it is still being talked about, so a long monologue is
+    force-split every ``subtitle_max_speech_ms``. Push-to-talk never reaches this
+    function at all — a held key is one utterance by design, and cutting it
+    mid-sentence would be exactly the wrong behaviour.
+    """
+    if subtitles:
+        return (config.subtitle_min_silence_ms, config.subtitle_max_speech_ms)
+    return (config.vad_min_silence_ms, config.vad_max_speech_ms)
+
+
 def route_of(config: Config) -> TranslateRoute | None:
     """Route key for a loaded config (None only for a hand-edited bad pair)."""
     return translate_route(config.translate_source, config.translate_target)
@@ -279,8 +295,8 @@ def load_config(path: Path) -> Config:
         vad_min_speech_ms=p.int_in("vad_min_speech_ms", 250, 50, 5_000),
         vad_min_silence_ms=p.int_in("vad_min_silence_ms", 500, 50, 10_000),
         vad_max_speech_ms=p.int_in("vad_max_speech_ms", 20_000, 1_000, 60_000),
-        continuous_min_silence_ms=p.int_in("continuous_min_silence_ms", 400, 50, 10_000),
-        continuous_max_speech_ms=p.int_in("continuous_max_speech_ms", 6_000, 1_000, 60_000),
+        subtitle_min_silence_ms=p.int_in("subtitle_min_silence_ms", 400, 50, 10_000),
+        subtitle_max_speech_ms=p.int_in("subtitle_max_speech_ms", 6_000, 1_000, 60_000),
         translate=p.bool_flag("translate", False),
         translate_target=target,
         translate_source=source,
@@ -319,8 +335,8 @@ def save_config(path: Path, config: Config) -> None:
         f"vad_min_speech_ms = {config.vad_min_speech_ms}",
         f"vad_min_silence_ms = {config.vad_min_silence_ms}",
         f"vad_max_speech_ms = {config.vad_max_speech_ms}",
-        f"continuous_min_silence_ms = {config.continuous_min_silence_ms}",
-        f"continuous_max_speech_ms = {config.continuous_max_speech_ms}",
+        f"subtitle_min_silence_ms = {config.subtitle_min_silence_ms}",
+        f"subtitle_max_speech_ms = {config.subtitle_max_speech_ms}",
         f"translate = {str(config.translate).lower()}",
         f"translate_target = {_quote(config.translate_target)}",
         f"translate_source = {_quote(config.translate_source)}",

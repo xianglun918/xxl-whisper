@@ -28,6 +28,7 @@ from app.config import (
     models_root,
     route_of,
     save_config,
+    segmenter_limits,
 )
 from app.controls import Controls, ControlsDeps
 from app.decode_scheduler import (
@@ -789,6 +790,16 @@ class DictationApp:
         download (manual guide) and re-raised so the worker's generic handler
         surfaces the "出错了" indicator.
         """
+        # Subtitles need a brisk cadence; plain continuous typing keeps the
+        # looser defaults (and push-to-talk never gets here at all).
+        subtitles = self._config.overlay_enabled and self._config.overlay_output != "type"
+        min_silence_ms, max_speech_ms = segmenter_limits(self._config, subtitles=subtitles)
+        log.info(
+            "continuous: mode=%s min_silence=%dms max_speech=%dms",
+            "subtitles" if subtitles else "typing",
+            min_silence_ms,
+            max_speech_ms,
+        )
         try:
             vad_path = ensure_vad_model(
                 models_root(), self._on_vad_progress, proxy=self._config.proxy
@@ -803,8 +814,8 @@ class DictationApp:
                 model_path=vad_path,
                 threshold=self._config.vad_threshold,
                 min_speech_s=self._config.vad_min_speech_ms / 1000,
-                min_silence_s=self._config.continuous_min_silence_ms / 1000,
-                max_speech_s=self._config.continuous_max_speech_ms / 1000,
+                min_silence_s=min_silence_ms / 1000,
+                max_speech_s=max_speech_ms / 1000,
                 num_threads=self._config.num_threads,
             )
         )
