@@ -16,6 +16,7 @@ from app import native
 from app.asr import Recognizer
 from app.config import (
     MOUSE_VKS,
+    AudioSource,
     Config,
     Disfluency,
     ModelKind,
@@ -123,10 +124,27 @@ class Controls:
             return
         self._deps.rebuild_recorder(name)
         config = self._deps.get_config()
-        self._deps.set_config(dataclasses.replace(config, mic=name))
+        # Picking a real microphone also leaves system-audio mode.
+        self._deps.set_config(dataclasses.replace(config, mic=name, audio_source="mic"))
         save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
         log.info("mic switched to %r", name)
+
+    def swap_system_audio(self, device_id: str) -> None:
+        """Capture the system mix instead of the microphone (Windows loopback)."""
+        if self._deps.get_recorder() is None:
+            return
+        self._deps.rebuild_recorder(device_id)
+        config = self._deps.get_config()
+        self._deps.set_config(
+            dataclasses.replace(
+                config, mic=device_id, audio_source=cast("AudioSource", "system")
+            )
+        )
+        save_config(config_path(), self._deps.get_config())
+        self._deps.tray.refresh_menu()
+        self._deps.indicator.flash("音频来源：系统声音（回环）", 2500)
+        log.info("audio source -> system (%r)", device_id)
 
     # -- model ----------------------------------------------------------------
 

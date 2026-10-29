@@ -36,6 +36,10 @@ type TranslateSource = Literal["zh", "en", "ja"]
 #: The supported (source, target) combinations, as one canonical key.
 type TranslateRoute = Literal["zh-en", "en-zh", "ja-zh"]
 
+#: What gets transcribed: the microphone, or the system audio mix (WASAPI
+#: loopback on Windows; a virtual device such as BlackHole on macOS).
+type AudioSource = Literal["mic", "system"]
+
 #: What finally reaches the cursor: only the translation, or source + translation.
 type TranslateMode = Literal["replace", "bilingual"]
 
@@ -78,6 +82,8 @@ _TRANSLATE_ROUTES: Mapping[str, None] = MappingProxyType(
     {"zh-en": None, "en-zh": None, "ja-zh": None}
 )
 
+_AUDIO_SOURCES: Mapping[str, None] = MappingProxyType({"mic": None, "system": None})
+
 _TRANSLATE_MODES: Mapping[str, None] = MappingProxyType(
     {"replace": None, "bilingual": None}
 )
@@ -112,6 +118,7 @@ class Config:
     hotkey: str | int
     hold_threshold_ms: int
     mic: str
+    audio_source: AudioSource
     num_threads: int
     language: str
     restore_clipboard: bool
@@ -147,6 +154,7 @@ def default_config() -> Config:
         hotkey=native.hotkey.DEFAULT_HOTKEY,
         hold_threshold_ms=400,
         mic="",
+        audio_source="mic",
         num_threads=2,
         language="zh",
         restore_clipboard=True,
@@ -250,6 +258,7 @@ def load_config(path: Path) -> Config:
         hotkey=p.hotkey("hotkey", native.hotkey.DEFAULT_HOTKEY),
         hold_threshold_ms=p.int_in("hold_threshold_ms", 400, 10, 2_000),
         mic=p.text("mic", ""),
+        audio_source=p.audio_source("audio_source", "mic"),
         num_threads=p.int_in("num_threads", 2, 1, 16),
         language=p.choice("language", "zh", _LANGUAGES),
         restore_clipboard=p.bool_flag("restore_clipboard", True),
@@ -287,6 +296,7 @@ def save_config(path: Path, config: Config) -> None:
         f"hotkey = {config.hotkey if isinstance(config.hotkey, int) else _quote(config.hotkey)}",
         f"hold_threshold_ms = {config.hold_threshold_ms}",
         f"mic = {_quote(config.mic)}",
+        f"audio_source = {_quote(config.audio_source)}",
         f"num_threads = {config.num_threads}",
         f"language = {_quote(config.language)}",
         f"restore_clipboard = {str(config.restore_clipboard).lower()}",
@@ -363,6 +373,10 @@ class _Parser:
         if value == "sensevoice":
             return "sensevoice"
         return "funasr_nano"
+
+    def audio_source(self, name: str, default: AudioSource) -> AudioSource:
+        value = self.choice(name, default, _AUDIO_SOURCES)
+        return "system" if value == "system" else "mic"
 
     def disfluency_kind(self, name: str, default: Disfluency) -> Disfluency:
         value = self._raw.get(name, default)

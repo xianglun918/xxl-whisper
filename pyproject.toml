@@ -5,6 +5,7 @@ description = "Offline tray push-to-talk dictation (Windows: hold CapsLock; macO
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
+    "soundcard>=0.4.3 ; sys_platform == 'win32'",
     "sounddevice>=0.5",
     "sherpa-onnx>=1.13.6",
     "sherpa-onnx-core>=1.13.6",

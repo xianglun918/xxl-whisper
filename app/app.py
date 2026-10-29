@@ -137,6 +137,11 @@ class SetTranslateRoute:
 
 
 @dataclass(frozen=True, slots=True)
+class SetSystemAudio:
+    device_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class SetOverlay:
     pass
 
@@ -162,6 +167,7 @@ type WorkerMsg = (
     | SetContinuous
     | SetTranslate
     | SetTranslateRoute
+    | SetSystemAudio
     | SetOverlay
     | SetOverlayOutput
     | InitModel
@@ -244,6 +250,9 @@ class DictationApp:
                 on_select_overlay_output=lambda mode: self._queue.put(
                     SetOverlayOutput(mode=mode)
                 ),
+                on_select_system_audio=lambda device_id: self._queue.put(
+                    SetSystemAudio(device_id=device_id)
+                ),
             ),
             state_provider=self._tray_state,
         )
@@ -276,6 +285,7 @@ class DictationApp:
         self._recorder = Recorder(
             device_name=self._config.mic,
             on_stream_error=lambda msg: log.warning("%s", msg),
+            source=self._config.audio_source,
         )
         vk = hotkey_vk(self._config.hotkey)
         self._hook = native.hotkey.HotkeyHook(
@@ -355,6 +365,8 @@ class DictationApp:
             continuous=self._continuous,
             translate=self._config.translate,
             translate_route=route_of(self._config) or "",
+            audio_source=self._config.audio_source,
+            current_system_audio=self._config.mic if self._config.audio_source == "system" else "",
             overlay=self._config.overlay_enabled,
             overlay_output=self._config.overlay_output,
         )
@@ -367,7 +379,9 @@ class DictationApp:
         if self._recorder is not None:
             self._recorder.close()
         self._recorder = Recorder(
-            device_name=name, on_stream_error=lambda msg: log.warning("%s", msg)
+            device_name=name,
+            on_stream_error=lambda msg: log.warning("%s", msg),
+            source=self._config.audio_source,
         )
         if self._continuous and self._continuous_queue is not None:
             self._recorder.start_sink(self._continuous_queue)  # keep the mode alive
@@ -430,6 +444,8 @@ class DictationApp:
                 self._toggle_translate()
             case SetTranslateRoute(route=route):
                 self._set_translate_route(route)
+            case SetSystemAudio(device_id=device_id):
+                self._controls.swap_system_audio(device_id)
             case SetOverlay():
                 self._toggle_overlay()
             case SetOverlayOutput(mode=mode):

@@ -16,11 +16,12 @@ import queue
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol, cast
 
 import numpy as np
 import sounddevice as sd
 
-from app import native
+from app import loopback, native
 
 SAMPLE_RATE: int = 16_000
 MIN_RECORD_MS: int = 300  # shorter captures are treated as accidental
@@ -30,6 +31,16 @@ MIN_RECORD_MS: int = 300  # shorter captures are treated as accidental
 class MicDevice:
     index: int
     name: str
+
+
+class _CaptureStream(Protocol):
+    """What the recorder needs from a backend (PortAudio or loopback)."""
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+    def close(self) -> None: ...
 
 
 def list_input_devices() -> list[MicDevice]:
@@ -75,25 +86,47 @@ def _forward(sink: queue.Queue[np.ndarray], block: np.ndarray) -> None:
 class Recorder:
     """Owns the InputStream; yields float32 mono samples on stop()."""
 
-    def __init__(self, device_name: str, on_stream_error: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        device_name: str,
+        on_stream_error: Callable[[str], None],
+        *,
+        source: str = "mic",
+    ) -> None:
         self._device_name = device_name
+        self._source = source
         self._on_stream_error = on_stream_error
         self._lock = threading.Lock()
         self._buffer: list[np.ndarray] = []
         self._recording = False
         self._sink: queue.Queue[np.ndarray] | None = None
-        self._stream: sd.InputStream | None = None
+        self._stream: _CaptureStream | None = None
         if native.RECORDER_KEEP_OPEN:
             self._open_stream()
 
     def _open_stream(self) -> None:
-        stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            device=_resolve_device(self._device_name),
-            callback=self._on_audio,
-        )
+        if self._source == "system":
+            # System audio: WASAPI loopback resampled to 16 kHz mono, pushed
+            # through the same callback shape PortAudio uses.
+            stream = cast(
+                "_CaptureStream",
+                loopback.LoopbackStream(
+                    self._device_name,
+                    self._on_audio,
+                    on_error=self._on_stream_error,
+                ),
+            )
+        else:
+            stream = cast(
+                "_CaptureStream",
+                sd.InputStream(
+                    samplerate=SAMPLE_RATE,
+                    channels=1,
+                    dtype="float32",
+                    device=_resolve_device(self._device_name),
+                    callback=self._on_audio,
+                ),
+            )
         stream.start()
         self._stream = stream
 

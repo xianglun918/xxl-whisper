@@ -11,6 +11,7 @@ set PY=.venv\Scripts\python.exe
   --collect-all sherpa_onnx ^
   --collect-all onnxruntime ^
   --hidden-import=sounddevice ^
+  --hidden-import=soundcard ^
   run.py
 
 echo.

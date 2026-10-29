@@ -138,3 +138,22 @@ def test_japanese_route_roundtrips(tmp_path: Path) -> None:
     original = config_mod.load_config(path)
     config_mod.save_config(path, original)
     assert config_mod.load_config(path) == original
+
+
+def test_audio_source_defaults_to_microphone(tmp_path: Path) -> None:
+    config_mod, path = _load(tmp_path, "")
+    assert config_mod.load_config(path).audio_source == "mic"
+
+
+def test_audio_source_accepts_system_and_roundtrips(tmp_path: Path) -> None:
+    config_mod, path = _load(tmp_path, 'audio_source = "system"\nmic = "Speakers"\n')
+    original = config_mod.load_config(path)
+    assert original.audio_source == "system"
+    config_mod.save_config(path, original)
+    assert config_mod.load_config(path) == original
+
+
+def test_audio_source_rejects_unknown_values(tmp_path: Path) -> None:
+    config_mod, path = _load(tmp_path, 'audio_source = "bluetooth"\n')
+    with pytest.raises(config_mod.ConfigError):
+        config_mod.load_config(path)

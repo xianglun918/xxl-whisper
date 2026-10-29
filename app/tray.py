@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import pystray
 from PIL import Image, ImageDraw
 
+import app.loopback as loopback_mod
 import app.recorder as recorder_mod
 from app import native
 from app.config import HOTKEY_VK
@@ -56,6 +57,7 @@ class TrayCallbacks:
     on_toggle_continuous: Callable[[], None]
     on_toggle_translate: Callable[[], None]
     on_select_translate_route: Callable[[str], None]
+    on_select_system_audio: Callable[[str], None]
     on_toggle_overlay: Callable[[], None]
     on_select_overlay_output: Callable[[str], None]
 
@@ -72,6 +74,8 @@ class TrayState:
     continuous: bool
     translate: bool
     translate_route: str
+    audio_source: str
+    current_system_audio: str
     overlay: bool
     overlay_output: str
 
@@ -173,7 +177,35 @@ class Tray:
             )
             for device in recorder_mod.list_input_devices()
         )
+        # System audio (WASAPI loopback) shows up as extra entries: picking one
+        # switches the source, picking a real mic switches it back.
+        loopbacks = loopback_mod.list_loopback_devices()
+        if loopbacks:
+            items.append(pystray.Menu.SEPARATOR)
+            items.extend(
+                pystray.MenuItem(
+                    device.name,
+                    self._select_system_audio(device.device_id),
+                    checked=self._system_audio_checked(device.device_id),
+                )
+                for device in loopbacks
+            )
         return items
+
+    def _select_system_audio(self, device_id: str) -> Callable[[], None]:
+        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
+
+        def action() -> None:
+            self._callbacks.on_select_system_audio(device_id)
+
+        return action
+
+    def _system_audio_checked(self, device_id: str) -> Callable[[object], bool]:
+        def checked(_item: object) -> bool:
+            state = self._state_provider()
+            return state.audio_source == "system" and state.current_system_audio == device_id
+
+        return checked
 
     def _mic_checked(self, name: str) -> Callable[[object], bool]:
         def checked(_item: object) -> bool:
