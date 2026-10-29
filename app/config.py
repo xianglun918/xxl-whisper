@@ -132,6 +132,8 @@ class Config:
     vad_min_speech_ms: int
     vad_min_silence_ms: int
     vad_max_speech_ms: int
+    continuous_min_silence_ms: int
+    continuous_max_speech_ms: int
     translate: bool
     translate_target: TranslateTarget
     translate_source: TranslateSource
@@ -168,6 +170,11 @@ def default_config() -> Config:
         vad_min_speech_ms=250,
         vad_min_silence_ms=500,
         vad_max_speech_ms=20_000,
+        # Continuous dictation is for subtitles: a 20 s cap means the first
+        # line appears long after the speaker has moved on, so the live mode
+        # cuts sentences far sooner and accepts a shorter pause as a boundary.
+        continuous_min_silence_ms=400,
+        continuous_max_speech_ms=6_000,
         translate=False,
         translate_target="en",
         translate_source="zh",
@@ -272,6 +279,8 @@ def load_config(path: Path) -> Config:
         vad_min_speech_ms=p.int_in("vad_min_speech_ms", 250, 50, 5_000),
         vad_min_silence_ms=p.int_in("vad_min_silence_ms", 500, 50, 10_000),
         vad_max_speech_ms=p.int_in("vad_max_speech_ms", 20_000, 1_000, 60_000),
+        continuous_min_silence_ms=p.int_in("continuous_min_silence_ms", 400, 50, 10_000),
+        continuous_max_speech_ms=p.int_in("continuous_max_speech_ms", 6_000, 1_000, 60_000),
         translate=p.bool_flag("translate", False),
         translate_target=target,
         translate_source=source,
@@ -310,6 +319,8 @@ def save_config(path: Path, config: Config) -> None:
         f"vad_min_speech_ms = {config.vad_min_speech_ms}",
         f"vad_min_silence_ms = {config.vad_min_silence_ms}",
         f"vad_max_speech_ms = {config.vad_max_speech_ms}",
+        f"continuous_min_silence_ms = {config.continuous_min_silence_ms}",
+        f"continuous_max_speech_ms = {config.continuous_max_speech_ms}",
         f"translate = {str(config.translate).lower()}",
         f"translate_target = {_quote(config.translate_target)}",
         f"translate_source = {_quote(config.translate_source)}",

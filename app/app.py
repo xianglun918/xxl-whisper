@@ -43,6 +43,7 @@ from app.downloader import (
     manual_download_guide,
 )
 from app.emit import Channel, EmitSettings, emit_text
+from app.emit_queue import EmitQueue
 from app.hotkey_logic import (
     Action,
     Click,
@@ -75,6 +76,10 @@ _DECODE_QUEUE_MAX: int = 16
 #: How long the decode thread blocks for a finished batch before it considers a
 #: live partial; small so an endpoint is picked up promptly.
 _DECODE_POLL_S: float = 0.05
+
+#: Bounded finished-sentence queue between ASR and translation. Deep enough to
+#: absorb a burst, shallow enough that stale subtitles are dropped, not queued.
+_EMIT_QUEUE_MAX: int = 64
 
 #: Sticky pill shown while continuous mode is listening.
 _LISTEN_TEXT: str = "● 聆听中"
@@ -220,6 +225,10 @@ class DictationApp:
         self._continuous = False
         self._continuous_thread: threading.Thread | None = None
         self._decode_thread: threading.Thread | None = None
+        #: Finished sentences waiting for translation/typing. Keeps the decode
+        #: thread free: ASR must never queue behind a slow translation.
+        self._emit_queue = EmitQueue(maxsize=_EMIT_QUEUE_MAX)
+        self._emit_thread: threading.Thread | None = None
         self._partial_thread: threading.Thread | None = None
         self._continuous_queue: queue.Queue[np.ndarray] | None = None
         self._decode_queue: queue.Queue[FinishedBatch] | None = None
@@ -302,6 +311,10 @@ class DictationApp:
         self._mouse_hook.start_and_wait()
         worker = threading.Thread(target=self._worker, daemon=True, name="asr-worker")
         worker.start()
+        self._emit_thread = threading.Thread(
+            target=self._emit_loop, daemon=True, name="emit-worker"
+        )
+        self._emit_thread.start()
         # Model download + load run on the worker so the tray is responsive
         # immediately and Exit can abort an in-flight download.
         self._queue.put(InitModel())
@@ -790,8 +803,8 @@ class DictationApp:
                 model_path=vad_path,
                 threshold=self._config.vad_threshold,
                 min_speech_s=self._config.vad_min_speech_ms / 1000,
-                min_silence_s=self._config.vad_min_silence_ms / 1000,
-                max_speech_s=self._config.vad_max_speech_ms / 1000,
+                min_silence_s=self._config.continuous_min_silence_ms / 1000,
+                max_speech_s=self._config.continuous_max_speech_ms / 1000,
                 num_threads=self._config.num_threads,
             )
         )
@@ -1127,20 +1140,41 @@ class DictationApp:
                 if not text:
                     continue
                 log.info("continuous asr: %r", text)
-                channel = self._emit(text)
+                asr_done = time.monotonic()
+                if endpoint_ts is not None:
+                    log.info("continuous: endpoint→asr %.3f s", asr_done - endpoint_ts)
+                if not self._emit_queue.submit(text, endpoint_ts=endpoint_ts):
+                    log.info("continuous: emit queue full, dropped an older sentence")
             except Exception:
-                log.exception("continuous: segment decode/emit failed; continuing")
+                log.exception("continuous: segment decode failed; continuing")
                 continue
-            if endpoint_ts is not None:
-                log.info(
-                    "continuous: endpoint→emit %.3f s via %s",
-                    time.monotonic() - endpoint_ts,
-                    channel or "overlay",  # subtitle-only mode injects nothing
-                )
-            else:
-                log.info("continuous: inserted via %s", channel or "overlay")
             emitted += 1
         return emitted
+
+    def _emit_loop(self) -> None:
+        """Daemon thread: translate and deliver finished sentences, in order.
+
+        Runs MT and the cursor/overlay write here so the decode thread never
+        waits on them — with non-stop speech that was the difference between
+        subtitles keeping up and drifting a sentence further behind per sentence.
+        """
+        while not self._stop_event.is_set():
+            item = self._emit_queue.get(timeout=0.2)
+            if item is None:
+                continue
+            try:
+                channel = self._emit(item.text)
+                if item.endpoint_ts is not None:
+                    log.info(
+                        "continuous: endpoint→shown %.3f s via %s (queued %.2f s)",
+                        time.monotonic() - item.endpoint_ts,
+                        channel or "overlay",
+                        item.enqueued_at - item.endpoint_ts,
+                    )
+            except Exception:  # one bad sentence must not stop the loop
+                log.exception("emit failed for %r", item.text[:40])
+            finally:
+                self._emit_queue.task_done()
 
     def _set_hooks_armed(self) -> None:
         """Arm the hooks once the model is ready so dictation can suppress keys.
@@ -1195,6 +1229,12 @@ class DictationApp:
             self._mouse_hook.stop()
         if self._recorder is not None:
             self._recorder.close()
+        if len(self._emit_queue):
+            log.info(
+                "shutdown: %d finished sentence(s) still queued, %d dropped in total",
+                len(self._emit_queue),
+                self._emit_queue.dropped,
+            )
         if self._overlay is not None:
             self._overlay.quit()
         self._indicator.quit()
