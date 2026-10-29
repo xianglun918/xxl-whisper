@@ -40,6 +40,9 @@ _HF_FUNASR_NANO: str = (
     "https://hf-mirror.com/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30"
     "/resolve/main"
 )
+_HF_WHISPER_TURBO: str = (
+    "https://hf-mirror.com/csukuangfj/sherpa-onnx-whisper-turbo/resolve/main"
+)
 _GH_TARBALL_SENSEVOICE: str = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
     "/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2"
@@ -164,6 +167,28 @@ _MODEL_FILES: dict[str, tuple[tuple[str, str, int, frozenset[str]], ...]] = {
             "tokens.txt",
             315_894,
             frozenset({"f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"}),
+        ),
+    ),
+    # Whisper large-v3-turbo (sherpa export): markedly better Japanese than
+    # SenseVoice-Small, at ~1.04 GB and roughly 3-5x the CPU cost per sentence.
+    "whisper_turbo": (
+        (
+            f"{_HF_WHISPER_TURBO}/turbo-encoder.int8.onnx",
+            "turbo-encoder.int8.onnx",
+            674_716_297,
+            frozenset({"b02dcdf54f348741e93fe732b67d933c8dcb6735655f710640143081db38878b"}),
+        ),
+        (
+            f"{_HF_WHISPER_TURBO}/turbo-decoder.int8.onnx",
+            "turbo-decoder.int8.onnx",
+            361_080_764,
+            frozenset({"20accd02388482eb3a46bd615631adfdc85e1eb2c7db9ea3f02a40ffe6b81547"}),
+        ),
+        (
+            f"{_HF_WHISPER_TURBO}/turbo-tokens.txt",
+            "turbo-tokens.txt",
+            816_730,
+            frozenset({"b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"}),
         ),
     ),
     "funasr_nano": (

@@ -37,6 +37,15 @@ _FUNASR_LANGUAGES: dict[str, str] = {
 }
 
 
+#: Whisper takes ISO codes; empty means auto-detect.
+_WHISPER_LANGUAGES: dict[str, str] = {"zh": "zh", "en": "en", "ja": "ja", "auto": ""}
+
+
+def whisper_language(code: str) -> str:
+    """Return the ``language`` value for Whisper (codes, ``""`` = auto-detect)."""
+    return _WHISPER_LANGUAGES.get(code, "")
+
+
 def funasr_language(code: str, *, has_prompt: bool) -> str:
     """Return the value to pass as FunASR-Nano's ``language``.
 
@@ -75,6 +84,20 @@ class Recognizer:
                     use_itn=True,
                 )
                 log.info("recognizer: sensevoice (disfluency=%s — no effect)", disfluency)
+            case "whisper_turbo":
+                self._recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
+                    encoder=str(model_dir / "turbo-encoder.int8.onnx"),
+                    decoder=str(model_dir / "turbo-decoder.int8.onnx"),
+                    tokens=str(model_dir / "turbo-tokens.txt"),
+                    num_threads=num_threads,
+                    language=whisper_language(language),
+                    task="transcribe",
+                )
+                log.info(
+                    "recognizer: whisper_turbo (language=%r; disfluency=%s — no effect)",
+                    whisper_language(language),
+                    disfluency,
+                )
             case "funasr_nano":
                 prompt = _FUNASR_NANO_PROMPTS[disfluency]
                 funasr_lang = funasr_language(language, has_prompt=bool(prompt))

@@ -336,7 +336,7 @@ def test_settings_rows_show_their_current_value() -> None:
                                disfluency="smooth"))
     top = {_label(entry) for entry in _visible(_row(menu, "更多设置").children)}
     assert "热键：F2" in top
-    assert "识别模型：Fun-ASR-Nano（更准 · 约 1GB · 首次需下载）" in top
+    assert "识别模型：Fun-ASR-Nano（中文更准 · 约 1GB · 日语偏弱）" in top
     assert "语义顺滑：语义顺滑（去掉语气词与重复）" in top
 
 

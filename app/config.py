@@ -19,7 +19,7 @@ APP_DIR_NAME: str = "xxl-whisper"
 
 log = logging.getLogger(__name__)
 
-type ModelKind = Literal["sensevoice", "funasr_nano"]
+type ModelKind = Literal["sensevoice", "funasr_nano", "whisper_turbo"]
 
 #: Disfluency handling for the LLM-decoder model (Fun-ASR-Nano). verbatim keeps
 #: fillers (嗯/呃/啊), repetitions and false starts; smooth asks the decoder to
@@ -64,7 +64,7 @@ HOTKEY_VK: Mapping[str, int] = native.hotkey.PRESET_KEYCODES
 MOUSE_VKS: frozenset[int] = native.hotkey.MOUSE_KEYCODES
 
 _MODELS: Mapping[str, None] = MappingProxyType(
-    {"sensevoice": None, "funasr_nano": None}
+    {"sensevoice": None, "funasr_nano": None, "whisper_turbo": None}
 )
 
 _DISFLUENCY: Mapping[str, None] = MappingProxyType(

@@ -321,7 +321,7 @@ def test_every_radio_option_is_clickable(tray_module) -> None:
     instance, _state_holder = _build(tray_module, calls)
     items = dict(_flat(instance._icon.menu))
     for label in ("日 → 中（经英文中转，两段）", "只上屏（不打字）", "语义顺滑（去掉语气词与重复）",
-                  "CapsLock", "Fun-ASR-Nano（更准 · 约 1GB · 首次需下载）"):
+                  "CapsLock", "Fun-ASR-Nano（中文更准 · 约 1GB · 日语偏弱）"):
         items[label](instance._icon)
     assert calls == ["route", "output", "disfluency", "hotkey", "model"]
 

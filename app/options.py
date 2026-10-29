@@ -44,7 +44,8 @@ HOTKEY_OPTIONS: tuple[Option, ...] = (
 #: Recogniser model, mirroring ``config.ModelKind``.
 MODEL_OPTIONS: tuple[Option, ...] = (
     Option("sensevoice", "SenseVoice-Small（默认 · 230MB · 快 · 中日英韩粤）"),
-    Option("funasr_nano", "Fun-ASR-Nano（更准 · 约 1GB · 首次需下载）"),
+    Option("funasr_nano", "Fun-ASR-Nano（中文更准 · 约 1GB · 日语偏弱）"),
+    Option("whisper_turbo", "Whisper large-v3-turbo（日语最强 · 1.04GB · 较慢）"),
 )
 
 #: Filler-word handling, mirroring ``config.Disfluency``.

@@ -159,7 +159,7 @@ class Controls:
         if kind == self._deps.get_config().model:
             return None
         match kind:
-            case "sensevoice" | "funasr_nano":
+            case "sensevoice" | "funasr_nano" | "whisper_turbo":
                 kind_typed: ModelKind = kind
             case _:
                 log.warning("unknown model kind %r", kind)
