@@ -679,13 +679,17 @@ class DictationApp:
         self._queue.put(SetTranslateRoute(route=route))
 
     def _set_translate_route(self, route: str) -> None:
-        """Switch 中→英 / 英→中 / 日→中; each route has its own local model(s).
+        """Switch 中→英 / 英→中 / 日→中.
 
-        Transactional on purpose: the new direction's model is downloaded and
-        loaded **before** the switch is committed, and the old translator is kept
-        if that fails. An earlier version cleared the translator first, so a
-        missing/failed download silently turned translation off altogether —
-        which looked exactly like "the menu button does nothing".
+        Two-phase on purpose, because each direction is a different ~245 MB
+        model:
+
+        1. commit the choice and refresh the menu **immediately** — the tick mark
+           must move on click, not minutes later when a download finishes;
+        2. load/download the model on a background thread. Subtitle output keeps
+           working meanwhile (untranslated), and if the model cannot be fetched
+           the route is rolled back with a notification instead of silently
+           disabling translation.
         """
         log.info("tray: translate route clicked %r (current=%s)", route, route_of(self._config))
         wanted = parse_translate_route(route)
@@ -693,36 +697,51 @@ class DictationApp:
             self._indicator.flash(f"未知的翻译方向：{route}", 2500)
             log.warning("tray: unknown route %r", route)
             return
-        if wanted == route_of(self._config):
+        previous = route_of(self._config)
+        if wanted == previous:
             self._indicator.flash(f"翻译方向已是 {TRANSLATE_ROUTES[wanted]}", 1800)
             return
-        pending = self._translator
-        if self._config.translate:
-            pending = self._controls.build_translator(
-                route=wanted, disable_on_failure=False
-            )
-            if pending is None:
-                # Keep translation exactly as it was: switching back to a route
-                # whose model is missing must not cost the user the working one.
-                self._indicator.flash(
-                    f"{TRANSLATE_ROUTES[wanted]} 模型不可用，已保留原方向（详见日志）", 4000
-                )
-                self._tray.notify(
-                    f"{TRANSLATE_ROUTES[wanted]} 模型下载/加载失败，翻译方向未切换",
-                    title="xxl-whisper",
-                )
-                return
-        self._flush_typing()  # flush with the old translator before swapping it
+        self._flush_typing()  # let the in-flight sentence use the old translator
         if not self._controls.set_translate_route(wanted):
             return
-        self._translator = pending
+        self._tray.refresh_menu()  # tick moves now, not after the download
+        if not self._config.translate:
+            self._indicator.flash(
+                f"翻译方向记为 {TRANSLATE_ROUTES[wanted]}（翻译未开，开启后生效）", 3000
+            )
+            return
+        self._translator = None  # no stale direction may translate meanwhile
+        self._indicator.flash(f"正在加载 {TRANSLATE_ROUTES[wanted]} 模型…", 3000)
+        threading.Thread(
+            target=self._load_route_model,
+            args=(wanted, previous),
+            daemon=True,
+            name="route-load",
+        ).start()
+
+    def _load_route_model(self, wanted: str, previous: str | None) -> None:
+        """Background: fetch/load the new direction; roll back when it fails."""
+        log.info("route-load: loading %s", wanted)
+        translator: Translator | None = None
+        try:
+            translator = self._controls.build_translator(
+                route=wanted, disable_on_failure=False
+            )
+        except Exception:
+            log.exception("route-load: failed for %s", wanted)
+        if translator is not None:
+            self._translator = translator
+            self._indicator.flash(f"翻译方向：{TRANSLATE_ROUTES[wanted]}", 2000)
+            log.info("route-load: %s ready", wanted)
+            return
+        # Roll back so the tray never shows a direction the app cannot run.
+        reason = f"{TRANSLATE_ROUTES[wanted]} 模型不可用，已回退"
+        log.warning("route-load: %s unavailable; rolling back to %s", wanted, previous)
+        if previous is not None:
+            self._controls.set_translate_route(previous)
         self._tray.refresh_menu()
-        self._indicator.flash(f"翻译方向：{TRANSLATE_ROUTES[wanted]}", 2000)
-        log.info(
-            "translate route=%s translator=%s",
-            route_of(self._config),
-            type(self._translator).__name__ if self._translator is not None else "none",
-        )
+        self._tray.notify(f"{TRANSLATE_ROUTES[wanted]} 模型下载/加载失败，翻译方向已回退")
+        self._indicator.flash(reason, 4000)
 
     # -- subtitle overlay ------------------------------------------------------
 
