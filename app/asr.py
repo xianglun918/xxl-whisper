@@ -26,6 +26,32 @@ _FUNASR_NANO_PROMPTS: dict[Disfluency, str] = {
     "smooth": "语音转写并去除嗯、呃、啊等语气填充词、重复和口误，输出流畅文本:",
 }
 
+#: FunASR-Nano's ``language`` is a *prompt fragment in natural language*, not a
+#: code like ``ja``. sherpa-onnx builds the model prompt from it, and it also
+#: **suppresses our own ``user_prompt``** whenever it is non-empty.
+_FUNASR_LANGUAGES: dict[str, str] = {
+    "zh": "中文",
+    "en": "英语",
+    "ja": "日语",
+    "auto": "",
+}
+
+
+def funasr_language(code: str, *, has_prompt: bool) -> str:
+    """Return the value to pass as FunASR-Nano's ``language``.
+
+    Two rules, both learned the hard way:
+
+    * it is natural language (``日语``), not a code (``ja``) — passing a code gave
+      the model a meaningless hint and it fell back to Chinese-flavoured output,
+      which then translated badly;
+    * a custom disfluency prompt wins only when ``language`` is empty, so a
+      request for 语义顺滑 must blank the language field.
+    """
+    if has_prompt:
+        return ""
+    return _FUNASR_LANGUAGES.get(code, "")
+
 
 class Recognizer:
     """Wraps :class:`sherpa_onnx.OfflineRecognizer` for utterance-at-a-time use."""
@@ -51,16 +77,27 @@ class Recognizer:
                 log.info("recognizer: sensevoice (disfluency=%s — no effect)", disfluency)
             case "funasr_nano":
                 prompt = _FUNASR_NANO_PROMPTS[disfluency]
+                funasr_lang = funasr_language(language, has_prompt=bool(prompt))
                 self._recognizer = sherpa_onnx.OfflineRecognizer.from_funasr_nano(
                     encoder_adaptor=str(model_dir / "encoder_adaptor.int8.onnx"),
                     llm=str(model_dir / "llm.int8.onnx"),
                     embedding=str(model_dir / "embedding.int8.onnx"),
                     tokenizer=str(model_dir / "Qwen3-0.6B"),
                     num_threads=num_threads,
-                    language=language,
+                    language=funasr_lang,
                     user_prompt=prompt,
                 )
-                log.info("recognizer: funasr_nano (disfluency=%s prompt=%r)", disfluency, prompt)
+                if language == "ja":
+                    log.warning(
+                        "Fun-ASR-Nano 的日语支持较弱（训练以中英为主），"
+                        "建议改用 SenseVoice-Small：识别文本更贴原话，翻译质量也会更好"
+                    )
+                log.info(
+                    "recognizer: funasr_nano (disfluency=%s language=%r prompt=%r)",
+                    disfluency,
+                    funasr_lang,
+                    prompt,
+                )
             case unreachable:
                 assert_never(unreachable)
 
