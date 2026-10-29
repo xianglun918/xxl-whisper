@@ -316,6 +316,32 @@ class Controls:
             unk_token_id=unk,
         )
 
+    def _direct_or_chain(self, route: str) -> tuple[str, ...]:
+        """Download plan for *route*: the direct model, else the old chain.
+
+        ``ja-zh`` ships as one 145 MB direct model hosted by this project. If that
+        download is unreachable (GitHub blocked, no proxy), the two-hop Marian
+        chain still exists, so the user gets Japanese→Chinese rather than an
+        error — quality is worse, but silence is worse still.
+        """
+        direct = TRANSLATE_ROUTE_MODELS[route]
+        if route != "ja-zh":
+            return direct
+        try:
+            ensure_translate_model(
+                "ja-zh",
+                self._deps.models_root,
+                lambda *_args: None,
+                proxy=self._deps.get_config().proxy,
+            )
+            return direct
+        except DownloadError as exc:
+            log.warning(
+                "direct ja→zh unavailable (%s); falling back to ja→en→zh",
+                getattr(exc, "reason", exc),
+            )
+            return ("ja-en", "en-zh")
+
     def build_translator(
         self, route: str | None = None, *, disable_on_failure: bool = True
     ) -> Translator | None:
@@ -348,6 +374,7 @@ class Controls:
             pct = done / total if total else 0.0
             self._deps.indicator.progress(pct, f"下载翻译模型 {Path(name).name}")
 
+        pairs = self._direct_or_chain(route)
         try:
             stages: list[Translator] = []
             for pair in pairs:

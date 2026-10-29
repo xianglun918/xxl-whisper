@@ -53,6 +53,9 @@ class FileSpec:
     dest: Path
     expected_size: int | None  # None = skip the post-download size check
     expected_sha256: frozenset[str]  # empty = skip the post-download hash check
+    #: Extra request headers. The GitHub API only returns asset bytes when asked
+    #: with ``Accept: application/octet-stream``; without it you get JSON.
+    headers: tuple[tuple[str, str], ...] = ()
 
 
 def download(spec: FileSpec, progress: ProgressFn, *, proxy: str = "") -> None:
@@ -135,6 +138,8 @@ def _stream_once(
         part.stat().st_size if part.exists() else 0, spec.expected_size
     )
     request = urllib.request.Request(spec.url)  # noqa: S310 - module-level https constants
+    for key, value in spec.headers:
+        request.add_header(key, value)
     # Some mirrors (Cloudflare-fronted CDNs) reject the default
     # "Python-urllib/x.y" agent outright; a plain browser string is accepted.
     request.add_header("User-Agent", _USER_AGENT)

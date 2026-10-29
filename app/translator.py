@@ -42,6 +42,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from app.translate_guard import looks_degenerate, looks_truncated
+
 log = logging.getLogger(__name__)
 
 __all__ = [
@@ -485,7 +487,13 @@ class OnnxNmtTranslator:
             sequence.append(next_id)
         if not produced:
             return ""
-        return self._tokenizer.decode(produced)
+        text = self._tokenizer.decode(produced)
+        if looks_truncated(len(produced), self._max_new) or looks_degenerate(text):
+            # Garbage beats nothing only for the model, never for the user: an
+            # empty string makes the caller keep the source sentence.
+            log.warning("translate: degenerate decode dropped (%d chars)", len(text))
+            return ""
+        return text
 
     def _decoder_feed(self, sequence: list[int], hidden: Any, mask: Any) -> dict[str, Any]:
         """Build the decoder feed from whatever inputs the graph declares.

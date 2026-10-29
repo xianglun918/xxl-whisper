@@ -132,6 +132,18 @@ def test_unsupported_pair_falls_back_instead_of_failing(tmp_path: Path) -> None:
     assert config_mod.route_of(config) is not None  # coerced to a supported pair
 
 
+def test_japanese_to_chinese_is_a_single_direct_model() -> None:
+    """ja→zh is one model now: a community fine-tune we export and quantize.
+
+    The English pivot was the reason Japanese came out worse than zh↔en; the
+    direct model is 145 MB instead of 500 MB and about twice as fast.
+    """
+    from app.downloader import TRANSLATE_OWN_BASE, TRANSLATE_ROUTE_MODELS
+
+    assert TRANSLATE_ROUTE_MODELS["ja-zh"] == ("ja-zh",)
+    assert "ja-zh" in TRANSLATE_OWN_BASE  # hosted by us, not Helsinki
+
+
 def test_japanese_to_english_is_a_single_hop(tmp_path: Path) -> None:
     """One model, no pivot: the best quality/speed/memory trade for Japanese."""
     config_mod, path = _load(
@@ -143,7 +155,8 @@ def test_japanese_to_english_is_a_single_hop(tmp_path: Path) -> None:
     from app.downloader import TRANSLATE_ROUTE_MODELS
 
     assert TRANSLATE_ROUTE_MODELS["ja-en"] == ("ja-en",)
-    assert TRANSLATE_ROUTE_MODELS["ja-zh"] == ("ja-en", "en-zh")
+    # ja→zh is one direct model now (the English pivot was the quality problem).
+    assert TRANSLATE_ROUTE_MODELS["ja-zh"] == ("ja-zh",)
 
 
 def test_japanese_route_roundtrips(tmp_path: Path) -> None:

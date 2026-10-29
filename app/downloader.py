@@ -106,6 +106,20 @@ _TRANSLATE_MODELS: dict[str, tuple[str, tuple[tuple[str, int], ...]]] = {
             ("target.spm", 804_600),
         ),
     ),
+    # Direct ja→zh (community fine-tune, exported + quantized by this project).
+    # One model, one pass: no English pivot, so pro-drop subjects and keigo are
+    # not mangled twice. int8 keeps it at 145 MB and ~0.5 s per sentence.
+    "ja-zh": (
+        "opus-mt-ja-zh",
+        (
+            ("onnx/encoder_model_int8.onnx", 52_743_445),
+            ("onnx/decoder_model_int8.onnx", 92_539_982),
+            ("tokenizer.json", 1_204_524),
+            ("source.spm", 1_312_134),
+            ("target.spm", 1_312_134),
+            ("config.json", 1_481),
+        ),
+    ),
     # Japanese has no official opus-mt ja→zh weight, so the route runs
     # ja→en→zh. Quality note: two hops can compound errors, but the pivot is
     # the documented Marian path for a language pair that has no direct model.
@@ -123,11 +137,36 @@ _TRANSLATE_MODELS: dict[str, tuple[str, tuple[tuple[str, int], ...]]] = {
 }
 
 #: Supported translation routes -> the model pairs to run, in order. Every
-#: route ends at Chinese or English; "ja-zh" is the only chained one.
+#: route ends at Chinese or English. "ja-zh" is a single direct model.
+#: Pairs whose files this project hosts itself. Helsinki never published a
+#: ja→zh opus-mt weight, so the direct model is a community Apache-2.0 fine-tune
+#: that we export to ONNX and int8-quantize (145 MB vs 500 MB for the two-hop
+#: chain). Kept in one place so the downloader, the manual guide and the tests
+#: all agree on where those bytes live.
+#: Per-file fallback through the GitHub API. The release URL needs
+#: ``github.com`` (blocked on some networks); the API endpoint lives on
+#: ``api.github.com``, which is usually reachable, and redirects to the same
+#: object storage. Asset ids change if an asset is re-uploaded, so a stale id
+#: simply fails that one mirror and the next is tried.
+TRANSLATE_OWN_API: dict[str, dict[str, str]] = {
+    "ja-zh": {
+        "onnx/encoder_model_int8.onnx": "689411445",
+        "onnx/decoder_model_int8.onnx": "689411455",
+        "tokenizer.json": "689411457",
+        "source.spm": "689411452",
+        "target.spm": "689411456",
+        "config.json": "689411533",
+    },
+}
+
+TRANSLATE_OWN_BASE: dict[str, str] = {
+    "ja-zh": "https://github.com/xianglun918/xxl-whisper/releases/download/mt-ja-zh-v1",
+}
+
 TRANSLATE_ROUTE_MODELS: dict[str, tuple[str, ...]] = {
     "zh-en": ("zh-en",),
     "en-zh": ("en-zh",),
-    "ja-zh": ("ja-en", "en-zh"),  # 官方无 ja→zh 权重，经英文中转
+    "ja-zh": ("ja-zh",),  # 官方无 ja→zh 权重，本仓库托管转换后的直译模型
     "ja-en": ("ja-en",),  # 一段直出英文：质量最好、内存最省
 }
 
@@ -325,7 +364,8 @@ def ensure_translate_model(
     if entry is None:
         raise DownloadError(source="all", reason=f"unsupported translate pair {pair!r}")
     name, files = entry
-    repo = f"Xenova/{name}"
+    own = TRANSLATE_OWN_BASE.get(pair)
+    repo = name if own else f"Xenova/{name}"
     model_dir = models_root / name
     model_dir.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
@@ -335,8 +375,23 @@ def ensure_translate_model(
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         last_error: DownloadError | None = None
-        for template in _TRANSLATE_BASE_URLS:
-            url = f"{template.format(repo=repo)}/{relative}"
+        attempts: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+        if own:
+            attempts.append((f"{own}/{relative}", ()))
+            asset_id = TRANSLATE_OWN_API.get(pair, {}).get(relative)
+            if asset_id:
+                attempts.append(
+                    (
+                        f"https://api.github.com/repos/xianglun918/xxl-whisper/releases/assets/{asset_id}",
+                        (("Accept", "application/octet-stream"),),
+                    )
+                )
+        else:
+            attempts.extend(
+                (f"{tpl.format(repo=repo)}/{relative}", ())
+                for tpl in _TRANSLATE_BASE_URLS
+            )
+        for url, headers in attempts:
             try:
                 _download(
                     FileSpec(
@@ -344,6 +399,7 @@ def ensure_translate_model(
                         dest=dest,
                         expected_size=size,
                         expected_sha256=frozenset(),
+                        headers=headers,
                     ),
                     progress,
                     proxy=proxy,
@@ -410,7 +466,12 @@ def translate_manual_guide(pair: str, models_root: Path) -> str:
         str(model_dir),
         "",
     ]
+    own = TRANSLATE_OWN_BASE.get(pair)
     for relative, _size in files:
+        if own:
+            # Files we host ourselves have no upstream mirror to offer.
+            lines.append(f"{relative}  <-  {own}/{relative}")
+            continue
         ms = _TRANSLATE_BASE_URLS[0].format(repo=f"Xenova/{name}")
         hf = _TRANSLATE_BASE_URLS[1].format(repo=f"Xenova/{name}")
         lines.append(f"{relative}  <-  {ms}/{relative}")
