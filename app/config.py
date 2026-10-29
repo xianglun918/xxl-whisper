@@ -4,6 +4,7 @@ The file crosses the trust boundary (user-editable), so parsing is total:
 either a valid frozen :class:`Config` or a typed :class:`ConfigError`.
 """
 
+import dataclasses
 import logging
 import tomllib
 from collections.abc import Mapping
@@ -238,6 +239,18 @@ def translate_route(source: str, target: str) -> TranslateRoute | None:
     return cast("TranslateRoute", key) if key in _TRANSLATE_ROUTES else None
 
 
+def with_overlay_mode(config: Config, mode: OverlayOutput) -> Config:
+    """Return *config* with *mode* applied; the subtitle bar follows the mode.
+
+    "只打字" means no bar, so the two cannot disagree. Keeping this in one
+    function is what stops the menu from offering a contradiction such as
+    "字幕已开启" + "只打字（无字幕）".
+    """
+    return dataclasses.replace(
+        config, overlay_output=mode, overlay_enabled=mode != "type"
+    )
+
+
 def parse_translate_route(route: str) -> TranslateRoute | None:
     """Validate a "source-target" key from the tray; None when unsupported."""
     source, sep, target = route.partition("-")
@@ -311,7 +324,11 @@ def load_config(path: Path) -> Config:
         translate_target=target,
         translate_source=source,
         translate_mode=p.translate_mode("translate_mode", "bilingual"),
-        overlay_enabled=p.bool_flag("overlay_enabled", False),
+        # The bar exists iff text is not typing-only: one decision, not two.
+        overlay_enabled=(
+            p.bool_flag("overlay_enabled", False)
+            and p.overlay_output("overlay_output", "both") != "type"
+        ),
         overlay_output=p.overlay_output("overlay_output", "both"),
         overlay_mode=p.overlay_mode("overlay_mode", "target"),
         overlay_font_size=p.int_in("overlay_font_size", 32, 10, 72),

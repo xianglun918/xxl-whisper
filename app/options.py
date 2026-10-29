@@ -64,7 +64,7 @@ ROUTE_OPTIONS: tuple[Option, ...] = (
 OUTPUT_OPTIONS: tuple[Option, ...] = (
     Option("screen", "只上屏（不打字）"),
     Option("both", "上屏 + 打字到光标"),
-    Option("type", "只打字（无字幕）"),
+    Option("type", "只打字（不上屏）"),
 )
 
 #: Compact route name for parent-row labels ("翻译与字幕：日→中").
@@ -78,7 +78,7 @@ ROUTE_SHORT: dict[str, str] = {
 OUTPUT_SHORT: dict[str, str] = {
     "screen": "只上屏",
     "both": "上屏+打字",
-    "type": "只打字",
+    "type": "只打字不上屏",
 }
 
 #: Compact labels used in the status line for the two filler modes.

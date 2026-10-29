@@ -29,6 +29,7 @@ from app.config import (
     parse_translate_route,
     route_of,
     save_config,
+    with_overlay_mode,
 )
 from app.controls import Controls, ControlsDeps
 from app.decode_scheduler import (
@@ -157,11 +158,6 @@ class SetSystemAudio:
 
 
 @dataclass(frozen=True, slots=True)
-class SetOverlay:
-    pass
-
-
-@dataclass(frozen=True, slots=True)
 class SetOverlayOutput:
     mode: str
 
@@ -183,7 +179,6 @@ type WorkerMsg = (
     | SetTranslate
     | SetTranslateRoute
     | SetSystemAudio
-    | SetOverlay
     | SetOverlayOutput
     | InitModel
 )
@@ -277,9 +272,6 @@ class DictationApp:
                     "translate", lambda: self._queue.put(SetTranslate())
                 ),
                 on_select_translate_route=self._on_tray_route,
-                on_toggle_overlay=lambda: self._tray_click(
-                    "overlay", lambda: self._queue.put(SetOverlay())
-                ),
                 on_select_overlay_output=lambda mode: self._tray_click(
                     f"overlay-output:{mode}", lambda: self._queue.put(SetOverlayOutput(mode=mode))
                 ),
@@ -492,8 +484,6 @@ class DictationApp:
                 self._set_translate_route(route)
             case SetSystemAudio(device_id=device_id):
                 self._controls.swap_system_audio(device_id)
-            case SetOverlay():
-                self._toggle_overlay()
             case SetOverlayOutput(mode=mode):
                 self._set_overlay_output(mode)
             case InitModel():
@@ -809,19 +799,27 @@ class DictationApp:
             self._overlay = overlay
         return self._overlay
 
-    def _toggle_overlay(self) -> None:
-        """Tray switch for the subtitle bar; the choice is persisted."""
-        enabled = not self._config.overlay_enabled
-        self._config = replace(self._config, overlay_enabled=enabled)
+    def _set_overlay_output(self, mode: str) -> None:
+        """Choose where text goes: 只上屏 / 上屏+打字 / 只打字.
+
+        This single choice also decides whether the bar exists: "只打字" means no
+        subtitle window. An earlier design had a separate "开启上屏字幕" switch
+        next to these three, which let the menu contradict itself — you could be
+        "上屏开启" and still pick "只打字（无字幕）".
+        """
+        if mode not in ("type", "screen", "both") or mode == self._config.overlay_output:
+            return
+        self._flush_typing()  # the sentence in flight belongs to the old mode
+        wants_bar = mode != "type"
+        self._config = with_overlay_mode(self._config, cast("OverlayOutput", mode))
         save_config(config_path(), self._config)
-        if enabled:
+        if wants_bar:
             self._ensure_overlay()
             if not self._config.translate:
                 # Subtitles without translation are legitimate (pure dictation),
-                # but a user turning on subtitles for a foreign film expects
-                # translated lines — say it out loud instead of silently showing
-                # the source text.
-                self._indicator.flash("字幕已开，但离线翻译未开启：目前显示原文", 4000)
+                # but a user switching to subtitles for a foreign film expects
+                # translated lines — say it out loud instead of showing source.
+                self._indicator.flash("已开字幕，但离线翻译未开启：目前显示原文", 4000)
                 self._tray.notify("字幕已开，但离线翻译未开启，将显示原文", title="xxl-whisper")
             elif self._translator is None:
                 self._translator = self._controls.build_translator()
@@ -829,23 +827,13 @@ class DictationApp:
             self._overlay.clear()
         self._tray.refresh_menu()
         log.info(
-            "overlay enabled=%s output=%s translate=%s translator=%s route=%s",
-            enabled,
-            self._config.overlay_output,
+            "overlay mode=%s bar=%s translate=%s translator=%s route=%s",
+            mode,
+            wants_bar,
             self._config.translate,
             type(self._translator).__name__ if self._translator is not None else "none",
             route_of(self._config),
         )
-
-    def _set_overlay_output(self, mode: str) -> None:
-        """Choose between subtitles only, subtitles + typing, or typing only."""
-        if mode not in ("type", "screen", "both") or mode == self._config.overlay_output:
-            return
-        self._flush_typing()  # the sentence in flight belongs to the old mode
-        self._config = replace(self._config, overlay_output=cast("OverlayOutput", mode))
-        save_config(config_path(), self._config)
-        self._tray.refresh_menu()
-        log.info("overlay output=%s", mode)
 
     def _present(self, text: str, translated: str) -> None:
         """Push one finished utterance to the subtitle bar (no-op when off)."""

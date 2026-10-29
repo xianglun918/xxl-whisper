@@ -157,3 +157,24 @@ def test_audio_source_rejects_unknown_values(tmp_path: Path) -> None:
     config_mod, path = _load(tmp_path, 'audio_source = "bluetooth"\n')
     with pytest.raises(config_mod.ConfigError):
         config_mod.load_config(path)
+
+
+def test_typing_only_mode_means_no_subtitle_bar(tmp_path: Path) -> None:
+    """One decision, not two: "只打字" cannot coexist with an enabled bar."""
+    config_mod, path = _load(tmp_path, 'overlay_enabled = true\noverlay_output = "type"\n')
+    assert config_mod.load_config(path).overlay_enabled is False
+
+
+def test_switching_mode_turns_the_bar_on_and_off(tmp_path: Path) -> None:
+    config_mod, path = _load(tmp_path, "")
+    config = config_mod.load_config(path)
+    assert config.overlay_enabled is False
+
+    screen = config_mod.with_overlay_mode(config, "screen")
+    assert (screen.overlay_enabled, screen.overlay_output) == (True, "screen")
+
+    both = config_mod.with_overlay_mode(screen, "both")
+    assert (both.overlay_enabled, both.overlay_output) == (True, "both")
+
+    typing = config_mod.with_overlay_mode(both, "type")
+    assert (typing.overlay_enabled, typing.overlay_output) == (False, "type")

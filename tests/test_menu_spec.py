@@ -43,7 +43,6 @@ def _callbacks() -> TrayCallbacks:
         on_toggle_continuous=noop,
         on_toggle_translate=noop,
         on_select_translate_route=noop,
-        on_toggle_overlay=noop,
         on_select_overlay_output=noop,
     )
 
@@ -153,8 +152,9 @@ def test_translation_and_subtitles_live_together() -> None:
     row = _row(menu, "翻译与字幕")
     labels = [_label(child) for child in _visible(row.children)]
     assert "开启离线翻译" in labels
-    assert "开启上屏字幕" in labels
     assert any("日 → 中" in label for label in labels)
+    # No separate "开启上屏字幕" switch: the output choice carries the bar on/off.
+    assert "开启上屏字幕" not in labels
     assert any("只上屏" in label for label in labels)
 
 

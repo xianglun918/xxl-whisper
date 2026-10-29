@@ -244,7 +244,6 @@ def _callbacks(tray, calls: list[str]):
         on_toggle_continuous=record("continuous"),
         on_toggle_translate=record("translate"),
         on_select_translate_route=record("route"),
-        on_toggle_overlay=record("overlay"),
         on_select_overlay_output=record("output"),
     )
 
@@ -305,7 +304,6 @@ def test_every_clickable_item_fires_its_callback(tray_module) -> None:
         "暂停语音热键": "pause",
         "持续听写": "continuous",
         "开启离线翻译": "translate",
-        "开启上屏字幕": "overlay",
         "开机自启": "autostart",
         "输入诊断": "diagnostics",
         "检查更新": "update",
@@ -394,7 +392,6 @@ def test_menu_actions_survive_an_exception(tray_module) -> None:
             on_toggle_continuous=boom,
             on_toggle_translate=boom,
             on_select_translate_route=boom,
-            on_toggle_overlay=boom,
             on_select_overlay_output=boom,
         ),
         lambda: _state(tray_module),

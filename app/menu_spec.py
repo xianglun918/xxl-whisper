@@ -62,7 +62,6 @@ class TrayCallbacks:
     on_toggle_continuous: Callable[[], None]
     on_toggle_translate: Callable[[], None]
     on_select_translate_route: Callable[[str], None]
-    on_toggle_overlay: Callable[[], None]
     on_select_overlay_output: Callable[[str], None]
 
 
@@ -265,13 +264,8 @@ def _translate_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tup
         )
     )
     entries.append(separator())
-    entries.append(
-        Entry(
-            label="开启上屏字幕",
-            action=callbacks.on_toggle_overlay,
-            checked=_tick(provider, lambda state: state.overlay),
-        )
-    )
+    # Header first: the three ways below are one decision (it carries the bar on/off).
+    entries.append(Entry(label="输出方式（三选一）", enabled=False))
     entries.extend(
         _option_entries(
             provider, OUTPUT_OPTIONS, callbacks.on_select_overlay_output,
