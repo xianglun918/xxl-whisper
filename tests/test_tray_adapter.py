@@ -245,7 +245,6 @@ def _callbacks(tray, calls: list[str]):
         on_toggle_translate=record("translate"),
         on_select_translate_route=record("route"),
         on_select_overlay_output=record("output"),
-        on_toggle_nllb=record("nllb"),
     )
 
 
@@ -394,7 +393,6 @@ def test_menu_actions_survive_an_exception(tray_module) -> None:
             on_toggle_translate=boom,
             on_select_translate_route=boom,
             on_select_overlay_output=boom,
-            on_toggle_nllb=boom,
         ),
         lambda: _state(tray_module),
     )

@@ -42,7 +42,6 @@ def _callbacks() -> TrayCallbacks:
         on_select_model=noop,
         on_show_diagnostics=noop,
         on_select_disfluency=noop,
-        on_toggle_nllb=noop,
         on_toggle_continuous=noop,
         on_toggle_translate=noop,
         on_select_translate_route=noop,

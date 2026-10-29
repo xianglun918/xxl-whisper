@@ -59,7 +59,6 @@ class TrayCallbacks:
     on_select_model: Callable[[str], None]
     on_show_diagnostics: Callable[[], None]
     on_select_disfluency: Callable[[str], None]
-    on_toggle_nllb: Callable[[], None]
     on_toggle_continuous: Callable[[], None]
     on_toggle_translate: Callable[[], None]
     on_select_translate_route: Callable[[str], None]
@@ -85,7 +84,6 @@ class TrayState:
     overlay_output: str
     audio_source: str
     current_system_audio: str
-    nllb: bool = False
 
 
 type StateProvider = Callable[[], TrayState]
@@ -271,16 +269,6 @@ def _translate_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tup
         )
     )
     entries.append(separator())
-    # Optional direct engine: only meaningful on the ja→zh route, and slower by an
-    # order of magnitude, so it is a switch with its speed written on the label.
-    entries.append(
-        Entry(
-            label="日→中 用 NLLB 直译（可选 · 约 890MB · 慢）",
-            action=callbacks.on_toggle_nllb,
-            checked=_tick(provider, lambda state: state.nllb),
-            enabled=_tick(provider, lambda state: state.translate_route == "ja-zh"),
-        )
-    )
     entries.append(separator())
     entries.append(Entry(text=lambda: translate_hint(provider()), enabled=False))
     return tuple(entries)

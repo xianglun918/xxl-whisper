@@ -19,6 +19,7 @@ import numpy as np
 
 from app import __version__, native
 from app.asr import Recognizer
+from app.audio_flow import plan_recovery
 from app.config import (
     MOUSE_VKS,
     Config,
@@ -134,12 +135,6 @@ class SetModel:
 
 
 @dataclass(frozen=True, slots=True)
-class SetNllb:
-    """Toggle the optional direct 日→中 engine."""
-
-    enabled: bool
-
-
 class SetDisfluency:
     kind: str
 
@@ -406,7 +401,6 @@ class DictationApp:
             translate=self._config.translate,
             translate_route=route_of(self._config) or "",
             translator_ready=self._translator is not None,
-            nllb=self._config.nllb_ja_zh,
             audio_source=self._config.audio_source,
             current_system_audio=self._config.mic if self._config.audio_source == "system" else "",
             overlay=self._config.overlay_enabled,
@@ -484,8 +478,6 @@ class DictationApp:
                 self._controls.start_key_capture(self._on_captured_vk)
             case SetModel(kind=kind):
                 self._swap_model(kind)
-            case SetNllb(enabled=enabled):
-                self._set_nllb(enabled)
             case SetDisfluency(kind=kind):
                 self._set_disfluency(kind)
             case SetContinuous():
@@ -677,7 +669,10 @@ class DictationApp:
         else:
             self._indicator.flash("就绪：可以开始说话了", 2000)
         if self._config.continuous:  # honour the persisted mode from last run
-            self._start_continuous()
+            # Deferred: launching while Windows is still bringing up the audio
+            # endpoint made the stream fail to open, leaving the mode "on" but
+            # deaf until the user toggled it off and on again.
+            threading.Timer(1.0, self._resume_continuous).start()
 
     # -- translation ------------------------------------------------------------
 
@@ -731,36 +726,6 @@ class DictationApp:
         """Tray thread: log the click, then hand it to the worker."""
         log.info("tray: route action fired %r", route)
         self._queue.put(SetTranslateRoute(route=route))
-
-    def _set_nllb(self, enabled: bool) -> None:
-        """Switch the 日→中 engine between two-hop Marian and direct NLLB.
-
-        Rebuilding is deferred to the route loader: NLLB is ~890 MB and takes
-        seconds to load, so it must not block the worker while a sentence is in
-        flight.
-        """
-        if not self._controls.set_nllb(enabled):
-            return
-        self._flush_typing()
-        self._tray.refresh_menu()
-        if not self._config.translate or route_of(self._config) != "ja-zh":
-            self._indicator.flash(
-                "NLLB 已%s（仅在「日→中」方向生效）" % ("开启" if enabled else "关闭"),
-                2500,
-            )
-            return
-        self._translator = None
-        self._indicator.flash(
-            "正在加载 NLLB（约 890MB，首次较久）…" if enabled else "正在切回两段翻译…",
-            3000,
-        )
-        current = route_of(self._config)
-        threading.Thread(
-            target=self._load_route_model,
-            args=(current, None),
-            daemon=True,
-            name="route-load",
-        ).start()
 
     def _set_translate_route(self, route: str) -> None:
         """Switch 中→英 / 英→中 / 日→中.
@@ -981,6 +946,7 @@ class DictationApp:
             self._stop_continuous()
         else:
             self._start_continuous()
+            self._watch_audio_flow()  # a busy endpoint looks identical to a working one
         self._tray.refresh_menu()  # pystray caches the menu; re-render the check
 
     def _start_continuous(self) -> None:
@@ -1103,6 +1069,80 @@ class DictationApp:
         self._set_hooks_armed()
         self._indicator.hide()  # leave live mode; the pulse loop is cancelled
         log.info("continuous: off")
+
+    def _resume_continuous(self) -> None:
+        """Auto-start continuous dictation from the persisted mode, then verify it."""
+        if self._continuous or self._stop_event.is_set():
+            return
+        log.info("startup: resuming continuous dictation")
+        try:
+            self._start_continuous()
+        except Exception:
+            log.exception("startup: could not resume continuous dictation")
+            self._persist_continuous(enabled=False)
+            self._tray.refresh_menu()
+            self._indicator.flash("持续听写启动失败（详见日志）", 4000)
+            return
+        self._watch_audio_flow()
+
+    def _watch_audio_flow(self) -> None:
+        """Prove audio is actually arriving; recover once, then fail loudly.
+
+        Symptom this fixes: the switch showed ON after a restart but nothing was
+        transcribed until it was toggled off and on. The stream can fail to open
+        while the audio endpoint is still initialising, and a silent stream looks
+        exactly like a healthy one from the outside.
+        """
+        recorder = self._recorder
+        sink = self._continuous_queue
+        if recorder is None or sink is None:
+            return
+        baseline = recorder.blocks_delivered
+
+        def watch() -> None:
+            reopens = 0
+            while not self._stop_event.is_set():
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline:
+                    if not self._continuous:
+                        return
+                    verdict = plan_recovery(
+                        blocks=recorder.blocks_delivered,
+                        baseline=baseline,
+                        reopens_done=reopens,
+                    )
+                    if verdict == "ok":
+                        log.info(
+                            "continuous: audio confirmed (%d blocks)",
+                            recorder.blocks_delivered - baseline,
+                        )
+                        self._tray.refresh_menu()
+                        return
+                    time.sleep(0.25)
+                verdict = plan_recovery(
+                    blocks=recorder.blocks_delivered,
+                    baseline=baseline,
+                    reopens_done=reopens,
+                )
+                if verdict == "ok":
+                    continue
+                if verdict == "give-up":
+                    break
+                reopens += 1
+                log.warning("continuous: no audio after 5s — reopening the stream")
+                with contextlib.suppress(Exception):
+                    recorder.stop_sink()
+                    recorder.start_sink(sink)
+            # Still silent: do not leave a switch that lies about working.
+            log.error("continuous: audio never started; turning the mode off")
+            with contextlib.suppress(Exception):
+                self._stop_continuous()
+            self._persist_continuous(enabled=False)
+            self._tray.refresh_menu()
+            self._tray.notify("持续听写没能启动（麦克风/系统声音未就绪），已自动关闭")
+            self._indicator.flash("音频没起来，已关闭持续听写；可再点一次开启", 5000)
+
+        threading.Thread(target=watch, daemon=True, name="audio-watchdog").start()
 
     def _persist_continuous(self, *, enabled: bool) -> None:
         """Remember the mode so a restart resumes it (mirrors 语义顺滑)."""

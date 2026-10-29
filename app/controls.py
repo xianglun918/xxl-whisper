@@ -32,7 +32,6 @@ from app.downloader import (
     TRANSLATE_ROUTE_MODELS,
     DownloadError,
     ensure_model,
-    ensure_nllb_model,
     ensure_translate_model,
     manual_download_guide,
     translate_manual_guide,
@@ -300,16 +299,6 @@ class Controls:
             unk_token_id=unk,
         )
 
-    def set_nllb(self, enabled: bool) -> bool:
-        """Turn the optional direct 日→中 engine on/off (config only)."""
-        config = self._deps.get_config()
-        if config.nllb_ja_zh == enabled:
-            return False
-        self._deps.set_config(replace(config, nllb_ja_zh=enabled))
-        self._deps.save()
-        log.info("nllb engine %s", "on" if enabled else "off")
-        return True
-
     def build_translator(
         self, route: str | None = None, *, disable_on_failure: bool = True
     ) -> Translator | None:
@@ -343,21 +332,6 @@ class Controls:
             self._deps.indicator.progress(pct, f"下载翻译模型 {Path(name).name}")
 
         try:
-            if route == "ja-zh" and config.nllb_ja_zh:
-                # Optional single-pass engine: better than the English pivot on
-                # Japanese, but a 600M decoder without KV cache costs seconds per
-                # sentence, so it is strictly opt-in.
-                files = ensure_nllb_model(
-                    self._deps.models_root, _progress, proxy=config.proxy
-                )
-                from app.nllb import NllbTranslator  # noqa: PLC0415 - heavy import
-
-                translator: Translator = NllbTranslator(  # type: ignore[assignment]
-                    files.directory, num_threads=self._deps.num_threads()
-                )
-                self._deps.indicator.hide()
-                log.info("translator ready: nllb ja→zh (%s)", files.directory.name)
-                return translator
             stages: list[Translator] = []
             for pair in pairs:
                 files = ensure_translate_model(

@@ -7,8 +7,6 @@ dependencies = [
     "numpy>=2.0",
     "soundcard>=0.4.3 ; sys_platform == 'win32'",
     "sounddevice>=0.5",
-    # NLLB tokenizer (pure Rust wheel, no torch) for the optional direct ja→zh engine
-    "tokenizers>=0.20",
     "sherpa-onnx>=1.13.6",
     "sherpa-onnx-core>=1.13.6",
     "onnxruntime>=1.18",

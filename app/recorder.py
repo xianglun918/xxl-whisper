@@ -100,6 +100,8 @@ class Recorder:
         self._buffer: list[np.ndarray] = []
         self._recording = False
         self._sink: queue.Queue[np.ndarray] | None = None
+        #: Monotonic count of blocks handed to a sink — proof the stream is live.
+        self.blocks_delivered: int = 0
         self._stream: _CaptureStream | None = None
         if native.RECORDER_KEEP_OPEN:
             self._open_stream()
@@ -174,6 +176,11 @@ class Recorder:
             self._sink = sink
             self._recording = False
 
+    @property
+    def capturing(self) -> bool:
+        """True when a stream exists and audio is being delivered to a sink."""
+        return self._stream is not None and self._sink is not None
+
     def stop_sink(self) -> None:
         """Stop forwarding blocks; push-to-talk state is left untouched."""
         with self._lock:
@@ -186,6 +193,7 @@ class Recorder:
             self._on_stream_error(f"audio stream status: {status}")
         sink = self._sink
         if sink is not None:
+            self.blocks_delivered += 1
             _forward(sink, indata)
             return
         if self._recording:
