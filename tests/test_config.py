@@ -1,10 +1,11 @@
 """Config file parsing, defaults, and round-trip."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from app.asr import _FUNASR_NANO_PROMPTS
-from app.config import Config, ConfigError, hotkey_vk, load_config, save_config
+from app.config import ConfigError, default_config, hotkey_vk, load_config, save_config
 from app.controls import disfluency_for_model
 
 from app import native
@@ -41,12 +42,28 @@ def test_partial_file_merges_with_defaults(tmp_path: Path) -> None:
 
 def test_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    original = Config(hotkey="f2", hold_threshold_ms=300, mic="Mic", num_threads=4,
-                      language="auto", restore_clipboard=False, paste_delay_ms=100,
-                      check_updates=False, model="funasr_nano", proxy="http://proxy:7890",
-                      disfluency="smooth", continuous=True, vad_threshold=0.6,
-                      vad_min_speech_ms=200, vad_min_silence_ms=600, vad_max_speech_ms=15_000,
-                      translate=True, translate_target="zh", translate_mode="replace")
+    original = replace(
+        default_config(),
+        hotkey="f2",
+        hold_threshold_ms=300,
+        mic="Mic",
+        num_threads=4,
+        language="auto",
+        restore_clipboard=False,
+        paste_delay_ms=100,
+        check_updates=False,
+        model="funasr_nano",
+        proxy="http://proxy:7890",
+        disfluency="smooth",
+        continuous=True,
+        vad_threshold=0.6,
+        vad_min_speech_ms=200,
+        vad_min_silence_ms=600,
+        vad_max_speech_ms=15_000,
+        translate=True,
+        translate_target="zh",
+        translate_mode="replace",
+    )
     save_config(path, original)
     assert load_config(path) == original
 
@@ -60,12 +77,7 @@ def test_unknown_hotkey_rejected(tmp_path: Path) -> None:
 
 def test_custom_vk_hotkey_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    original = Config(hotkey=0x2B, hold_threshold_ms=250, mic="", num_threads=2,
-                      language="zh", restore_clipboard=True, paste_delay_ms=200,
-                      check_updates=True, model="sensevoice", proxy="", disfluency="verbatim",
-                      continuous=False, vad_threshold=0.5, vad_min_speech_ms=250,
-                      vad_min_silence_ms=500, vad_max_speech_ms=20_000,
-                      translate=False, translate_target="en", translate_mode="bilingual")
+    original = replace(default_config(), hotkey=0x2B, hold_threshold_ms=250)
     save_config(path, original)
     assert load_config(path) == original
 
@@ -110,10 +122,12 @@ def test_malformed_toml_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         load_config(path)
 
+
 def test_funasr_nano_prompts_differ_by_disfluency() -> None:
     assert _FUNASR_NANO_PROMPTS["verbatim"] == "语音转写:"
     assert "语气填充词" in _FUNASR_NANO_PROMPTS["smooth"]
     assert _FUNASR_NANO_PROMPTS["smooth"] != _FUNASR_NANO_PROMPTS["verbatim"]
+
 
 def test_disfluency_defaults_smooth_for_funasr_nano() -> None:
     assert disfluency_for_model("funasr_nano", "verbatim") == "smooth"
@@ -124,12 +138,14 @@ def test_disfluency_defaults_smooth_for_funasr_nano() -> None:
 
 def test_continuous_keys_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    original = Config(hotkey=native.hotkey.DEFAULT_HOTKEY, hold_threshold_ms=400, mic="",
-                      num_threads=2, language="zh", restore_clipboard=True, paste_delay_ms=200,
-                      check_updates=True, model="sensevoice", proxy="", disfluency="verbatim",
-                      continuous=True, vad_threshold=0.35, vad_min_speech_ms=150,
-                      vad_min_silence_ms=800, vad_max_speech_ms=30_000,
-                      translate=False, translate_target="en", translate_mode="bilingual")
+    original = replace(
+        default_config(),
+        continuous=True,
+        vad_threshold=0.35,
+        vad_min_speech_ms=150,
+        vad_min_silence_ms=800,
+        vad_max_speech_ms=30_000,
+    )
     save_config(path, original)
     loaded = load_config(path)
     assert loaded == original

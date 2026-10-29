@@ -29,6 +29,15 @@ type TranslateTarget = Literal["en", "zh"]
 #: What finally reaches the cursor: only the translation, or source + translation.
 type TranslateMode = Literal["replace", "bilingual"]
 
+#: What the subtitle overlay shows: only the translation, only what was said,
+#: or both. Mirrors ``app.overlay.OverlayMode`` (kept local so this parser never
+#: imports the window module).
+type OverlayMode = Literal["target", "source", "bilingual"]
+
+#: Where an utterance goes: only to the cursor, only to the subtitle overlay, or
+#: both. ``screen`` is the read-only "don't type into my meeting notes" mode.
+type OverlayOutput = Literal["type", "screen", "both"]
+
 #: Preset hotkey names -> platform keycodes (owned by the platform hook module).
 #: Any other keycode (1..254) is also accepted as a raw integer for
 #: user-defined keys. Keys that are dangerous to remap (modifiers) are
@@ -51,6 +60,14 @@ _TRANSLATE_TARGETS: Mapping[str, None] = MappingProxyType({"en": None, "zh": Non
 
 _TRANSLATE_MODES: Mapping[str, None] = MappingProxyType(
     {"replace": None, "bilingual": None}
+)
+
+_OVERLAY_MODES: Mapping[str, None] = MappingProxyType(
+    {"target": None, "source": None, "bilingual": None}
+)
+
+_OVERLAY_OUTPUTS: Mapping[str, None] = MappingProxyType(
+    {"type": None, "screen": None, "both": None}
 )
 
 _MIN_CUSTOM_VK: int = 1
@@ -91,6 +108,16 @@ class Config:
     translate: bool
     translate_target: TranslateTarget
     translate_mode: TranslateMode
+    overlay_enabled: bool
+    overlay_output: OverlayOutput
+    overlay_mode: OverlayMode
+    overlay_font_size: int
+    overlay_opacity: float
+    overlay_width_ratio: float
+    overlay_bottom_margin: int
+    overlay_hold_seconds: float
+    overlay_max_lines: int
+    overlay_click_through: bool
 
 
 def default_config() -> Config:
@@ -115,6 +142,16 @@ def default_config() -> Config:
         translate=False,
         translate_target="en",
         translate_mode="bilingual",
+        overlay_enabled=False,
+        overlay_output="both",
+        overlay_mode="target",
+        overlay_font_size=32,
+        overlay_opacity=0.85,
+        overlay_width_ratio=0.72,
+        overlay_bottom_margin=80,
+        overlay_hold_seconds=4.0,
+        overlay_max_lines=3,
+        overlay_click_through=True,
     )
 
 
@@ -179,6 +216,16 @@ def load_config(path: Path) -> Config:
         translate=p.bool_flag("translate", False),
         translate_target=p.translate_target("translate_target", "en"),
         translate_mode=p.translate_mode("translate_mode", "bilingual"),
+        overlay_enabled=p.bool_flag("overlay_enabled", False),
+        overlay_output=p.overlay_output("overlay_output", "both"),
+        overlay_mode=p.overlay_mode("overlay_mode", "target"),
+        overlay_font_size=p.int_in("overlay_font_size", 32, 10, 72),
+        overlay_opacity=p.float_in("overlay_opacity", 0.85, 0.2, 1.0),
+        overlay_width_ratio=p.float_in("overlay_width_ratio", 0.72, 0.2, 1.0),
+        overlay_bottom_margin=p.int_in("overlay_bottom_margin", 80, 0, 600),
+        overlay_hold_seconds=p.float_in("overlay_hold_seconds", 4.0, 0.5, 30.0),
+        overlay_max_lines=p.int_in("overlay_max_lines", 3, 1, 6),
+        overlay_click_through=p.bool_flag("overlay_click_through", True),
     )
 
 
@@ -205,6 +252,16 @@ def save_config(path: Path, config: Config) -> None:
         f"translate = {str(config.translate).lower()}",
         f"translate_target = {_quote(config.translate_target)}",
         f"translate_mode = {_quote(config.translate_mode)}",
+        f"overlay_enabled = {str(config.overlay_enabled).lower()}",
+        f"overlay_output = {_quote(config.overlay_output)}",
+        f"overlay_mode = {_quote(config.overlay_mode)}",
+        f"overlay_font_size = {config.overlay_font_size}",
+        f"overlay_opacity = {config.overlay_opacity}",
+        f"overlay_width_ratio = {config.overlay_width_ratio}",
+        f"overlay_bottom_margin = {config.overlay_bottom_margin}",
+        f"overlay_hold_seconds = {config.overlay_hold_seconds}",
+        f"overlay_max_lines = {config.overlay_max_lines}",
+        f"overlay_click_through = {str(config.overlay_click_through).lower()}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -270,6 +327,26 @@ class _Parser:
     def translate_mode(self, name: str, default: TranslateMode) -> TranslateMode:
         value = self.choice(name, default, _TRANSLATE_MODES)
         return "replace" if value == "replace" else "bilingual"
+
+    def overlay_mode(self, name: str, default: OverlayMode) -> OverlayMode:
+        value = self.choice(name, default, _OVERLAY_MODES)
+        match value:
+            case "source":
+                return "source"
+            case "bilingual":
+                return "bilingual"
+            case _:
+                return "target"
+
+    def overlay_output(self, name: str, default: OverlayOutput) -> OverlayOutput:
+        value = self.choice(name, default, _OVERLAY_OUTPUTS)
+        match value:
+            case "screen":
+                return "screen"
+            case "both":
+                return "both"
+            case _:
+                return "type"
 
     def hotkey(self, name: str, default: str | int) -> str | int:
         """Accept a preset name or a raw virtual-key code (1..254)."""

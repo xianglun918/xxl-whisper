@@ -48,6 +48,8 @@ class TrayCallbacks:
     on_toggle_continuous: Callable[[], None]
     on_toggle_translate: Callable[[], None]
     on_select_translate_target: Callable[[str], None]
+    on_toggle_overlay: Callable[[], None]
+    on_select_overlay_output: Callable[[str], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +64,8 @@ class TrayState:
     continuous: bool
     translate: bool
     translate_target: str
+    overlay: bool
+    overlay_output: str
 
 
 class Tray:
@@ -128,6 +132,10 @@ class Tray:
             pystray.MenuItem(
                 "离线翻译",
                 pystray.Menu(self._translate_items),
+            ),
+            pystray.MenuItem(
+                "上屏字幕",
+                pystray.Menu(self._overlay_items),
             ),
             pystray.MenuItem(
                 "开机自启",
@@ -254,6 +262,49 @@ class Tray:
     def _translate_target_checked(self, target: str) -> Callable[[object], bool]:
         def checked(_item: object) -> bool:
             return self._state_provider().translate_target == target
+
+        return checked
+
+    def _overlay_items(self) -> list[pystray.MenuItem]:
+        """Subtitle-bar submenu: on/off plus where the text is delivered."""
+        return [
+            pystray.MenuItem(
+                "开启上屏字幕",
+                self._callbacks.on_toggle_overlay,
+                checked=lambda _item: self._state_provider().overlay,
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "只上屏（不打字）",
+                self._select_overlay_output("screen"),
+                checked=self._overlay_output_checked("screen"),
+                radio=True,
+            ),
+            pystray.MenuItem(
+                "上屏 + 打字到光标",
+                self._select_overlay_output("both"),
+                checked=self._overlay_output_checked("both"),
+                radio=True,
+            ),
+            pystray.MenuItem(
+                "只打字（上屏仅预览）",
+                self._select_overlay_output("type"),
+                checked=self._overlay_output_checked("type"),
+                radio=True,
+            ),
+        ]
+
+    def _select_overlay_output(self, mode: str) -> Callable[[], None]:
+        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
+
+        def action() -> None:
+            self._callbacks.on_select_overlay_output(mode)
+
+        return action
+
+    def _overlay_output_checked(self, mode: str) -> Callable[[object], bool]:
+        def checked(_item: object) -> bool:
+            return self._state_provider().overlay_output == mode
 
         return checked
 

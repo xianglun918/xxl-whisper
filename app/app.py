@@ -13,13 +13,21 @@ import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import assert_never
+from typing import assert_never, cast
 
 import numpy as np
 
 from app import __version__, native
 from app.asr import Recognizer
-from app.config import MOUSE_VKS, Config, config_path, hotkey_vk, models_root, save_config
+from app.config import (
+    MOUSE_VKS,
+    Config,
+    OverlayOutput,
+    config_path,
+    hotkey_vk,
+    models_root,
+    save_config,
+)
 from app.controls import Controls, ControlsDeps
 from app.decode_scheduler import (
     FinishedBatch,
@@ -45,8 +53,8 @@ from app.hotkey_logic import (
 )
 from app.partial import level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
+from app.translator import TranslationError, Translator, compose_text, has_translatable_text
 from app.tray import Tray, TrayCallbacks, TrayState
-from app.translator import Translator, TranslationError, compose_text, has_translatable_text
 from app.update_flow import UpdateFlow, UpdateFlowDeps
 from app.vad import SAMPLE_RATE, Segmenter, VadSettings
 
@@ -128,6 +136,16 @@ class SetTranslateTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class SetOverlay:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class SetOverlayOutput:
+    mode: str
+
+
+@dataclass(frozen=True, slots=True)
 class InitModel:
     pass
 
@@ -143,6 +161,8 @@ type WorkerMsg = (
     | SetContinuous
     | SetTranslate
     | SetTranslateTarget
+    | SetOverlay
+    | SetOverlayOutput
     | InitModel
 )
 
@@ -175,6 +195,9 @@ class DictationApp:
         self._queue: queue.Queue[WorkerMsg] = queue.Queue()
         self._detector = HoldClickDetector(config.hold_threshold_ms)
         self._indicator = native.indicator.Indicator()
+        #: Created lazily: a user who never turns the subtitles on never pays for
+        #: a second Tk interpreter.
+        self._overlay: native.overlay.Overlay | None = None
         self._recognizer: Recognizer | None = None
         self._translator: Translator | None = None
         self._recorder: Recorder | None = None
@@ -215,6 +238,10 @@ class DictationApp:
                 on_toggle_translate=lambda: self._queue.put(SetTranslate()),
                 on_select_translate_target=lambda target: self._queue.put(
                     SetTranslateTarget(target=target)
+                ),
+                on_toggle_overlay=lambda: self._queue.put(SetOverlay()),
+                on_select_overlay_output=lambda mode: self._queue.put(
+                    SetOverlayOutput(mode=mode)
                 ),
             ),
             state_provider=self._tray_state,
@@ -267,6 +294,8 @@ class DictationApp:
         # Model download + load run on the worker so the tray is responsive
         # immediately and Exit can abort an in-flight download.
         self._queue.put(InitModel())
+        if self._config.overlay_enabled:
+            self._ensure_overlay()  # honour the switch persisted from last run
         self._ready = True
         self._updates.start_watcher(self._config.check_updates)
         log.info(
@@ -325,6 +354,8 @@ class DictationApp:
             continuous=self._continuous,
             translate=self._config.translate,
             translate_target=self._config.translate_target,
+            overlay=self._config.overlay_enabled,
+            overlay_output=self._config.overlay_output,
         )
 
     def _set_config(self, config: Config) -> None:
@@ -375,7 +406,7 @@ class DictationApp:
         if action is not None:
             self._handle(action)
 
-    def _dispatch(self, message: WorkerMsg) -> None:
+    def _dispatch(self, message: WorkerMsg) -> None:  # noqa: C901, PLR0912 - flat message table
         match message:
             case KeyTransition(pressed=pressed, ts_ms=ts):
                 self._on_key_transition(pressed=pressed, ts_ms=ts)
@@ -398,6 +429,10 @@ class DictationApp:
                 self._toggle_translate()
             case SetTranslateTarget(target=target):
                 self._set_translate_target(target)
+            case SetOverlay():
+                self._toggle_overlay()
+            case SetOverlayOutput(mode=mode):
+                self._set_overlay_output(mode)
             case InitModel():
                 self._init_model()
             case unreachable:
@@ -588,10 +623,80 @@ class DictationApp:
             type(self._translator).__name__ if self._translator is not None else "none",
         )
 
-    def _emit(self, text: str) -> Channel:
-        """Deliver one utterance, translating it first when that is enabled."""
+    # -- subtitle overlay ------------------------------------------------------
+
+    def _overlay_style(self) -> native.overlay.OverlayStyle:
+        """Map the flat config onto the overlay's window style."""
+        return native.overlay.build_style(self._config)
+
+    def _ensure_overlay(self) -> native.overlay.Overlay | None:
+        """Start the subtitle window on first use; None when it cannot exist.
+
+        A headless/no-Tk environment must not break dictation: the switch is
+        turned back off in the config so the tray and the next start agree.
+        """
+        if not self._config.overlay_enabled:
+            return None
+        if self._overlay is None:
+            overlay = native.overlay.Overlay(
+                self._overlay_style(),
+                work_area=native.io.active_monitor_work_area,
+                fullscreen_owner=native.io.exclusive_fullscreen_owner_active,
+            )
+            if not overlay.available:
+                self._config = replace(self._config, overlay_enabled=False)
+                save_config(config_path(), self._config)
+                self._tray.notify("上屏字幕不可用（缺少图形环境），已关闭")
+                self._tray.refresh_menu()
+                return None
+            self._overlay = overlay
+        return self._overlay
+
+    def _toggle_overlay(self) -> None:
+        """Tray switch for the subtitle bar; the choice is persisted."""
+        enabled = not self._config.overlay_enabled
+        self._config = replace(self._config, overlay_enabled=enabled)
+        save_config(config_path(), self._config)
+        if enabled:
+            self._ensure_overlay()
+        elif self._overlay is not None:
+            self._overlay.clear()
+        self._tray.refresh_menu()
+        log.info("overlay enabled=%s output=%s", enabled, self._config.overlay_output)
+
+    def _set_overlay_output(self, mode: str) -> None:
+        """Choose between subtitles only, subtitles + typing, or typing only."""
+        if mode not in ("type", "screen", "both") or mode == self._config.overlay_output:
+            return
+        self._config = replace(self._config, overlay_output=cast("OverlayOutput", mode))
+        save_config(config_path(), self._config)
+        self._tray.refresh_menu()
+        log.info("overlay output=%s", mode)
+
+    def _present(self, text: str, translated: str) -> None:
+        """Push one finished utterance to the subtitle bar (no-op when off)."""
+        overlay = self._overlay
+        if overlay is None or not self._config.overlay_enabled:
+            return
+        overlay.push(text, translated)
+
+    def _overlay_only(self) -> bool:
+        """Return True when the user wants the subtitles instead of typing."""
+        return self._config.overlay_enabled and self._config.overlay_output == "screen"
+
+    def _emit(self, text: str) -> Channel | None:
+        """Deliver one utterance: translate once, then type and/or subtitle it.
+
+        Returns the channel that typed the text, or ``None`` in subtitle-only
+        mode (nothing was injected, by the user's explicit choice).
+        """
+        translated, attempted = self._translate(text)
+        self._present(text, translated)
+        if self._overlay_only():
+            self._indicator.flash(_COMMIT_TEXT, _COMMIT_FLASH_MS)
+            return None
         return emit_text(
-            self._payload(text),
+            self._payload(text, translated, attempted=attempted),
             EmitSettings(
                 restore_clipboard=self._config.restore_clipboard,
                 paste_delay_ms=self._config.paste_delay_ms,
@@ -599,16 +704,17 @@ class DictationApp:
             self._indicator,
         )
 
-    def _payload(self, text: str) -> str:
-        """Return what should be typed: source, translation, or both.
+    def _translate(self, text: str) -> tuple[str, bool]:
+        """Run local MT once per utterance.
 
-        Translation is best-effort by design: any model error falls back to the
-        original text with a short pill message. Losing the translation is an
-        annoyance; losing the user's words is not acceptable.
+        Returns ``(translation, attempted)``: ``attempted`` is False when there
+        was nothing to do (MT off, no model loaded, nothing translatable), which
+        is what separates "silently skipped" from "tried and failed" for the
+        caller's diagnostic flash.
         """
         translator = self._translator
         if translator is None or not self._config.translate or not has_translatable_text(text):
-            return text
+            return "", False
         self._indicator.update("翻译中…")
         started = time.monotonic()
         try:
@@ -616,15 +722,25 @@ class DictationApp:
         except TranslationError as exc:
             log.warning("translate failed: %s", exc.reason)
             translated = ""
-        except Exception:  # noqa: BLE001 - never let MT break dictation
+        except Exception:
             log.exception("translate failed unexpectedly")
             translated = ""
         elapsed = time.monotonic() - started
         log.info("translate: %.3f s -> %r", elapsed, translated)
-        if not translated.strip():
+        return translated, True
+
+    def _payload(self, text: str, translated: str, *, attempted: bool) -> str:
+        """Return what should be typed: source, translation, or both.
+
+        Translation is best-effort by design: any model error falls back to the
+        original text with a short pill message. Losing the translation is an
+        annoyance; losing the user's words is not acceptable.
+        """
+        if translated.strip():
+            return compose_text(text, translated, self._config.translate_mode)
+        if attempted:
             self._indicator.flash("翻译失败，已上屏原文", 1800)
-            return text
-        return compose_text(text, translated, self._config.translate_mode)
+        return text
 
     # -- continuous dictation -------------------------------------------------
 
@@ -1002,10 +1118,10 @@ class DictationApp:
                 log.info(
                     "continuous: endpoint→emit %.3f s via %s",
                     time.monotonic() - endpoint_ts,
-                    channel,
+                    channel or "overlay",  # subtitle-only mode injects nothing
                 )
             else:
-                log.info("continuous: inserted via %s", channel)
+                log.info("continuous: inserted via %s", channel or "overlay")
             emitted += 1
         return emitted
 
@@ -1062,4 +1178,6 @@ class DictationApp:
             self._mouse_hook.stop()
         if self._recorder is not None:
             self._recorder.close()
+        if self._overlay is not None:
+            self._overlay.quit()
         self._indicator.quit()

@@ -8,6 +8,7 @@ through its sub-namespaces::
     native.hotkey.HotkeyHook(...)    global push-to-talk hook
     native.mousehook.MouseHook(...)  mouse side-button hook
     native.indicator.Indicator()     "正在听…" status bar
+    native.overlay.Overlay()         "上屏字幕" subtitle bar (platform-agnostic)
     native.uia.probe_focused()       UI-Automation style value writes
     native.data_root()               per-user data directory
 
@@ -22,7 +23,7 @@ from pathlib import Path
 APP_DIR_NAME = "xxl-whisper"
 
 if sys.platform == "win32":
-    from app import hotkey, indicator, mousehook, uia
+    from app import hotkey, indicator, mousehook, overlay, uia
     from app import winio as io
     from app import winutil as util
 else:
@@ -32,6 +33,7 @@ else:
     from app import macmousehook as mousehook
     from app import macuia as uia
     from app import macutil as util
+    from app import overlay
 
 #: Windows keeps the capture stream open for the app's lifetime (invisible
 #: cost, saves the 50-150 ms device-open from the push-to-talk budget). macOS
@@ -46,6 +48,7 @@ __all__ = [
     "indicator",
     "io",
     "mousehook",
+    "overlay",
     "uia",
     "util",
 ]
