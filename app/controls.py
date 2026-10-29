@@ -199,14 +199,16 @@ class Controls:
         log.info("model switched to %r (disfluency=%s)", kind, new_disfluency)
         return recognizer
 
-    def toggle_disfluency(self) -> Recognizer | None:
-        """Flip verbatim/smooth and rebuild the recognizer when it matters.
+    def set_disfluency(self, kind: str) -> Recognizer | None:
+        """Select verbatim/smooth; rebuild the recognizer when it matters.
 
         Only Fun-ASR-Nano honours the disfluency prompt; SenseVoice ignores it,
         so a rebuild is only needed for the LLM-decoder model.
         """
         config = self._deps.get_config()
-        new: Disfluency = "smooth" if config.disfluency == "verbatim" else "verbatim"
+        new = cast("Disfluency", kind)
+        if new == config.disfluency:
+            return None
         self._deps.set_config(dataclasses.replace(config, disfluency=new))
         save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()

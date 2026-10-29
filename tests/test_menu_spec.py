@@ -39,7 +39,7 @@ def _callbacks() -> TrayCallbacks:
         on_capture_hotkey=noop,
         on_select_model=noop,
         on_show_diagnostics=noop,
-        on_toggle_disfluency=noop,
+        on_select_disfluency=noop,
         on_toggle_continuous=noop,
         on_toggle_translate=noop,
         on_select_translate_route=noop,
@@ -85,7 +85,6 @@ def _inputs() -> MenuInputs:
     return MenuInputs(
         microphones=("Mic A", "Mic B"),
         system_audio=(("系统声音 · Speakers (Realtek)", "Speakers (Realtek)"),),
-        hotkey_names=("caps_lock", "f2"),
     )
 
 
@@ -163,8 +162,9 @@ def test_rare_settings_are_grouped_under_more() -> None:
     menu, _live = _menu(_state())
     more = _row(menu, "更多设置")
     labels = [_label(child) for child in _visible(more.children)]
-    for expected in ("热键", "识别模型", "开机自启", "输入诊断", "检查更新"):
-        assert expected in labels
+    joined = " | ".join(labels)
+    for expected in ("热键：", "识别模型：", "语义顺滑：", "开机自启", "输入诊断", "检查更新"):
+        assert expected in joined, f"{expected} missing from {labels}"
 
 
 # -- liveness ------------------------------------------------------------------
@@ -250,3 +250,82 @@ def test_system_audio_sits_after_a_separator_in_the_input_menu() -> None:
     last = row.children[-1]
     assert last.checked is not None
     assert last.checked() is True
+
+
+# -- every option group behaves identically ------------------------------------
+
+
+def _radio_groups(menu: tuple[Entry, ...]) -> list[tuple[Entry, list[Entry]]]:
+    """Yield (parent, radios) for every **radio group**.
+
+    A group is a maximal run of consecutive radio rows: the 翻译与字幕 submenu
+    holds two independent groups (direction and output), separated by a
+    separator, and each must have exactly one tick.
+    """
+    groups: list[tuple[Entry, list[Entry]]] = []
+    for entry in menu:
+        if not entry.children:
+            continue
+        run: list[Entry] = []
+        for child in entry.children:
+            if child.radio:
+                run.append(child)
+                continue
+            if run:
+                groups.append((entry, run))
+                run = []
+        if run:
+            groups.append((entry, run))
+        groups.extend(_radio_groups(entry.children))
+    return groups
+
+
+def test_every_option_group_renders_exactly_one_tick() -> None:
+    """One builder for all groups means none can render with zero or two ticks."""
+    menu, _live = _menu(_state())
+    groups = _radio_groups(menu)
+    labels = {_label(parent) for parent, _radios in groups}
+    assert len(groups) >= 5, f"expected routes/outputs/hotkey/model/filler, got {labels}"
+    for parent, radios in groups:
+        ticked = [radio for radio in radios if radio.checked is not None and radio.checked()]
+        assert len(ticked) == 1, f"{_label(parent)} has {len(ticked)} ticks"
+
+
+def test_every_option_group_follows_its_own_config_field() -> None:
+    """Flip each field in turn; that group's tick must move and no other."""
+    menu, live = _menu(_state())
+    # Groups are identified by position: parent labels are dynamic (they carry
+    # the current value), so they cannot serve as keys.
+    before = [
+        _label(next(r for r in radios if r.checked and r.checked()))
+        for _parent, radios in _radio_groups(menu)
+    ]
+    live.state = _state(
+        translate_route="en-zh",
+        overlay_output="screen",
+        current_hotkey="f2",
+        current_model="funasr_nano",
+        disfluency="smooth",
+    )
+    after = [
+        _label(next(r for r in radios if r.checked and r.checked()))
+        for _parent, radios in _radio_groups(menu)
+    ]
+    assert len(before) == len(after)
+    for old, new in zip(before, after, strict=True):
+        assert old != new, f"group stuck on {old!r} (state changed to {new!r})"
+
+
+def test_settings_rows_show_their_current_value() -> None:
+    menu, _live = _menu(_state(current_hotkey="f2", current_model="funasr_nano",
+                               disfluency="smooth"))
+    top = {_label(entry) for entry in _visible(_row(menu, "更多设置").children)}
+    assert "热键：F2" in top
+    assert "识别模型：Fun-ASR-Nano（更准 · 约 1GB · 首次需下载）" in top
+    assert "语义顺滑：语义顺滑（去掉语气词与重复）" in top
+
+
+def test_custom_hotkey_is_shown_as_a_vk_value() -> None:
+    menu, _live = _menu(_state(current_hotkey=0x71))
+    top = {_label(entry) for entry in _visible(_row(menu, "更多设置").children)}
+    assert "热键：自定义按键（VK 0x71）" in top

@@ -31,39 +31,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-#: Menu labels for the translation routes, in menu order.
-ROUTE_LABELS: dict[str, str] = {
-    "zh-en": "中 → 英（说中文出英文）",
-    "en-zh": "英 → 中（说英文出中文）",
-    "ja-zh": "日 → 中（说日语出中文）",
-}
-
-#: Menu labels for the subtitle/typing split.
-OUTPUT_LABELS: dict[str, str] = {
-    "screen": "只上屏（不打字）",
-    "both": "上屏 + 打字到光标",
-    "type": "只打字（无字幕）",
-}
-
-_ROUTE_ARROWS: dict[str, str] = {"zh-en": "中→英", "en-zh": "英→中", "ja-zh": "日→中"}
-
-_OUTPUT_ARROWS: dict[str, str] = {"screen": "只上屏", "both": "上屏+打字", "type": "只打字"}
-
-HOTKEY_LABELS: dict[str, str] = {
-    "caps_lock": "CapsLock",
-    "f2": "F2",
-    "f4": "F4",
-    "f6": "F6",
-    "f8": "F8",
-    "scroll_lock": "Scroll Lock",
-    "mouse_x1": "鼠标侧键 X1",
-    "mouse_x2": "鼠标侧键 X2",
-}
-
-MODEL_LABELS: dict[str, str] = {
-    "sensevoice": "SenseVoice-Small（默认 · 230MB · 快）",
-    "funasr_nano": "FunASR-Nano（更准 · 约 1GB · 首次需下载）",
-}
+from app.options import (
+    DISFLUENCY_OPTIONS,
+    HOTKEY_OPTIONS,
+    MODEL_OPTIONS,
+    OUTPUT_OPTIONS,
+    OUTPUT_SHORT,
+    ROUTE_OPTIONS,
+    ROUTE_SHORT,
+    Option,
+    label_of,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +58,7 @@ class TrayCallbacks:
     on_capture_hotkey: Callable[[], None]
     on_select_model: Callable[[str], None]
     on_show_diagnostics: Callable[[], None]
-    on_toggle_disfluency: Callable[[], None]
+    on_select_disfluency: Callable[[str], None]
     on_toggle_continuous: Callable[[], None]
     on_toggle_translate: Callable[[], None]
     on_select_translate_route: Callable[[str], None]
@@ -118,7 +96,6 @@ class MenuInputs:
 
     microphones: tuple[str, ...] = ()
     system_audio: tuple[tuple[str, str], ...] = ()  # (label, device id)
-    hotkey_names: tuple[str, ...] = tuple(HOTKEY_LABELS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +171,7 @@ def build_menu(
         ),
         Entry(
             label="更多设置",
-            children=_settings_entries(state_provider, callbacks, lists),
+            children=_settings_entries(state_provider, callbacks),
         ),
         separator(),
         Entry(label="退出", action=callbacks.on_exit),
@@ -202,6 +179,30 @@ def build_menu(
 
 
 # -- submenus ------------------------------------------------------------------
+
+
+def _option_entries(
+    provider: StateProvider,
+    options: tuple[Option, ...],
+    callback: Callable[[str], None],
+    current: Callable[[TrayState], object],
+) -> list[Entry]:
+    """Render one radio group; every group goes through this single path.
+
+    Using one builder for all option groups is the point: the tick always reads
+    ``current(state)`` from the live provider, so a group cannot silently end up
+    comparing against the wrong config field (which is how the hotkey and
+    filler-word rows once rendered with no tick at all).
+    """
+    return [
+        Entry(
+            label=option.label,
+            action=_pick(callback, option.key),
+            checked=_tick(provider, lambda state, key=option.key: current(state) == key),
+            radio=True,
+        )
+        for option in options
+    ]
 
 
 def _input_entries(
@@ -213,7 +214,8 @@ def _input_entries(
             label="（系统默认）",
             action=_pick(callbacks.on_select_mic, ""),
             checked=_tick(
-                provider, lambda state: state.audio_source == "mic" and state.current_mic == ""
+                provider,
+                lambda state: state.audio_source == "mic" and state.current_mic == "",
             ),
         )
     ]
@@ -257,14 +259,10 @@ def _translate_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tup
         separator(),
     ]
     entries.extend(
-        Entry(
-            label=label,
-            action=_pick(callbacks.on_select_translate_route, route),
-            checked=_tick(provider, lambda state, route=route: state.translate_route == route),
-            radio=True,
-            enabled=True,
+        _option_entries(
+            provider, ROUTE_OPTIONS, callbacks.on_select_translate_route,
+            lambda state: state.translate_route,
         )
-        for route, label in ROUTE_LABELS.items()
     )
     entries.append(separator())
     entries.append(
@@ -275,13 +273,10 @@ def _translate_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tup
         )
     )
     entries.extend(
-        Entry(
-            label=label,
-            action=_pick(callbacks.on_select_overlay_output, mode),
-            checked=_tick(provider, lambda state, mode=mode: state.overlay_output == mode),
-            radio=True,
+        _option_entries(
+            provider, OUTPUT_OPTIONS, callbacks.on_select_overlay_output,
+            lambda state: state.overlay_output,
         )
-        for mode, label in OUTPUT_LABELS.items()
     )
     entries.append(separator())
     entries.append(Entry(text=lambda: translate_hint(provider()), enabled=False))
@@ -289,38 +284,37 @@ def _translate_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tup
 
 
 def _settings_entries(
-    provider: StateProvider, callbacks: TrayCallbacks, inputs: MenuInputs
+    provider: StateProvider, callbacks: TrayCallbacks
 ) -> tuple[Entry, ...]:
-    """Everything configured once: keys, model, behaviour, updates."""
-    hotkey_entries: list[Entry] = [
-        Entry(
-            label=HOTKEY_LABELS.get(name, str(name)),
-            action=_pick_key(callbacks.on_select_hotkey, name),
-            checked=_tick(provider, lambda state, name=name: state.current_hotkey == name),
-            radio=True,
-        )
-        for name in inputs.hotkey_names
-    ]
-    hotkey_entries.append(separator())
-    hotkey_entries.append(Entry(label="自定义按键…", action=callbacks.on_capture_hotkey))
-
-    model_entries = [
-        Entry(
-            label=label,
-            action=_pick(callbacks.on_select_model, kind),
-            checked=_tick(provider, lambda state, kind=kind: state.current_model == kind),
-            radio=True,
-        )
-        for kind, label in MODEL_LABELS.items()
-    ]
-
+    """Everything configured once. Every choice is a radio over the config value."""
+    hotkeys = _option_entries(
+        provider, HOTKEY_OPTIONS, callbacks.on_select_hotkey,
+        lambda state: state.current_hotkey,
+    )
+    hotkeys.append(separator())
+    hotkeys.append(Entry(label="自定义按键…", action=callbacks.on_capture_hotkey))
     return (
-        Entry(label="热键", children=tuple(hotkey_entries)),
-        Entry(label="识别模型", children=tuple(model_entries)),
         Entry(
-            label="语义顺滑（去语气词）",
-            action=callbacks.on_toggle_disfluency,
-            checked=_tick(provider, lambda state: state.disfluency == "smooth"),
+            text=lambda: f"热键：{label_of(HOTKEY_OPTIONS, provider().current_hotkey)}",
+            children=tuple(hotkeys),
+        ),
+        Entry(
+            text=lambda: f"识别模型：{label_of(MODEL_OPTIONS, provider().current_model)}",
+            children=tuple(
+                _option_entries(
+                    provider, MODEL_OPTIONS, callbacks.on_select_model,
+                    lambda state: state.current_model,
+                )
+            ),
+        ),
+        Entry(
+            text=lambda: f"语义顺滑：{label_of(DISFLUENCY_OPTIONS, provider().disfluency)}",
+            children=tuple(
+                _option_entries(
+                    provider, DISFLUENCY_OPTIONS, callbacks.on_select_disfluency,
+                    lambda state: state.disfluency,
+                )
+            ),
         ),
         Entry(
             label="开机自启",
@@ -354,7 +348,7 @@ def translate_suffix(state: TrayState) -> str:
         return " · 字幕显示原文（翻译未开）" if state.overlay else ""
     if not state.translator_ready:
         return " · 翻译开但模型未就绪"
-    arrow = _ROUTE_ARROWS.get(state.translate_route, "中→英")
+    arrow = ROUTE_SHORT.get(state.translate_route, "中→英")
     return f" · 翻译开（{arrow}）"
 
 
@@ -371,9 +365,9 @@ def translate_label(state: TrayState) -> str:
     """Parent row for translation+subtitles, carrying both states."""
     parts: list[str] = []
     if state.translate:
-        parts.append(_ROUTE_ARROWS.get(state.translate_route, "翻译"))
+        parts.append(ROUTE_SHORT.get(state.translate_route, "翻译"))
     if state.overlay:
-        parts.append(_OUTPUT_ARROWS.get(state.overlay_output, "字幕"))
+        parts.append(OUTPUT_SHORT.get(state.overlay_output, "字幕"))
     if not parts:
         return "翻译与字幕：关"
     return "翻译与字幕：" + " · ".join(parts)

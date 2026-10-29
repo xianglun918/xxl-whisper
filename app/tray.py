@@ -17,7 +17,6 @@ from PIL import Image, ImageDraw
 
 import app.loopback as loopback_mod
 import app.recorder as recorder_mod
-from app.config import HOTKEY_VK
 from app.menu_spec import (
     Entry,
     MenuInputs,
@@ -25,11 +24,6 @@ from app.menu_spec import (
     TrayState,
     build_menu,
 )
-
-
-def list_hotkey_names() -> tuple[str, ...]:
-    """Preset hotkey names, in config order."""
-    return tuple(HOTKEY_VK)
 
 
 def list_microphone_names() -> tuple[str, ...]:
@@ -90,7 +84,6 @@ class Tray:
         inputs = MenuInputs(
             microphones=list_microphone_names(),
             system_audio=list_system_audio_devices(),
-            hotkey_names=list_hotkey_names(),
         )
         # The provider (not a snapshot) is what keeps ticks and labels live:
         # pystray builds the native menu once and re-asks on every open.

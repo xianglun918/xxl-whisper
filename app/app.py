@@ -133,7 +133,7 @@ class SetModel:
 
 @dataclass(frozen=True, slots=True)
 class SetDisfluency:
-    pass
+    kind: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,7 +263,9 @@ class DictationApp:
                 on_capture_hotkey=lambda: self._queue.put(CaptureHotkey()),
                 on_select_model=lambda kind: self._queue.put(SetModel(kind=kind)),
                 on_show_diagnostics=self._show_diagnostics_deferred,
-                on_toggle_disfluency=lambda: self._queue.put(SetDisfluency()),
+                on_select_disfluency=lambda kind: self._tray(
+                    f"disfluency:{kind}", lambda: self._queue.put(SetDisfluency(kind=kind))
+                ),
                 on_toggle_continuous=lambda: self._tray(
                     "continuous", lambda: self._queue.put(SetContinuous())
                 ),
@@ -472,8 +474,8 @@ class DictationApp:
                 self._controls.start_key_capture(self._on_captured_vk)
             case SetModel(kind=kind):
                 self._swap_model(kind)
-            case SetDisfluency():
-                self._toggle_disfluency()
+            case SetDisfluency(kind=kind):
+                self._set_disfluency(kind)
             case SetContinuous():
                 self._toggle_continuous()
             case SetTranslate():
@@ -605,14 +607,14 @@ class DictationApp:
         if recognizer is not None:
             self._recognizer = recognizer
 
-    def _toggle_disfluency(self) -> None:
+    def _set_disfluency(self, kind: str) -> None:
         # Rebuilding the recognizer (Fun-ASR-Nano) blocks the worker; disarm the
         # hooks first so CapsLock stays native instead of a dead key, then re-arm.
         if self._hook is not None:
             self._hook.set_armed(False)
         if self._mouse_hook is not None:
             self._mouse_hook.set_armed(False)
-        recognizer = self._controls.toggle_disfluency()
+        recognizer = self._controls.set_disfluency(kind)
         self._set_hooks_armed()
         if recognizer is not None:
             self._recognizer = recognizer
