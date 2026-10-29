@@ -173,8 +173,8 @@ def default_config() -> Config:
         # does not suffer from this — app.type_batcher glues the cut pieces back
         # together and pastes one whole sentence. Push-to-talk never uses these
         # (a held key is one utterance).
-        live_min_silence_ms=400,
-        live_max_speech_ms=6_000,
+        live_min_silence_ms=350,
+        live_max_speech_ms=4_000,
         #: How long a force-cut batch may stay open before it is typed anyway.
         typing_merge_ms=12_000,
         #: Character budget that closes a force-cut batch early.
@@ -282,11 +282,14 @@ def load_config(path: Path) -> Config:
         vad_threshold=p.float_in("vad_threshold", 0.5, 0.0, 1.0),
         vad_min_speech_ms=p.int_in("vad_min_speech_ms", 250, 50, 5_000),
         live_min_silence_ms=p.int_in(
-            "live_min_silence_ms", p.int_in("vad_min_silence_ms", 400, 50, 10_000), 50, 10_000
+            "live_min_silence_ms",
+            p.legacy_default("vad_min_silence_ms", 500, 50, 10_000, 350),
+            50,
+            10_000,
         ),
         live_max_speech_ms=p.int_in(
             "live_max_speech_ms",
-            p.int_in("vad_max_speech_ms", 6_000, 1_000, 60_000),
+            p.legacy_default("vad_max_speech_ms", 20_000, 1_000, 60_000, 4_000),
             1_000,
             60_000,
         ),
@@ -358,6 +361,20 @@ class _Parser:
     def __init__(self, raw: dict[str, object], path: Path) -> None:
         self._raw = raw
         self._path = path
+
+    def legacy_default(
+        self, name: str, legacy_default: int, lo: int, hi: int, new_default: int
+    ) -> int:
+        """Use an old key's value only when the user actually changed it.
+
+        A config written by an older build always contains ``vad_*`` at their
+        *then* defaults. Inheriting those values blindly would pin an upgraded
+        user to the old 20 s / 500 ms behaviour for ever, which is exactly the
+        "waits until the whole speech ends" bug. Only a value that differs from
+        the old default counts as a deliberate choice.
+        """
+        value = self.int_in(name, legacy_default, lo, hi)
+        return new_default if value == legacy_default else value
 
     def int_in(self, name: str, default: int, lo: int, hi: int) -> int:
         value = self._raw.get(name, default)

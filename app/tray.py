@@ -74,6 +74,7 @@ class TrayState:
     continuous: bool
     translate: bool
     translate_route: str
+    translator_ready: bool
     audio_source: str
     current_system_audio: str
     overlay: bool
@@ -365,14 +366,23 @@ class Tray:
         if not state.ready:
             return "状态：启动中…"
         arrow = _ROUTE_ARROWS.get(state.translate_route, "中→英")
+        suffix = _translate_suffix(state, arrow)
         if state.continuous:
-            suffix = f" · 翻译开（{arrow}）" if state.translate else ""
             return f"状态：持续听写中（热键已停用，说话即上屏）{suffix}"
         label = _hotkey_label(state.current_hotkey)
         if state.paused:
             return f"状态：已暂停（{label} 只保留原功能）"
         suffix = f" · 翻译开（{arrow}）" if state.translate else ""
         return f"状态：就绪 — 按住 {label} 说话，松开出字{suffix}"
+
+
+def _translate_suffix(state: TrayState, arrow: str) -> str:
+    """Say what the subtitles actually show — translated, or source only."""
+    if not state.translate:
+        return " · 上屏中（翻译未开，显示原文）" if state.overlay else ""
+    if not state.translator_ready:
+        return " · 翻译开但模型未就绪"
+    return f" · 翻译开（{arrow}）"
 
 
 def _translate_model_hint(state: TrayState) -> str:

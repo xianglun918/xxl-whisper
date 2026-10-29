@@ -111,7 +111,7 @@ def _config_module(tmp_path: Path):
 def test_live_defaults_are_subtitle_friendly(tmp_path: Path) -> None:
     config_mod = _config_module(tmp_path)
     config = config_mod.default_config()
-    assert (config.live_min_silence_ms, config.live_max_speech_ms) == (400, 6_000)
+    assert (config.live_min_silence_ms, config.live_max_speech_ms) == (350, 4_000)
     assert (config.typing_merge_ms, config.typing_merge_chars) == (12_000, 80)
 
 
@@ -124,6 +124,21 @@ def test_old_vad_keys_still_work_as_a_fallback(tmp_path: Path) -> None:
     )
     config = config_mod.load_config(path)
     assert (config.live_min_silence_ms, config.live_max_speech_ms) == (800, 30_000)
+
+
+def test_untouched_legacy_keys_do_not_pin_the_old_slow_behaviour(tmp_path: Path) -> None:
+    """An upgraded config always contains the OLD defaults; they must not win.
+
+    This was a real bug: inheriting ``vad_max_speech_ms = 20000`` from an old
+    config kept subtitles waiting for a whole monologue to finish.
+    """
+    config_mod = _config_module(tmp_path)
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "vad_min_silence_ms = 500\nvad_max_speech_ms = 20000\n", encoding="utf-8"
+    )
+    config = config_mod.load_config(path)
+    assert (config.live_min_silence_ms, config.live_max_speech_ms) == (350, 4_000)
 
 
 def test_live_keys_win_over_the_legacy_fallback(tmp_path: Path) -> None:

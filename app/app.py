@@ -381,6 +381,7 @@ class DictationApp:
             continuous=self._continuous,
             translate=self._config.translate,
             translate_route=route_of(self._config) or "",
+            translator_ready=self._translator is not None,
             audio_source=self._config.audio_source,
             current_system_audio=self._config.mic if self._config.audio_source == "system" else "",
             overlay=self._config.overlay_enabled,
@@ -695,10 +696,26 @@ class DictationApp:
         save_config(config_path(), self._config)
         if enabled:
             self._ensure_overlay()
+            if not self._config.translate:
+                # Subtitles without translation are legitimate (pure dictation),
+                # but a user turning on subtitles for a foreign film expects
+                # translated lines — say it out loud instead of silently showing
+                # the source text.
+                self._indicator.flash("字幕已开，但离线翻译未开启：目前显示原文", 4000)
+                self._tray.notify("字幕已开，但离线翻译未开启，将显示原文", title="xxl-whisper")
+            elif self._translator is None:
+                self._translator = self._controls.build_translator()
         elif self._overlay is not None:
             self._overlay.clear()
         self._tray.refresh_menu()
-        log.info("overlay enabled=%s output=%s", enabled, self._config.overlay_output)
+        log.info(
+            "overlay enabled=%s output=%s translate=%s translator=%s route=%s",
+            enabled,
+            self._config.overlay_output,
+            self._config.translate,
+            type(self._translator).__name__ if self._translator is not None else "none",
+            route_of(self._config),
+        )
 
     def _set_overlay_output(self, mode: str) -> None:
         """Choose between subtitles only, subtitles + typing, or typing only."""
@@ -722,11 +739,11 @@ class DictationApp:
         return self._config.overlay_enabled and self._config.overlay_output == "screen"
 
     def _subtitles(self) -> bool:
-        """True when the subtitle bar is one of the outputs."""
+        """Return True when the subtitle bar is one of the outputs."""
         return self._config.overlay_enabled and self._config.overlay_output != "type"
 
     def _types(self) -> bool:
-        """True when finished sentences are pasted into the cursor."""
+        """Return True when finished sentences are pasted into the cursor."""
         return not self._overlay_only()
 
     def _emit(self, text: str) -> Channel | None:
@@ -1214,6 +1231,12 @@ class DictationApp:
         """Translate and deliver one finished ASR piece."""
         translated = ""
         if self._subtitles():
+            if self._translator is None:
+                log.info(
+                    "subtitles: no translator (translate=%s route=%s) -> source only",
+                    self._config.translate,
+                    route_of(self._config),
+                )
             translated, _attempted = self._translate(item.text)
             self._present(item.text, translated)
         if self._types():
