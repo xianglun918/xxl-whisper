@@ -29,6 +29,7 @@ from app.config import (
     parse_translate_route,
     route_of,
     save_config,
+    segmenter_limits,
     with_overlay_mode,
 )
 from app.controls import Controls, ControlsDeps
@@ -238,6 +239,7 @@ class DictationApp:
         self._emit_queue = EmitQueue(maxsize=_EMIT_QUEUE_MAX)
         self._emit_thread: threading.Thread | None = None
         self._worker_thread: threading.Thread | None = None
+        self._segment_max_speech_s: float = 4.0
         #: Glues force-cut ASR pieces back into whole sentences for typing.
         self._batcher = TypeBatcher()
         self._partial_thread: threading.Thread | None = None
@@ -936,14 +938,19 @@ class DictationApp:
         # One cadence for every continuous session: short segments are fine
         # because typing re-joins them (app.type_batcher) while subtitles want
         # them short. Push-to-talk never reaches this code.
+        # Subtitle mode force-cuts every few seconds; typing-only keeps long,
+        # complete utterances (a cut mid-word corrupts the typed sentence).
+        min_silence_ms, max_speech_ms = segmenter_limits(self._config)
+        self._segment_max_speech_s = max_speech_ms / 1000
         self._batcher = TypeBatcher(
             window_s=self._config.typing_merge_ms / 1000,
             max_chars=self._config.typing_merge_chars,
         )
         log.info(
-            "continuous: min_silence=%dms max_speech=%dms typing_merge=%dms/%dchars",
-            self._config.live_min_silence_ms,
-            self._config.live_max_speech_ms,
+            "continuous: mode=%s min_silence=%dms max_speech=%dms typing_merge=%dms/%dchars",
+            "subtitles" if self._subtitles() else "typing",
+            min_silence_ms,
+            max_speech_ms,
             self._config.typing_merge_ms,
             self._config.typing_merge_chars,
         )
@@ -965,8 +972,8 @@ class DictationApp:
                 model_path=vad_path,
                 threshold=self._config.vad_threshold,
                 min_speech_s=self._config.vad_min_speech_ms / 1000,
-                min_silence_s=self._config.live_min_silence_ms / 1000,
-                max_speech_s=self._config.live_max_speech_ms / 1000,
+                min_silence_s=min_silence_ms / 1000,
+                max_speech_s=max_speech_ms / 1000,
                 num_threads=self._config.num_threads,
             )
         )
@@ -1337,7 +1344,7 @@ class DictationApp:
                 if endpoint_ts is not None:
                     log.info("continuous: endpoint→asr %.3f s", asr_done - endpoint_ts)
                 seconds = samples.shape[0] / SAMPLE_RATE
-                forced = seconds >= self._config.live_max_speech_ms / 1000 - 0.15
+                forced = seconds >= self._segment_max_speech_s - 0.15
                 if not self._emit_queue.submit(text, endpoint_ts=endpoint_ts, forced=forced):
                     log.info("continuous: emit queue full, dropped an older sentence")
             except Exception:

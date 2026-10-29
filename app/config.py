@@ -133,6 +133,8 @@ class Config:
     vad_min_speech_ms: int
     live_min_silence_ms: int
     live_max_speech_ms: int
+    typing_min_silence_ms: int
+    typing_max_speech_ms: int
     typing_merge_ms: int
     typing_merge_chars: int
     translate: bool
@@ -178,6 +180,8 @@ def default_config() -> Config:
         # (a held key is one utterance).
         live_min_silence_ms=350,
         live_max_speech_ms=4_000,
+        typing_min_silence_ms=500,
+        typing_max_speech_ms=20_000,
         #: How long a force-cut batch may stay open before it is typed anyway.
         typing_merge_ms=12_000,
         #: Character budget that closes a force-cut batch early.
@@ -237,6 +241,25 @@ def translate_route(source: str, target: str) -> TranslateRoute | None:
     """Canonical route key ("ja-zh"), or None when the pair has no models."""
     key = f"{source}-{target}"
     return cast("TranslateRoute", key) if key in _TRANSLATE_ROUTES else None
+
+
+def segmenter_limits(config: Config) -> tuple[int, int]:
+    """Return ``(min_silence_ms, max_speech_ms)`` for a continuous session.
+
+    Two very different jobs share one VAD:
+
+    * **subtitles** — the bar must fill while someone is still talking, so a
+      monologue is force-cut every few seconds (``live_*``);
+    * **typing only** — the text lands in a document, where a cut in the middle of
+      a word corrupts the sentence. Long, complete utterances win, so the loose
+      ``typing_*`` limits (the pre-subtitle behaviour) apply.
+
+    Cutting at 4 s while typing would also be a silent regression for users who
+    never enabled subtitles at all.
+    """
+    if config.overlay_output == "type" or not config.overlay_enabled:
+        return config.typing_min_silence_ms, config.typing_max_speech_ms
+    return config.live_min_silence_ms, config.live_max_speech_ms
 
 
 def with_overlay_mode(config: Config, mode: OverlayOutput) -> Config:
@@ -318,6 +341,8 @@ def load_config(path: Path) -> Config:
             1_000,
             60_000,
         ),
+        typing_min_silence_ms=p.int_in("typing_min_silence_ms", 500, 50, 10_000),
+        typing_max_speech_ms=p.int_in("typing_max_speech_ms", 20_000, 1_000, 60_000),
         typing_merge_ms=p.int_in("typing_merge_ms", 12_000, 0, 60_000),
         typing_merge_chars=p.int_in("typing_merge_chars", 80, 10, 500),
         translate=p.bool_flag("translate", False),
@@ -364,6 +389,8 @@ def save_config(path: Path, config: Config) -> None:
         f"vad_min_speech_ms = {config.vad_min_speech_ms}",
         f"live_min_silence_ms = {config.live_min_silence_ms}",
         f"live_max_speech_ms = {config.live_max_speech_ms}",
+        f"typing_min_silence_ms = {config.typing_min_silence_ms}",
+        f"typing_max_speech_ms = {config.typing_max_speech_ms}",
         f"typing_merge_ms = {config.typing_merge_ms}",
         f"typing_merge_chars = {config.typing_merge_chars}",
         f"translate = {str(config.translate).lower()}",

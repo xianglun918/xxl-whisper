@@ -18,6 +18,8 @@ from app.menu_spec import (
     TrayState,
     build_menu,
     input_label,
+    output_hint,
+    output_label,
     state_text,
     translate_hint,
     translate_label,
@@ -120,10 +122,10 @@ def _row(menu: tuple[Entry, ...], needle: str) -> Entry:
 # -- shape ---------------------------------------------------------------------
 
 
-def test_at_most_seven_top_level_rows() -> None:
+def test_at_most_eight_top_level_rows() -> None:
     menu, _live = _menu(_state())
     rows = _visible(menu)
-    assert len(rows) <= 7
+    assert len(rows) <= 8
     assert rows[0].label == ""  # the status row is text-only
     assert rows[-1].label == "退出"
 
@@ -147,15 +149,22 @@ def test_daily_switches_are_one_level_deep() -> None:
     assert not any(label.startswith("开启") for label in labels)
 
 
-def test_translation_and_subtitles_live_together() -> None:
+def test_translation_and_output_are_separate_top_level_groups() -> None:
+    """Output mode is used by pure-dictation users too: it is not a translation row."""
     menu, _live = _menu(_state())
-    row = _row(menu, "翻译与字幕")
-    labels = [_label(child) for child in _visible(row.children)]
-    assert "开启离线翻译" in labels
-    assert any("日 → 中" in label for label in labels)
+    translate_row = _row(menu, "离线翻译")
+    output_row = _row(menu, "输出方式")
+
+    translate_labels = [_label(child) for child in _visible(translate_row.children)]
+    assert "开启离线翻译" in translate_labels
+    assert any("日 → 中" in label for label in translate_labels)
+    assert not any("只上屏" in label for label in translate_labels)
+
+    output_labels = [_label(child) for child in _visible(output_row.children)]
+    assert any("只上屏" in label for label in output_labels)
+    assert any("只打字" in label for label in output_labels)
     # No separate "开启上屏字幕" switch: the output choice carries the bar on/off.
-    assert "开启上屏字幕" not in labels
-    assert any("只上屏" in label for label in labels)
+    assert "开启上屏字幕" not in translate_labels + output_labels
 
 
 def test_rare_settings_are_grouped_under_more() -> None:
@@ -174,7 +183,7 @@ def test_ticks_follow_the_state_after_the_menu_was_built() -> None:
     """The bug this pins: a frozen tick made switches look like they did nothing."""
     menu, live = _menu(_state(continuous=False, translate=False, overlay=False))
     continuous = _row(menu, "持续听写")
-    translate_row = _child(_row(menu, "翻译与字幕"), "开启离线翻译")
+    translate_row = _child(_row(menu, "离线翻译"), "开启离线翻译")
     assert continuous.checked is not None
     assert continuous.checked() is False
     assert translate_row.checked is not None
@@ -187,9 +196,10 @@ def test_ticks_follow_the_state_after_the_menu_was_built() -> None:
 
 def test_route_and_output_ticks_follow_the_state() -> None:
     menu, live = _menu(_state(translate_route="ja-zh", overlay_output="both"))
-    row = _row(menu, "翻译与字幕")
-    ja = _child(row, "日 → 中")
-    both = _child(row, "上屏 + 打字")
+    translate_row = _row(menu, "离线翻译")
+    output_row = _row(menu, "输出方式")
+    ja = _child(translate_row, "日 → 中")
+    both = _child(output_row, "上屏 + 打字")
     assert ja.checked is not None
     assert both.checked is not None
     assert ja.checked() is True
@@ -197,49 +207,54 @@ def test_route_and_output_ticks_follow_the_state() -> None:
 
     live.state = _state(translate_route="en-zh", overlay_output="screen")
     assert ja.checked() is False
-    assert _child(row, "英 → 中").checked() is True  # type: ignore[union-attr]
+    assert _child(translate_row, "英 → 中").checked() is True  # type: ignore[union-attr]
     assert both.checked() is False
-    assert _child(row, "只上屏").checked() is True  # type: ignore[union-attr]
+    assert _child(output_row, "只上屏").checked() is True  # type: ignore[union-attr]
 
 
 def test_parent_labels_are_rendered_lazily() -> None:
     menu, live = _menu(_state())
-    translate_row = _row(menu, "翻译与字幕")
+    translate_row = _row(menu, "离线翻译")
     assert translate_row.text is not None
-    assert translate_row.text() == "翻译与字幕：日→中 · 上屏+打字"
+    assert translate_row.text() == "离线翻译：日→中"
 
     live.state = _state(translate=False, overlay=False)
-    assert translate_row.text() == "翻译与字幕：关"
+    assert translate_row.text() == "离线翻译：关"
 
 
 def test_parent_labels_carry_live_state() -> None:
     state = _state()
     assert input_label(state) == "输入源：系统声音 · Speakers (Realtek)"
-    assert translate_label(state) == "翻译与字幕：日→中 · 上屏+打字"
+    assert translate_label(state) == "离线翻译：日→中"
+    assert output_label(state) == "输出方式：上屏+打字"
     assert "持续听写中" in state_text(state)
     assert "翻译开（日→中）" in state_text(state)
 
 
 def test_labels_say_when_nothing_is_on() -> None:
-    state = _state(translate=False, overlay=False, audio_source="mic", current_mic="")
-    assert translate_label(state) == "翻译与字幕：关"
+    state = _state(translate=False, overlay=False, audio_source="mic", current_mic="",
+                   overlay_output="type")
+    assert translate_label(state) == "离线翻译：关"
+    assert output_label(state) == "输出方式：只打字不上屏"
     assert input_label(state) == "输入源：系统默认麦克风"
-    assert translate_hint(state) == "提示：文字打到光标处"
+    assert translate_hint(state) == "提示：翻译未开启，字幕显示原文"
+    assert output_hint(state) == "提示：只打字，屏幕上不显示字幕条"
 
 
 def test_subtitles_without_translation_is_called_out() -> None:
     state = _state(translate=False, overlay=True)
-    assert translate_hint(state) == "提示：字幕当前显示原文，未翻译"
+    assert output_hint(state) == "提示：字幕当前显示原文（翻译未开）"
     assert "字幕显示原文" in state_text(state)
 
 
 def test_current_route_and_output_are_checked() -> None:
     menu, _live = _menu(_state())
-    row = _row(menu, "翻译与字幕")
-    assert _child(row, "日 → 中").checked is not None
-    assert _child(row, "日 → 中").checked() is True  # type: ignore[misc]
-    assert _child(row, "中 → 英").checked() is False  # type: ignore[misc]
-    assert _child(row, "上屏 + 打字").checked() is True  # type: ignore[misc]
+    route_row = _row(menu, "离线翻译")
+    output_row = _row(menu, "输出方式")
+    assert _child(route_row, "日 → 中").checked is not None
+    assert _child(route_row, "日 → 中").checked() is True  # type: ignore[misc]
+    assert _child(route_row, "中 → 英").checked() is False  # type: ignore[misc]
+    assert _child(output_row, "上屏 + 打字").checked() is True  # type: ignore[misc]
 
 
 def test_system_audio_sits_after_a_separator_in_the_input_menu() -> None:

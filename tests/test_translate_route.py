@@ -178,3 +178,32 @@ def test_switching_mode_turns_the_bar_on_and_off(tmp_path: Path) -> None:
 
     typing = config_mod.with_overlay_mode(both, "type")
     assert (typing.overlay_enabled, typing.overlay_output) == (False, "type")
+
+
+def test_typing_only_keeps_the_old_loose_segmentation(tmp_path: Path) -> None:
+    """No bar means no force-cut: typing wants whole sentences, not 4 s pieces."""
+    config_mod, path = _load(tmp_path, "")
+    typing = config_mod.with_overlay_mode(config_mod.load_config(path), "type")
+    assert config_mod.segmenter_limits(typing) == (500, 20_000)
+
+
+def test_subtitle_modes_use_the_fast_segmentation(tmp_path: Path) -> None:
+    config_mod, path = _load(tmp_path, "")
+    config = config_mod.load_config(path)
+    for mode in ("screen", "both"):
+        assert config_mod.segmenter_limits(
+            config_mod.with_overlay_mode(config, mode)
+        ) == (350, 4_000)
+
+
+def test_segmentation_limits_follow_the_config(tmp_path: Path) -> None:
+    config_mod, path = _load(
+        tmp_path,
+        "live_max_speech_ms = 6000\ntyping_max_speech_ms = 30000\n"
+        'typing_min_silence_ms = 700\noverlay_output = "screen"\n'
+        "overlay_enabled = true\n",
+    )
+    config = config_mod.load_config(path)
+    assert config_mod.segmenter_limits(config) == (350, 6_000)
+    typing = config_mod.with_overlay_mode(config, "type")
+    assert config_mod.segmenter_limits(typing) == (700, 30_000)

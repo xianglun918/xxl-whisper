@@ -168,6 +168,11 @@ def build_menu(
             text=lambda: translate_label(state_provider()),
             children=_translate_entries(state_provider, callbacks),
         ),
+        # 输出到哪儿（字幕条/光标）和翻译是两件独立的事：纯听写用户也用它。
+        Entry(
+            text=lambda: output_label(state_provider()),
+            children=_output_entries(state_provider, callbacks),
+        ),
         Entry(
             label="更多设置",
             children=_settings_entries(state_provider, callbacks),
@@ -248,7 +253,7 @@ def _input_entries(
 
 
 def _translate_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tuple[Entry, ...]:
-    """Return the translation/subtitle rows: two switches plus their radios."""
+    """Return the translation rows: the switch, the three directions, a hint."""
     entries: list[Entry] = [
         Entry(
             label="开启离线翻译",
@@ -264,16 +269,25 @@ def _translate_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tup
         )
     )
     entries.append(separator())
-    # Header first: the three ways below are one decision (it carries the bar on/off).
-    entries.append(Entry(label="输出方式（三选一）", enabled=False))
-    entries.extend(
+    entries.append(Entry(text=lambda: translate_hint(provider()), enabled=False))
+    return tuple(entries)
+
+
+def _output_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tuple[Entry, ...]:
+    """Return where the text goes: subtitles, cursor, or both.
+
+    One choice, because it also decides whether the subtitle bar exists: 只打字
+    means no bar. Kept separate from translation so a pure-dictation user still
+    gets this switch without opening the translation menu.
+    """
+    entries: list[Entry] = list(
         _option_entries(
             provider, OUTPUT_OPTIONS, callbacks.on_select_overlay_output,
             lambda state: state.overlay_output,
         )
     )
     entries.append(separator())
-    entries.append(Entry(text=lambda: translate_hint(provider()), enabled=False))
+    entries.append(Entry(text=lambda: output_hint(provider()), enabled=False))
     return tuple(entries)
 
 
@@ -356,23 +370,32 @@ def input_label(state: TrayState) -> str:
 
 
 def translate_label(state: TrayState) -> str:
-    """Parent row for translation+subtitles, carrying both states."""
-    parts: list[str] = []
-    if state.translate:
-        parts.append(ROUTE_SHORT.get(state.translate_route, "翻译"))
-    if state.overlay:
-        parts.append(OUTPUT_SHORT.get(state.overlay_output, "字幕"))
-    if not parts:
-        return "翻译与字幕：关"
-    return "翻译与字幕：" + " · ".join(parts)
+    """Parent row for translation, carrying the current direction."""
+    if not state.translate:
+        return "离线翻译：关"
+    arrow = ROUTE_SHORT.get(state.translate_route, "中→英")
+    return f"离线翻译：{arrow}"
+
+
+def output_label(state: TrayState) -> str:
+    """Parent row for the output choice, carrying the current mode."""
+    mode = OUTPUT_SHORT.get(state.overlay_output, "上屏+打字")
+    return f"输出方式：{mode}"
+
+
+def output_hint(state: TrayState) -> str:
+    """Explain what the current output mode does (disabled row)."""
+    if state.overlay_output == "type":
+        return "提示：只打字，屏幕上不显示字幕条"
+    if state.overlay and not state.translate:
+        return "提示：字幕当前显示原文（翻译未开）"
+    return "提示：字幕边说边出，打字按整句输出"
 
 
 def translate_hint(state: TrayState) -> str:
-    """Explain what the current combination actually does (disabled row)."""
-    if state.overlay and not state.translate:
-        return "提示：字幕当前显示原文，未翻译"
-    if state.translate and not state.translator_ready:
+    """Explain the translation state (disabled row)."""
+    if not state.translate:
+        return "提示：翻译未开启，字幕显示原文"
+    if not state.translator_ready:
         return "提示：翻译模型未就绪（首次需下载约 240MB）"
-    if state.overlay:
-        return "提示：字幕即时刷新，打字按整句输出"
-    return "提示：文字打到光标处"
+    return "提示：全程离线，句子说完即译"
