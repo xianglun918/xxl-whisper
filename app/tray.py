@@ -72,7 +72,15 @@ class Tray:
         self._icon.notify(message, title)
 
     def refresh_menu(self) -> None:
-        """Force the native menu to rebuild (a switch changed)."""
+        """Rebuild the native menu from the current state.
+
+        ``update_menu()`` alone only re-renders the existing native menu on
+        Windows: the item objects (and therefore the ``checked`` callables
+        captured when they were created) stay as they were, so a switch could be
+        flipped while the tick mark never moved. Assigning a brand-new Menu
+        forces pystray to recreate every item from a fresh state snapshot.
+        """
+        self._icon.menu = self._build_menu()
         self._icon.update_menu()
 
     # -- rendering ---------------------------------------------------------

@@ -234,6 +234,14 @@ def translate_route(source: str, target: str) -> TranslateRoute | None:
     return cast("TranslateRoute", key) if key in _TRANSLATE_ROUTES else None
 
 
+def parse_translate_route(route: str) -> TranslateRoute | None:
+    """Validate a "source-target" key from the tray; None when unsupported."""
+    source, sep, target = route.partition("-")
+    if not sep:
+        return None
+    return translate_route(source, target)
+
+
 def route_of(config: Config) -> TranslateRoute | None:
     """Route key for a loaded config (None only for a hand-edited bad pair)."""
     return translate_route(config.translate_source, config.translate_target)

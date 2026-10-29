@@ -11,7 +11,7 @@ import logging
 import queue
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import assert_never, cast
 
@@ -26,6 +26,7 @@ from app.config import (
     config_path,
     hotkey_vk,
     models_root,
+    parse_translate_route,
     route_of,
     save_config,
 )
@@ -57,7 +58,13 @@ from app.hotkey_logic import (
 )
 from app.partial import level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
-from app.translator import TranslationError, Translator, compose_text, has_translatable_text
+from app.translator import (
+    TRANSLATE_ROUTES,
+    TranslationError,
+    Translator,
+    compose_text,
+    has_translatable_text,
+)
 from app.tray import Tray, TrayCallbacks, TrayState
 from app.type_batcher import TypeBatcher
 from app.update_flow import UpdateFlow, UpdateFlowDeps
@@ -244,7 +251,9 @@ class DictationApp:
         self._tray = Tray(
             callbacks=TrayCallbacks(
                 on_exit=self._request_exit,
-                on_toggle_pause=lambda: self._queue.put(SetPaused(not self._paused)),
+                on_toggle_pause=lambda: self._tray(
+                    "pause", lambda: self._queue.put(SetPaused(not self._paused))
+                ),
                 on_select_mic=lambda name: self._queue.put(SetMic(name=name)),
                 on_toggle_autostart=self._on_toggle_autostart,
                 on_check_update=lambda: threading.Thread(
@@ -255,14 +264,18 @@ class DictationApp:
                 on_select_model=lambda kind: self._queue.put(SetModel(kind=kind)),
                 on_show_diagnostics=self._show_diagnostics_deferred,
                 on_toggle_disfluency=lambda: self._queue.put(SetDisfluency()),
-                on_toggle_continuous=lambda: self._queue.put(SetContinuous()),
-                on_toggle_translate=lambda: self._queue.put(SetTranslate()),
-                on_select_translate_route=lambda route: self._queue.put(
-                    SetTranslateRoute(route=route)
+                on_toggle_continuous=lambda: self._tray(
+                    "continuous", lambda: self._queue.put(SetContinuous())
                 ),
-                on_toggle_overlay=lambda: self._queue.put(SetOverlay()),
-                on_select_overlay_output=lambda mode: self._queue.put(
-                    SetOverlayOutput(mode=mode)
+                on_toggle_translate=lambda: self._tray(
+                    "translate", lambda: self._queue.put(SetTranslate())
+                ),
+                on_select_translate_route=self._on_tray_route,
+                on_toggle_overlay=lambda: self._tray(
+                    "overlay", lambda: self._queue.put(SetOverlay())
+                ),
+                on_select_overlay_output=lambda mode: self._tray(
+                    f"overlay-output:{mode}", lambda: self._queue.put(SetOverlayOutput(mode=mode))
                 ),
                 on_select_system_audio=lambda device_id: self._queue.put(
                     SetSystemAudio(device_id=device_id)
@@ -651,15 +664,60 @@ class DictationApp:
             type(self._translator).__name__ if self._translator is not None else "none",
         )
 
+    def _tray(self, name: str, action: Callable[[], None]) -> None:
+        """Log a tray click before dispatching it.
+
+        The log is the only way to tell "the click never reached the app" (menu
+        wiring) from "the click was applied but had no visible effect" (state).
+        """
+        log.info("tray: %s", name)
+        action()
+
+    def _on_tray_route(self, route: str) -> None:
+        """Tray thread: log the click, then hand it to the worker."""
+        log.info("tray: route action fired %r", route)
+        self._queue.put(SetTranslateRoute(route=route))
+
     def _set_translate_route(self, route: str) -> None:
-        """Switch 中→英 / 英→中 / 日→中; each route has its own local model(s)."""
-        if not self._controls.set_translate_route(route):
+        """Switch 中→英 / 英→中 / 日→中; each route has its own local model(s).
+
+        Transactional on purpose: the new direction's model is downloaded and
+        loaded **before** the switch is committed, and the old translator is kept
+        if that fails. An earlier version cleared the translator first, so a
+        missing/failed download silently turned translation off altogether —
+        which looked exactly like "the menu button does nothing".
+        """
+        log.info("tray: translate route clicked %r (current=%s)", route, route_of(self._config))
+        wanted = parse_translate_route(route)
+        if wanted is None:
+            self._indicator.flash(f"未知的翻译方向：{route}", 2500)
+            log.warning("tray: unknown route %r", route)
             return
-        self._flush_typing()  # flush with the old translator before swapping it
-        self._translator = None  # drop the old direction before loading the new one
+        if wanted == route_of(self._config):
+            self._indicator.flash(f"翻译方向已是 {TRANSLATE_ROUTES[wanted]}", 1800)
+            return
+        pending = self._translator
         if self._config.translate:
-            self._translator = self._controls.build_translator()
+            pending = self._controls.build_translator(
+                route=wanted, disable_on_failure=False
+            )
+            if pending is None:
+                # Keep translation exactly as it was: switching back to a route
+                # whose model is missing must not cost the user the working one.
+                self._indicator.flash(
+                    f"{TRANSLATE_ROUTES[wanted]} 模型不可用，已保留原方向（详见日志）", 4000
+                )
+                self._tray.notify(
+                    f"{TRANSLATE_ROUTES[wanted]} 模型下载/加载失败，翻译方向未切换",
+                    title="xxl-whisper",
+                )
+                return
+        self._flush_typing()  # flush with the old translator before swapping it
+        if not self._controls.set_translate_route(wanted):
+            return
+        self._translator = pending
         self._tray.refresh_menu()
+        self._indicator.flash(f"翻译方向：{TRANSLATE_ROUTES[wanted]}", 2000)
         log.info(
             "translate route=%s translator=%s",
             route_of(self._config),

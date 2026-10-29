@@ -284,7 +284,9 @@ class Controls:
             self._deps.indicator.flash("已切到英→中：识别语言已设为 auto", 2500)
         return True
 
-    def build_translator(self) -> Translator | None:
+    def build_translator(
+        self, route: str | None = None, *, disable_on_failure: bool = True
+    ) -> Translator | None:
         """Download-if-needed and load the local NMT model(s) for the route.
 
         Runs on the worker thread (blocking download + model load). A failure
@@ -299,11 +301,15 @@ class Controls:
         config = self._deps.get_config()
         if not config.translate:
             return None
-        route = route_of(config)
-        if route is None:
-            log.warning("translate route unsupported: %s→%s", config.translate_source,
-                        config.translate_target)
+        wanted = route or route_of(config)
+        if wanted is None:
+            log.warning(
+                "translate route unsupported: %s→%s",
+                config.translate_source,
+                config.translate_target,
+            )
             return None
+        route = wanted
         pairs = TRANSLATE_ROUTE_MODELS[route]
 
         def _progress(name: str, done: int, total: int) -> None:
@@ -341,7 +347,8 @@ class Controls:
             native.util.show_info(
                 f"翻译模型不可用：{reason}\n\n{guide}\n（翻译已关闭，语音听写不受影响）"
             )
-            self.disable_translate()
+            if disable_on_failure:
+                self.disable_translate()
             return None
         hops = " → ".join(pair.split("-")[0] for pair in pairs) + f" → {pairs[-1].split('-')[1]}"
         self._deps.indicator.flash(f"翻译已开启（本地模型 {hops}）", 1800)
