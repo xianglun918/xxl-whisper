@@ -83,7 +83,11 @@ class Recognizer:
                     language=language,
                     use_itn=True,
                 )
-                log.info("recognizer: sensevoice (disfluency=%s — no effect)", disfluency)
+                log.info(
+                    "recognizer: sensevoice (language=%r, disfluency=%s — no effect)",
+                    language,
+                    disfluency,
+                )
             case "whisper_turbo":
                 self._recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
                     encoder=str(model_dir / "turbo-encoder.int8.onnx"),

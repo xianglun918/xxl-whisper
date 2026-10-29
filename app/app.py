@@ -751,8 +751,24 @@ class DictationApp:
             self._indicator.flash(f"翻译方向已是 {route_text(wanted)}", 1800)
             return
         self._flush_typing()  # let the in-flight sentence use the old translator
+        previous_language = self._config.language
         if not self._controls.set_translate_route(wanted):
             return
+        # A 日→… route pins the recogniser language. The *running* recognizer
+        # keeps its old language until it is rebuilt, and SenseVoice decoding
+        # Japanese as Chinese produces gibberish that the translator then
+        # faithfully translates ("translation is completely wrong").
+        if self._config.language != previous_language:
+            rebuilt = self._controls.rebuild_recognizer()
+            if rebuilt is not None:
+                self._recognizer = rebuilt
+                log.info(
+                    "recognizer rebuilt for language=%s (route %s)",
+                    self._config.language,
+                    wanted,
+                )
+            else:
+                log.warning("recognizer rebuild failed; language stays %s", previous_language)
         self._tray.refresh_menu()  # tick moves now, not after the download
         if not self._config.translate:
             self._indicator.flash(

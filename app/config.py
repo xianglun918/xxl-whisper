@@ -274,6 +274,22 @@ def with_overlay_mode(config: Config, mode: OverlayOutput) -> Config:
     )
 
 
+def language_for_route(current_language: str, route: str) -> str:
+    """Return the recogniser language that *route* implies.
+
+    Choosing a 日→… route **must** pin ``ja``: SenseVoice decodes Japanese audio
+    as Chinese otherwise, and the translator then faithfully translates the
+    gibberish. Leaving a 日→… route restores a sensible default, but a user who
+    deliberately chose ``auto`` keeps it.
+    """
+    source = route.split("-")[0]
+    if source == "ja":
+        return "ja"
+    if current_language == "ja":
+        return "auto"
+    return current_language
+
+
 def parse_translate_route(route: str) -> TranslateRoute | None:
     """Validate a "source-target" key from the tray; None when unsupported."""
     source, sep, target = route.partition("-")

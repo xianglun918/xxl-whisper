@@ -24,6 +24,7 @@ from app.config import (
     TranslateTarget,
     config_path,
     hotkey_vk,
+    language_for_route,
     route_of,
     save_config,
     translate_route,
@@ -149,6 +150,20 @@ class Controls:
 
     # -- model ----------------------------------------------------------------
 
+    def rebuild_recognizer(self) -> Recognizer | None:
+        """Rebuild the current model with the current config (e.g. ``language``).
+
+        Choosing a 日→… translation route pins ``language`` to ``ja``. Without a
+        rebuild the *running* recognizer keeps its old language, so Japanese
+        audio is decoded as Chinese — the translator then faithfully translates
+        gibberish, which reads as "translation is completely wrong".
+        """
+        try:
+            return self._build_recognizer(self._deps.get_config().model)
+        except Exception:
+            log.exception("recognizer rebuild failed")
+            return None
+
     def swap_model(self, kind: str) -> Recognizer | None:
         """Download-if-needed and build the recognizer for another model.
 
@@ -265,11 +280,8 @@ class Controls:
         if new_route == route_of(config):
             return False
         source, target = new_route.split("-")
-        language = config.language
-        if source == "ja":
-            language = "ja"
-        elif config.language == "ja":  # leaving 日→中: stop decoding as Japanese
-            language = "auto" if target == "zh" else "zh"
+        language = language_for_route(config.language, new_route)
+        _ = (source, target)  # parsed above for validation only
         self._deps.set_config(
             dataclasses.replace(
                 config,
@@ -280,7 +292,12 @@ class Controls:
         )
         save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
-        log.info("translate route -> %s (language=%s)", new_route, language)
+        log.info(
+            "translate route -> %s (language=%s%s)",
+            new_route,
+            language,
+            "; recognizer must be rebuilt" if language != config.language else "",
+        )
         if source == "ja":
             self._deps.indicator.flash("已切到日→中：识别语言已设为 ja", 2500)
         elif target == "zh" and language == "auto":
