@@ -85,10 +85,10 @@ def _child(parent: Entry, needle: str) -> Entry:
     raise AssertionError(message)
 
 
-def test_at_most_six_top_level_rows() -> None:
+def test_at_most_seven_top_level_rows() -> None:
     menu = build_menu(_state(), _callbacks(), _inputs())
     rows = _visible(menu)
-    assert len(rows) <= 6
+    assert len(rows) <= 7
     assert rows[0].label == ""  # the status row is text-only
     assert rows[-1].label == "退出"
 
@@ -118,8 +118,20 @@ def test_translation_and_subtitles_live_together() -> None:
 def test_rare_settings_are_grouped_under_more() -> None:
     row = _child(Entry(children=build_menu(_state(), _callbacks(), _inputs())), "更多设置")
     labels = [child.label for child in _visible(row.children)]
-    for expected in ("热键", "识别模型", "持续听写", "开机自启", "输入诊断", "检查更新"):
+    for expected in ("热键", "识别模型", "开机自启", "输入诊断", "检查更新"):
         assert expected in labels
+
+
+def test_continuous_dictation_is_a_top_level_switch() -> None:
+    """It is a daily toggle (change of scene), not a set-once setting."""
+    menu = build_menu(_state(continuous=True), _callbacks(), _inputs())
+    top = [row.label for row in _visible(menu)]
+    assert "持续听写" in top
+    assert top.index("持续听写") == top.index("暂停语音热键") + 1
+    continuous_row = next(row for row in _visible(menu) if row.label == "持续听写")
+    assert continuous_row.checked is True
+    more = _child(Entry(children=menu), "更多设置")
+    assert not any(child.label == "持续听写" for child in more.children)
 
 
 def test_parent_labels_carry_live_state() -> None:

@@ -13,9 +13,10 @@ The menu is grouped by intent:
     状态行
     ─────────────
     暂停语音热键
+    持续听写
     输入源      ▸ 麦克风 / 系统声音
     翻译与字幕  ▸ 翻译开关、方向、字幕开关、输出方式
-    更多设置    ▸ 热键 / 模型 / 顺滑 / 持续听写 / 自启 / 诊断 / 更新
+    更多设置    ▸ 热键 / 模型 / 顺滑 / 自启 / 诊断 / 更新
     ─────────────
     退出
 
@@ -163,6 +164,8 @@ def build_menu(
         Entry(text=lambda: state_text(state), enabled=False),
         separator(),
         Entry(label="暂停语音热键", action=callbacks.on_toggle_pause, checked=state.paused),
+        # 持续听写是和暂停同级的日常开关：换场景就要开/关，埋在二级里太深。
+        Entry(label="持续听写", action=callbacks.on_toggle_continuous, checked=state.continuous),
         Entry(label=input_label(state), children=_input_entries(state, callbacks, lists)),
         Entry(
             label=translate_label(state),
@@ -287,7 +290,6 @@ def _settings_entries(
             action=callbacks.on_toggle_disfluency,
             checked=state.disfluency == "smooth",
         ),
-        Entry(label="持续听写", action=callbacks.on_toggle_continuous, checked=state.continuous),
         Entry(label="开机自启", action=callbacks.on_toggle_autostart, checked=state.autostart),
         separator(),
         Entry(label="输入诊断", action=callbacks.on_show_diagnostics),
