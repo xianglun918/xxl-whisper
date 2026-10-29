@@ -255,7 +255,7 @@ class DictationApp:
         self._tray = Tray(
             callbacks=TrayCallbacks(
                 on_exit=self._request_exit,
-                on_toggle_pause=lambda: self._tray(
+                on_toggle_pause=lambda: self._tray_click(
                     "pause", lambda: self._queue.put(SetPaused(not self._paused))
                 ),
                 on_select_mic=lambda name: self._queue.put(SetMic(name=name)),
@@ -267,20 +267,20 @@ class DictationApp:
                 on_capture_hotkey=lambda: self._queue.put(CaptureHotkey()),
                 on_select_model=lambda kind: self._queue.put(SetModel(kind=kind)),
                 on_show_diagnostics=self._show_diagnostics_deferred,
-                on_select_disfluency=lambda kind: self._tray(
+                on_select_disfluency=lambda kind: self._tray_click(
                     f"disfluency:{kind}", lambda: self._queue.put(SetDisfluency(kind=kind))
                 ),
-                on_toggle_continuous=lambda: self._tray(
+                on_toggle_continuous=lambda: self._tray_click(
                     "continuous", lambda: self._queue.put(SetContinuous())
                 ),
-                on_toggle_translate=lambda: self._tray(
+                on_toggle_translate=lambda: self._tray_click(
                     "translate", lambda: self._queue.put(SetTranslate())
                 ),
                 on_select_translate_route=self._on_tray_route,
-                on_toggle_overlay=lambda: self._tray(
+                on_toggle_overlay=lambda: self._tray_click(
                     "overlay", lambda: self._queue.put(SetOverlay())
                 ),
-                on_select_overlay_output=lambda mode: self._tray(
+                on_select_overlay_output=lambda mode: self._tray_click(
                     f"overlay-output:{mode}", lambda: self._queue.put(SetOverlayOutput(mode=mode))
                 ),
                 on_select_system_audio=lambda device_id: self._queue.put(
@@ -677,8 +677,12 @@ class DictationApp:
             type(self._translator).__name__ if self._translator is not None else "none",
         )
 
-    def _tray(self, name: str, action: Callable[[], None]) -> None:
+    def _tray_click(self, name: str, action: Callable[[], None]) -> None:
         """Log a tray click before dispatching it.
+
+        Named ``_tray_click`` and not ``_tray``: ``self._tray`` holds the Tray
+        instance, and an instance attribute shadows a method of the same name —
+        calling it then fails with "'Tray' object is not callable".
 
         The log is the only way to tell "the click never reached the app" (menu
         wiring) from "the click was applied but had no visible effect" (state).
