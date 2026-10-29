@@ -52,6 +52,7 @@ from app.hotkey_logic import (
     Press,
     Release,
     StartHold,
+    loading_hint_visible,
     push_to_talk_active,
 )
 from app.partial import level_from_block, new_text_or_none, truncate_partial
@@ -872,7 +873,7 @@ class DictationApp:
         if self._recorder is not None:
             self._recorder.start_sink(blocks)
         self._continuous = True
-        self._set_hooks_armed()  # stays armed: swallow the key, ignore the press
+        self._set_hooks_armed()  # disarmed: the key stays native, presses ignored
         # Three threads, so no role can stall another: the VAD consumer stays
         # real-time (never decodes), the finished-sentence decoder always wins,
         # and the live partial runs on its own thread so an in-flight partial
@@ -1288,13 +1289,13 @@ class DictationApp:
         While the model loads the hooks stay disarmed (CapsLock is native) so a
         click toggles caps even though the worker is busy decoding.
 
-        Continuous dictation stays *armed* on purpose: armed means "swallow the
-        key", which is exactly what we want while the mic is owned by continuous
-        mode — otherwise a stray CapsLock press would toggle caps (and pop the
-        "model loading" hint) in the middle of a live transcript. The press is
-        ignored a layer above, in ``_on_key_transition``.
+        Continuous dictation stays *disarmed*: the key then behaves natively, so
+        CapsLock still toggles caps while a live transcript is running. What must
+        not happen is "hold to talk", and that is dropped a layer above in
+        ``_on_key_transition``; the misleading "model loading" pill is silenced
+        in ``_show_loading_prompt``.
         """
-        armed = self._model_ready
+        armed = self._model_ready and not self._continuous
         if self._hook is not None:
             self._hook.set_armed(armed)
         if self._mouse_hook is not None:
@@ -1304,8 +1305,12 @@ class DictationApp:
         """Hook-thread callback: hint that dictation is not ready yet.
 
         Runs while the hooks are disarmed (model loading / switching) so a
-        hold does not feel like a dead key. The indicator facade is thread-safe.
+        hold does not feel like a dead key. During continuous dictation nothing
+        is loading — the key is simply native — so the pill must stay quiet.
+        The indicator facade is thread-safe.
         """
+        if not loading_hint_visible(continuous=self._continuous):
+            return  # continuous: the key is simply native, leave the pill alone
         if show:
             self._indicator.show("模型加载中…请稍候")
         else:

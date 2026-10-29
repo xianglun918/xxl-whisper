@@ -14,10 +14,23 @@ def push_to_talk_active(*, continuous: bool) -> bool:
     """Return whether a hotkey press may start a push-to-talk recording.
 
     Push-to-talk and continuous dictation are mutually exclusive: continuous
-    mode already owns the microphone, so a press must be **inert** — no
-    recording, no pill, no "model loading" hint. The key is still swallowed by
-    the hook (see ``DictationApp._set_hooks_armed``) so it cannot toggle CapsLock
-    or type into the document while the user is dictating.
+    mode already owns the microphone, so a press must not start a recording.
+
+    The key itself keeps working: while continuous mode runs the hooks stay
+    *disarmed*, so CapsLock still toggles caps exactly as the OS normally does —
+    only the "hold to talk" behaviour is suppressed. The disarmed "model
+    loading" hint is silenced separately, since the app is not loading anything.
+    """
+    return not continuous
+
+
+def loading_hint_visible(*, continuous: bool) -> bool:
+    """Return whether the disarmed "model loading" pill may be shown at all.
+
+    Disarmed means "the key is native": that is normal while the model is still
+    loading, but during continuous dictation nothing is loading, so the pill
+    would be a lie — and showing then hiding it would also wipe the sticky
+    "listening" pill the continuous mode keeps on screen.
     """
     return not continuous
 
