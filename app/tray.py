@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw
 import app.recorder as recorder_mod
 from app import native
 from app.config import HOTKEY_VK
+from app.translator import TRANSLATE_ROUTES
 
 _HOTKEY_LABELS = {
     "caps_lock": "CapsLock",
@@ -24,6 +25,13 @@ _HOTKEY_LABELS = {
 _MODEL_LABELS = {
     "sensevoice": "SenseVoice-Small（默认 · 230MB · 快）",
     "funasr_nano": "FunASR-Nano（更准 · 约 1GB · 首次需下载）",
+}
+
+#: Compact route label for the status line (the full label lives in the menu).
+_ROUTE_ARROWS: dict[str, str] = {
+    "zh-en": "中→英",
+    "en-zh": "英→中",
+    "ja-zh": "日→中",
 }
 
 
@@ -47,7 +55,7 @@ class TrayCallbacks:
     on_toggle_disfluency: Callable[[], None]
     on_toggle_continuous: Callable[[], None]
     on_toggle_translate: Callable[[], None]
-    on_select_translate_target: Callable[[str], None]
+    on_select_translate_route: Callable[[str], None]
     on_toggle_overlay: Callable[[], None]
     on_select_overlay_output: Callable[[str], None]
 
@@ -63,7 +71,7 @@ class TrayState:
     disfluency: str
     continuous: bool
     translate: bool
-    translate_target: str
+    translate_route: str
     overlay: bool
     overlay_output: str
 
@@ -222,7 +230,7 @@ class Tray:
         ]
 
     def _translate_items(self) -> list[pystray.MenuItem]:
-        """Translation submenu: on/off plus the direction (which model to use)."""
+        """Return the translation submenu: on/off plus the direction (which models to use)."""
         state = self._state_provider()
         return [
             pystray.MenuItem(
@@ -231,18 +239,15 @@ class Tray:
                 checked=lambda _item: self._state_provider().translate,
             ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "中 → 英（说中文，出英文）",
-                self._select_translate_target("en"),
-                checked=self._translate_target_checked("en"),
-                radio=True,
-            ),
-            pystray.MenuItem(
-                "英 → 中（说英文，出中文）",
-                self._select_translate_target("zh"),
-                checked=self._translate_target_checked("zh"),
-                radio=True,
-            ),
+            *[
+                pystray.MenuItem(
+                    label,
+                    self._select_translate_route(route),
+                    checked=self._translate_route_checked(route),
+                    radio=True,
+                )
+                for route, label in TRANSLATE_ROUTES.items()
+            ],
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 _translate_model_hint(state),
@@ -251,17 +256,17 @@ class Tray:
             ),
         ]
 
-    def _select_translate_target(self, target: str) -> Callable[[], None]:
+    def _select_translate_route(self, route: str) -> Callable[[], None]:
         """Zero-arg action factory (same pystray arity trap as _select_mic)."""
 
         def action() -> None:
-            self._callbacks.on_select_translate_target(target)
+            self._callbacks.on_select_translate_route(route)
 
         return action
 
-    def _translate_target_checked(self, target: str) -> Callable[[object], bool]:
+    def _translate_route_checked(self, route: str) -> Callable[[object], bool]:
         def checked(_item: object) -> bool:
-            return self._state_provider().translate_target == target
+            return self._state_provider().translate_route == route
 
         return checked
 
@@ -327,7 +332,7 @@ class Tray:
         state = self._state_provider()
         if not state.ready:
             return "状态：启动中…"
-        arrow = "中→英" if state.translate_target == "en" else "英→中"
+        arrow = _ROUTE_ARROWS.get(state.translate_route, "中→英")
         if state.continuous:
             suffix = f" · 翻译开（{arrow}）" if state.translate else ""
             return f"状态：持续听写中（热键已停用，说话即上屏）{suffix}"
@@ -340,9 +345,11 @@ class Tray:
 
 def _translate_model_hint(state: TrayState) -> str:
     """Explain which local model the current direction uses (disabled label)."""
-    if state.translate_target == "en":
-        return "模型：opus-mt-zh-en"
-    return "模型：opus-mt-en-zh"
+    if state.translate_route == "ja-zh":
+        return "模型：opus-mt-ja-en → opus-mt-en-zh（首次约 240MB + 245MB）"
+    if state.translate_route == "en-zh":
+        return "模型：opus-mt-en-zh"
+    return "模型：opus-mt-zh-en"
 
 
 def _draw_icon() -> Image.Image:

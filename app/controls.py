@@ -10,6 +10,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from app import native
 from app.asr import Recognizer
@@ -18,12 +19,16 @@ from app.config import (
     Config,
     Disfluency,
     ModelKind,
+    TranslateSource,
     TranslateTarget,
     config_path,
     hotkey_vk,
+    route_of,
     save_config,
+    translate_route,
 )
 from app.downloader import (
+    TRANSLATE_ROUTE_MODELS,
     DownloadError,
     ensure_model,
     ensure_translate_model,
@@ -32,8 +37,14 @@ from app.downloader import (
 )
 from app.emit import is_classic_control
 from app.recorder import Recorder
+from app.translator import (
+    ChainedTranslator,
+    NmtSettings,
+    TranslationError,
+    Translator,
+    load_translator,
+)
 from app.tray import Tray
-from app.translator import NmtSettings, TranslationError, Translator, load_translator
 
 log = logging.getLogger(__name__)
 
@@ -209,70 +220,114 @@ class Controls:
         )
         return enabled
 
-    def set_translate_target(self, target: str) -> bool:
-        """Switch translation direction (en = 中→英, zh = 英→中).
+    def set_translate_route(self, route: str) -> bool:
+        """Switch translation direction ("zh-en" / "en-zh" / "ja-zh").
 
-        Returns True when the target actually changed, so the caller knows it
-        must rebuild the translator (each direction is a different model file).
+        Returns True when the route actually changed, so the caller knows it
+        must rebuild the translator (each direction is a different model file,
+        and 日→中 needs two).
+
+        The recogniser language follows the route: choosing 日→中 pins
+        ``language`` to ``ja`` (SenseVoice decodes Japanese as Chinese
+        otherwise), and leaving it restores a sensible default. A user who has
+        deliberately set ``auto`` keeps it.
         """
         config = self._deps.get_config()
-        if target not in ("en", "zh"):
-            log.warning("unknown translate target %r", target)
+        source_part, sep, target_part = route.partition("-")
+        if not sep:
+            log.warning("unknown translate route %r", route)
             return False
-        new: TranslateTarget = "en" if target == "en" else "zh"
-        if new == config.translate_target:
+        new_route = translate_route(source_part, target_part)
+        if new_route is None:
+            log.warning("unsupported translate route %r", route)
             return False
-        self._deps.set_config(dataclasses.replace(config, translate_target=new))
+        if new_route == route_of(config):
+            return False
+        source, target = new_route.split("-")
+        language = config.language
+        if source == "ja":
+            language = "ja"
+        elif config.language == "ja":  # leaving 日→中: stop decoding as Japanese
+            language = "auto" if target == "zh" else "zh"
+        self._deps.set_config(
+            dataclasses.replace(
+                config,
+                translate_source=cast("TranslateSource", source),
+                translate_target=cast("TranslateTarget", target),
+                language=language,
+            )
+        )
         save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
-        log.info("translate target -> %s", new)
-        if new == "zh" and config.language == "zh":
-            # The recogniser is still pinned to Chinese; English speech needs
-            # auto (or en) to transcribe well, and that only lives in the config.
-            self._deps.indicator.flash("提示：识别语言仍是 zh，说英文建议改 language = auto", 3000)
+        log.info("translate route -> %s (language=%s)", new_route, language)
+        if source == "ja":
+            self._deps.indicator.flash("已切到日→中：识别语言已设为 ja", 2500)
+        elif target == "zh" and language == "auto":
+            self._deps.indicator.flash("已切到英→中：识别语言已设为 auto", 2500)
         return True
 
     def build_translator(self) -> Translator | None:
-        """Download-if-needed and load the local NMT model for the target language.
+        """Download-if-needed and load the local NMT model(s) for the route.
 
         Runs on the worker thread (blocking download + model load). A failure
         disables translation rather than retrying on every utterance: a user who
         cannot fetch the model should get one clear dialog, not a stall on each
         sentence. Returns None when translation is off or could not start.
+
+        日→中 needs two models (ja→en, then en→zh), so the loader walks the
+        route's pairs and chains them; a single-hop route is just a chain of
+        one and behaves exactly as before.
         """
         config = self._deps.get_config()
         if not config.translate:
             return None
+        route = route_of(config)
+        if route is None:
+            log.warning("translate route unsupported: %s→%s", config.translate_source,
+                        config.translate_target)
+            return None
+        pairs = TRANSLATE_ROUTE_MODELS[route]
 
         def _progress(name: str, done: int, total: int) -> None:
             pct = done / total if total else 0.0
             self._deps.indicator.progress(pct, f"下载翻译模型 {Path(name).name}")
 
         try:
-            files = ensure_translate_model(
-                config.translate_target,
-                self._deps.models_root,
-                _progress,
-                proxy=config.proxy,
-            )
-            translator = load_translator(
-                NmtSettings(
-                    model_dir=files.directory,
-                    target=config.translate_target,
-                    num_threads=self._deps.num_threads(),
+            stages: list[Translator] = []
+            for pair in pairs:
+                files = ensure_translate_model(
+                    pair,
+                    self._deps.models_root,
+                    _progress,
+                    proxy=config.proxy,
                 )
+                stages.append(
+                    load_translator(
+                        NmtSettings(
+                            model_dir=files.directory,
+                            target=pair.split("-")[1],
+                            num_threads=self._deps.num_threads(),
+                        )
+                    )
+                )
+            translator: Translator = (
+                stages[0] if len(stages) == 1 else ChainedTranslator(stages)
             )
         except (DownloadError, TranslationError) as exc:
             reason = getattr(exc, "reason", str(exc))
             log.warning("translator unavailable: %s", reason)
             self._deps.indicator.hide()
-            guide = translate_manual_guide(config.translate_target, self._deps.models_root)
+            guide = "\n\n".join(
+                translate_manual_guide(pair, self._deps.models_root) for pair in pairs
+            )
             native.util.show_info(
                 f"翻译模型不可用：{reason}\n\n{guide}\n（翻译已关闭，语音听写不受影响）"
             )
             self.disable_translate()
             return None
-        self._deps.indicator.flash("翻译已开启（本地模型）", 1500)
+        hops = " → ".join(pair.split("-")[0] for pair in pairs) + f" → {pairs[-1].split('-')[1]}"
+        self._deps.indicator.flash(f"翻译已开启（本地模型 {hops}）", 1800)
+        log.info("translator ready: route=%s hops=%s", route, pairs)
         return translator
 
     def disable_translate(self) -> None:

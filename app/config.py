@@ -4,16 +4,19 @@ The file crosses the trust boundary (user-editable), so parsing is total:
 either a valid frozen :class:`Config` or a typed :class:`ConfigError`.
 """
 
+import logging
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, NoReturn
+from typing import Literal, NoReturn, cast
 
 from app import native
 
 APP_DIR_NAME: str = "xxl-whisper"
+
+log = logging.getLogger(__name__)
 
 type ModelKind = Literal["sensevoice", "funasr_nano"]
 
@@ -25,6 +28,13 @@ type Disfluency = Literal["verbatim", "smooth"]
 #: Translation target language. "en" means Chinese speech -> English text
 #: (zh-en model); "zh" is the reverse (en-zh model).
 type TranslateTarget = Literal["en", "zh"]
+
+#: Spoken language fed into the translator. Japanese has no direct ja→zh
+#: weight, so "ja" is chained through English (see ``TRANSLATE_ROUTE_MODELS``).
+type TranslateSource = Literal["zh", "en", "ja"]
+
+#: The supported (source, target) combinations, as one canonical key.
+type TranslateRoute = Literal["zh-en", "en-zh", "ja-zh"]
 
 #: What finally reaches the cursor: only the translation, or source + translation.
 type TranslateMode = Literal["replace", "bilingual"]
@@ -57,6 +67,16 @@ _DISFLUENCY: Mapping[str, None] = MappingProxyType(
 )
 
 _TRANSLATE_TARGETS: Mapping[str, None] = MappingProxyType({"en": None, "zh": None})
+
+_TRANSLATE_SOURCES: Mapping[str, None] = MappingProxyType(
+    {"zh": None, "en": None, "ja": None}
+)
+
+#: Only these combinations have models behind them; anything else is a config
+#: error the user must fix rather than a silent no-op.
+_TRANSLATE_ROUTES: Mapping[str, None] = MappingProxyType(
+    {"zh-en": None, "en-zh": None, "ja-zh": None}
+)
 
 _TRANSLATE_MODES: Mapping[str, None] = MappingProxyType(
     {"replace": None, "bilingual": None}
@@ -107,6 +127,7 @@ class Config:
     vad_max_speech_ms: int
     translate: bool
     translate_target: TranslateTarget
+    translate_source: TranslateSource
     translate_mode: TranslateMode
     overlay_enabled: bool
     overlay_output: OverlayOutput
@@ -141,6 +162,7 @@ def default_config() -> Config:
         vad_max_speech_ms=20_000,
         translate=False,
         translate_target="en",
+        translate_source="zh",
         translate_mode="bilingual",
         overlay_enabled=False,
         overlay_output="both",
@@ -187,6 +209,17 @@ def hotkey_vk(hotkey: str | int) -> int:
     return HOTKEY_VK[hotkey]
 
 
+def translate_route(source: str, target: str) -> TranslateRoute | None:
+    """Canonical route key ("ja-zh"), or None when the pair has no models."""
+    key = f"{source}-{target}"
+    return cast("TranslateRoute", key) if key in _TRANSLATE_ROUTES else None
+
+
+def route_of(config: Config) -> TranslateRoute | None:
+    """Route key for a loaded config (None only for a hand-edited bad pair)."""
+    return translate_route(config.translate_source, config.translate_target)
+
+
 def load_config(path: Path) -> Config:
     """Parse a config file into a Config; missing file yields defaults."""
     if not path.exists():
@@ -196,6 +229,23 @@ def load_config(path: Path) -> Config:
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(reason=f"malformed TOML ({exc})", path=path) from exc
     p = _Parser(raw=raw, path=path)
+    target = p.translate_target("translate_target", "en")
+    # Configs written before translate_source existed recorded only the target,
+    # and 中→英 / 英→中 were the only routes, so infer the source from it.
+    inferred: TranslateSource = "en" if target == "zh" else "zh"
+    source = p.translate_source("translate_source", inferred)
+    if translate_route(source, target) is None:
+        # Forgiving on purpose: a hand-edited pair we have no models for must
+        # not stop dictation from starting. Fall back to the route the target
+        # implies and say so in the log.
+        log.warning(
+            "unsupported translate direction %s->%s; using %s->%s",
+            source,
+            target,
+            inferred,
+            target,
+        )
+        source = inferred
     return Config(
         hotkey=p.hotkey("hotkey", native.hotkey.DEFAULT_HOTKEY),
         hold_threshold_ms=p.int_in("hold_threshold_ms", 400, 10, 2_000),
@@ -214,7 +264,8 @@ def load_config(path: Path) -> Config:
         vad_min_silence_ms=p.int_in("vad_min_silence_ms", 500, 50, 10_000),
         vad_max_speech_ms=p.int_in("vad_max_speech_ms", 20_000, 1_000, 60_000),
         translate=p.bool_flag("translate", False),
-        translate_target=p.translate_target("translate_target", "en"),
+        translate_target=target,
+        translate_source=source,
         translate_mode=p.translate_mode("translate_mode", "bilingual"),
         overlay_enabled=p.bool_flag("overlay_enabled", False),
         overlay_output=p.overlay_output("overlay_output", "both"),
@@ -251,6 +302,7 @@ def save_config(path: Path, config: Config) -> None:
         f"vad_max_speech_ms = {config.vad_max_speech_ms}",
         f"translate = {str(config.translate).lower()}",
         f"translate_target = {_quote(config.translate_target)}",
+        f"translate_source = {_quote(config.translate_source)}",
         f"translate_mode = {_quote(config.translate_mode)}",
         f"overlay_enabled = {str(config.overlay_enabled).lower()}",
         f"overlay_output = {_quote(config.overlay_output)}",
@@ -323,6 +375,16 @@ class _Parser:
     def translate_target(self, name: str, default: TranslateTarget) -> TranslateTarget:
         value = self.choice(name, default, _TRANSLATE_TARGETS)
         return "en" if value == "en" else "zh"
+
+    def translate_source(self, name: str, default: TranslateSource) -> TranslateSource:
+        value = self.choice(name, default, _TRANSLATE_SOURCES)
+        match value:
+            case "ja":
+                return "ja"
+            case "en":
+                return "en"
+            case _:
+                return "zh"
 
     def translate_mode(self, name: str, default: TranslateMode) -> TranslateMode:
         value = self.choice(name, default, _TRANSLATE_MODES)

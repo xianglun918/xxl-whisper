@@ -46,12 +46,14 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "BILINGUAL_SEPARATOR",
+    "TRANSLATE_MODES",
+    "TRANSLATE_ROUTES",
+    "TRANSLATE_TARGETS",
+    "ChainedTranslator",
     "MarianTokenizer",
     "NmtSettings",
     "NullTranslator",
     "OnnxNmtTranslator",
-    "TRANSLATE_MODES",
-    "TRANSLATE_TARGETS",
     "TranslationError",
     "Translator",
     "blocked_tokens",
@@ -66,6 +68,14 @@ BILINGUAL_SEPARATOR: str = "\n"
 
 #: Human labels used by the tray menu and config docs.
 TRANSLATE_TARGETS: dict[str, str] = {"en": "英语", "zh": "中文"}
+
+#: Supported routes, in tray order, with the human label shown in the menu.
+#: "ja-zh" is chained through English (no official ja→zh Marian weight).
+TRANSLATE_ROUTES: dict[str, str] = {
+    "zh-en": "中 → 英（说中文，出英文）",
+    "en-zh": "英 → 中（说英文，出中文）",
+    "ja-zh": "日 → 中（说日语，出中文，经英文中转）",
+}
 
 #: How the translated text reaches the cursor.
 TRANSLATE_MODES: dict[str, str] = {
@@ -459,3 +469,36 @@ class OnnxNmtTranslator:
 def load_translator(settings: NmtSettings) -> Translator:
     """Build a translator, converting loader failures into TranslationError."""
     return OnnxNmtTranslator(settings)
+
+
+class ChainedTranslator:
+    """Translate through intermediate languages, one Marian pass per hop.
+
+    Japanese has no official ``opus-mt`` ja→zh weight, so the route runs
+    ja→en→zh: two models, two passes. Each hop is a normal
+    :class:`OnnxNmtTranslator`, so this class only owns the sequencing and the
+    "an empty hop means the whole translation failed" rule — an empty string
+    makes the caller fall back to the original text instead of typing a
+    half-translated sentence.
+    """
+
+    def __init__(self, stages: list[Translator]) -> None:
+        if not stages:
+            reason = "翻译链路为空"
+            raise TranslationError(reason)
+        self._stages = list(stages)
+
+    @property
+    def hops(self) -> int:
+        """How many models this chain runs per sentence."""
+        return len(self._stages)
+
+    def translate(self, text: str) -> str:
+        """Run every hop in order; returns "" when any hop produces nothing."""
+        current = text
+        for index, stage in enumerate(self._stages):
+            current = stage.translate(current)
+            if not current.strip():
+                log.info("translate: hop %d/%d produced nothing", index + 1, len(self._stages))
+                return ""
+        return current

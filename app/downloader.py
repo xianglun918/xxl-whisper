@@ -21,6 +21,7 @@ from app.download_io import download as _download
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "TRANSLATE_ROUTE_MODELS",
     "DownloadError",
     "ModelFiles",
     "ProgressFn",
@@ -73,12 +74,14 @@ _VAD_SHA256: frozenset[str] = frozenset({_VAD_HF_SHA256, _VAD_GH_SHA256})
 _VAD_FILENAME: str = "silero_vad.onnx"
 
 #: Offline translation models (Marian, exported to ONNX by the Xenova project).
-#: Keyed by the *target* language: "en" translates Chinese speech into English.
-#: Each entry is (repository name, ((file path, exact size), ...)). The int8
-#: graphs are used on purpose: same quality for short dictation sentences,
-#: 245 MB instead of 445 MB, and roughly twice the CPU throughput.
+#: Keyed by the *pair*: "zh-en" translates Chinese speech into English. A
+#: language pair with no direct model (Japanese into Chinese) is chained
+#: through English — see :data:`TRANSLATE_ROUTE_MODELS`. Each entry is
+#: (repository name, ((file path, exact size), ...)). The int8 graphs are used
+#: on purpose: same quality for short dictation sentences, 245 MB instead of
+#: 445 MB, and roughly twice the CPU throughput.
 _TRANSLATE_MODELS: dict[str, tuple[str, tuple[tuple[str, int], ...]]] = {
-    "en": (
+    "zh-en": (
         "opus-mt-zh-en",
         (
             ("onnx/encoder_model_int8.onnx", 52_726_552),
@@ -88,7 +91,7 @@ _TRANSLATE_MODELS: dict[str, tuple[str, tuple[tuple[str, int], ...]]] = {
             ("target.spm", 806_530),
         ),
     ),
-    "zh": (
+    "en-zh": (
         "opus-mt-en-zh",
         (
             ("onnx/encoder_model_int8.onnx", 52_726_553),
@@ -98,6 +101,27 @@ _TRANSLATE_MODELS: dict[str, tuple[str, tuple[tuple[str, int], ...]]] = {
             ("target.spm", 804_600),
         ),
     ),
+    # Japanese has no official opus-mt ja→zh weight, so the route runs
+    # ja→en→zh. Quality note: two hops can compound errors, but the pivot is
+    # the documented Marian path for a language pair that has no direct model.
+    "ja-en": (
+        "opus-mt-ja-en",
+        (
+            ("onnx/encoder_model_int8.onnx", 50_532_633),
+            ("onnx/decoder_model_int8.onnx", 181_671_731),
+            ("tokenizer.json", 5_991_485),
+            ("source.spm", 781_853),
+            ("target.spm", 801_883),
+        ),
+    ),
+}
+
+#: Supported translation routes -> the model pairs to run, in order. Every
+#: route ends at Chinese or English; "ja-zh" is the only chained one.
+TRANSLATE_ROUTE_MODELS: dict[str, tuple[str, ...]] = {
+    "zh-en": ("zh-en",),
+    "en-zh": ("en-zh",),
+    "ja-zh": ("ja-en", "en-zh"),
 }
 
 #: Mirrors in preference order. ModelScope first: it is domestic, unrestricted
@@ -257,9 +281,9 @@ def ensure_vad_model(
 
 
 def ensure_translate_model(
-    target: str, models_root: Path, progress: ProgressFn, *, proxy: str = ""
+    pair: str, models_root: Path, progress: ProgressFn, *, proxy: str = ""
 ) -> ModelFiles:
-    """Make sure the local translation model for *target* is on disk.
+    """Make sure the local translation model for *pair* is on disk.
 
     Called lazily the first time translation is enabled, so users who never
     translate never pay the ~245 MB download. Each file is tried on every
@@ -268,9 +292,9 @@ def ensure_translate_model(
     exact size — a truncated fetch or an HTML error page saved under a model
     name fails the check instead of producing a model that cannot load.
     """
-    entry = _TRANSLATE_MODELS.get(target)
+    entry = _TRANSLATE_MODELS.get(pair)
     if entry is None:
-        raise DownloadError(source="all", reason=f"unsupported translate target {target!r}")
+        raise DownloadError(source="all", reason=f"unsupported translate pair {pair!r}")
     name, files = entry
     repo = f"Xenova/{name}"
     model_dir = models_root / name
@@ -341,11 +365,11 @@ def manual_download_guide(kind: str, models_root: Path) -> str:
     return "\n".join(lines)
 
 
-def translate_manual_guide(target: str, models_root: Path) -> str:
+def translate_manual_guide(pair: str, models_root: Path) -> str:
     """Copy-paste instructions for fetching the translation model by hand."""
-    entry = _TRANSLATE_MODELS.get(target)
+    entry = _TRANSLATE_MODELS.get(pair)
     if entry is None:
-        return f"不支持的翻译目标语言：{target}"
+        return f"不支持的翻译方向：{pair}"
     name, files = entry
     model_dir = models_root / name
     lines = [
