@@ -126,11 +126,24 @@ def test_old_config_without_source_infers_zh_to_en(tmp_path: Path) -> None:
 
 
 def test_unsupported_pair_falls_back_instead_of_failing(tmp_path: Path) -> None:
-    """ja→en has no shipped models; the app must still start."""
-    config_mod, path = _load(tmp_path, 'translate_source = "ja"\ntranslate_target = "en"\n')
+    """A same-language pair has no model; the app must still start on a valid one."""
+    config_mod, path = _load(tmp_path, 'translate_source = "zh"\ntranslate_target = "zh"\n')
     config = config_mod.load_config(path)
-    assert config.translate_source == "zh"  # inferred from target=en
-    assert config_mod.route_of(config) == "zh-en"
+    assert config_mod.route_of(config) is not None  # coerced to a supported pair
+
+
+def test_japanese_to_english_is_a_single_hop(tmp_path: Path) -> None:
+    """One model, no pivot: the best quality/speed/memory trade for Japanese."""
+    config_mod, path = _load(
+        tmp_path, 'translate_source = "ja"\ntranslate_target = "en"\n'
+    )
+    config = config_mod.load_config(path)
+    assert config_mod.route_of(config) == "ja-en"
+
+    from app.downloader import TRANSLATE_ROUTE_MODELS
+
+    assert TRANSLATE_ROUTE_MODELS["ja-en"] == ("ja-en",)
+    assert TRANSLATE_ROUTE_MODELS["ja-zh"] == ("ja-en", "en-zh")
 
 
 def test_japanese_route_roundtrips(tmp_path: Path) -> None:

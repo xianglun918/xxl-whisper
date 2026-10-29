@@ -35,7 +35,7 @@ type TranslateTarget = Literal["en", "zh"]
 type TranslateSource = Literal["zh", "en", "ja"]
 
 #: The supported (source, target) combinations, as one canonical key.
-type TranslateRoute = Literal["zh-en", "en-zh", "ja-zh"]
+type TranslateRoute = Literal["zh-en", "en-zh", "ja-zh", "ja-en"]
 
 #: What gets transcribed: the microphone, or the system audio mix (WASAPI
 #: loopback on Windows; a virtual device such as BlackHole on macOS).
@@ -80,7 +80,7 @@ _TRANSLATE_SOURCES: Mapping[str, None] = MappingProxyType(
 #: Only these combinations have models behind them; anything else is a config
 #: error the user must fix rather than a silent no-op.
 _TRANSLATE_ROUTES: Mapping[str, None] = MappingProxyType(
-    {"zh-en": None, "en-zh": None, "ja-zh": None}
+    {"zh-en": None, "en-zh": None, "ja-zh": None, "ja-en": None}
 )
 
 _AUDIO_SOURCES: Mapping[str, None] = MappingProxyType({"mic": None, "system": None})

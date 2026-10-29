@@ -121,7 +121,8 @@ _TRANSLATE_MODELS: dict[str, tuple[str, tuple[tuple[str, int], ...]]] = {
 TRANSLATE_ROUTE_MODELS: dict[str, tuple[str, ...]] = {
     "zh-en": ("zh-en",),
     "en-zh": ("en-zh",),
-    "ja-zh": ("ja-en", "en-zh"),
+    "ja-zh": ("ja-en", "en-zh"),  # 官方无 ja→zh 权重，经英文中转
+    "ja-en": ("ja-en",),  # 一段直出英文：质量最好、内存最省
 }
 
 #: Mirrors in preference order. ModelScope first: it is domestic, unrestricted

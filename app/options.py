@@ -57,7 +57,8 @@ DISFLUENCY_OPTIONS: tuple[Option, ...] = (
 ROUTE_OPTIONS: tuple[Option, ...] = (
     Option("zh-en", "中 → 英（说中文出英文）"),
     Option("en-zh", "英 → 中（说英文出中文）"),
-    Option("ja-zh", "日 → 中（说日语出中文）"),
+    Option("ja-zh", "日 → 中（经英文中转，两段）"),
+    Option("ja-en", "日 → 英（一段直出，最快最省内存）"),
 )
 
 #: Where the output goes, mirroring ``config.OverlayOutput``.
@@ -72,6 +73,7 @@ ROUTE_SHORT: dict[str, str] = {
     "zh-en": "中→英",
     "en-zh": "英→中",
     "ja-zh": "日→中",
+    "ja-en": "日→英",
 }
 
 #: Compact output name for parent-row labels ("… · 上屏+打字").
