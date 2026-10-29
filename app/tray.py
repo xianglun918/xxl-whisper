@@ -1,90 +1,55 @@
-"""System-tray icon and menu (pystray). Menu content is rebuilt on open."""
+"""System-tray icon and menu (pystray).
+
+Rendering only: the *layout* lives in :mod:`app.menu_spec` as pure data, so it
+can be unit-tested without a display. This module turns each
+:class:`~app.menu_spec.Entry` into a pystray item, gathers the machine-dependent
+lists (microphones, system-audio endpoints, hotkey presets) and owns the icon.
+
+The menu is rebuilt on every open (pystray re-evaluates callables), which is what
+lets the parent rows carry live state such as
+``翻译与字幕：日→中 · 上屏+打字``.
+"""
 
 from collections.abc import Callable
-from dataclasses import dataclass
 
 import pystray
 from PIL import Image, ImageDraw
 
 import app.loopback as loopback_mod
 import app.recorder as recorder_mod
-from app import native
 from app.config import HOTKEY_VK
-from app.translator import TRANSLATE_ROUTES
-
-_HOTKEY_LABELS = {
-    "caps_lock": "CapsLock",
-    "f2": "F2",
-    "f4": "F4",
-    "f6": "F6",
-    "f8": "F8",
-    "scroll_lock": "Scroll Lock",
-    "mouse_x1": "鼠标侧键 X1",
-    "mouse_x2": "鼠标侧键 X2",
-}
-
-_MODEL_LABELS = {
-    "sensevoice": "SenseVoice-Small（默认 · 230MB · 快）",
-    "funasr_nano": "FunASR-Nano（更准 · 约 1GB · 首次需下载）",
-}
-
-#: Compact route label for the status line (the full label lives in the menu).
-_ROUTE_ARROWS: dict[str, str] = {
-    "zh-en": "中→英",
-    "en-zh": "英→中",
-    "ja-zh": "日→中",
-}
+from app.menu_spec import (
+    Entry,
+    MenuInputs,
+    TrayCallbacks,
+    TrayState,
+    build_menu,
+)
 
 
-def _hotkey_label(hotkey: str | int) -> str:
-    if isinstance(hotkey, int):
-        return native.io.key_name(hotkey)
-    return _HOTKEY_LABELS.get(hotkey, hotkey)
+def list_hotkey_names() -> tuple[str, ...]:
+    """Preset hotkey names, in config order."""
+    return tuple(HOTKEY_VK)
 
 
-@dataclass(frozen=True, slots=True)
-class TrayCallbacks:
-    on_exit: Callable[[], None]
-    on_toggle_pause: Callable[[], None]
-    on_select_mic: Callable[[str], None]
-    on_toggle_autostart: Callable[[], None]
-    on_check_update: Callable[[], None]
-    on_select_hotkey: Callable[[str | int], None]
-    on_capture_hotkey: Callable[[], None]
-    on_select_model: Callable[[str], None]
-    on_show_diagnostics: Callable[[], None]
-    on_toggle_disfluency: Callable[[], None]
-    on_toggle_continuous: Callable[[], None]
-    on_toggle_translate: Callable[[], None]
-    on_select_translate_route: Callable[[str], None]
-    on_select_system_audio: Callable[[str], None]
-    on_toggle_overlay: Callable[[], None]
-    on_select_overlay_output: Callable[[str], None]
+def list_microphone_names() -> tuple[str, ...]:
+    """Capture devices PortAudio can see, in index order."""
+    return tuple(device.name for device in recorder_mod.list_input_devices())
 
 
-@dataclass(frozen=True, slots=True)
-class TrayState:
-    ready: bool
-    paused: bool
-    autostart: bool
-    current_mic: str
-    current_hotkey: str | int
-    current_model: str
-    disfluency: str
-    continuous: bool
-    translate: bool
-    translate_route: str
-    translator_ready: bool
-    audio_source: str
-    current_system_audio: str
-    overlay: bool
-    overlay_output: str
+def list_system_audio_devices() -> tuple[tuple[str, str], ...]:
+    """System-audio endpoints as ``(label, device_id)``; empty off Windows."""
+    return tuple(
+        (device.name, device.device_id) for device in loopback_mod.list_loopback_devices()
+    )
 
 
 class Tray:
     """Owns the pystray icon; ``run()`` blocks the calling thread."""
 
-    def __init__(self, callbacks: TrayCallbacks, state_provider: Callable[[], TrayState]) -> None:
+    def __init__(
+        self, callbacks: TrayCallbacks, state_provider: Callable[[], TrayState]
+    ) -> None:
         self._callbacks = callbacks
         self._state_provider = state_provider
         self._icon = pystray.Icon(
@@ -95,303 +60,54 @@ class Tray:
         )
 
     def run(self) -> None:
+        """Run the tray event loop (blocks)."""
         self._icon.run()
 
     def stop(self) -> None:
+        """Stop the tray event loop."""
         self._icon.stop()
 
     def notify(self, message: str, title: str = "xxl-whisper") -> None:
+        """Show a native notification balloon."""
         self._icon.notify(message, title)
 
     def refresh_menu(self) -> None:
-        """Force the native menu to rebuild (dynamic states changed)."""
+        """Force the native menu to rebuild (a switch changed)."""
         self._icon.update_menu()
 
+    # -- rendering ---------------------------------------------------------
+
     def _build_menu(self) -> pystray.Menu:
-        return pystray.Menu(
-            pystray.MenuItem(
-                self._status_text,
-                None,
-                enabled=False,
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "暂停语音热键",
-                self._callbacks.on_toggle_pause,
-                checked=lambda _item: self._state_provider().paused,
-            ),
-            pystray.MenuItem(
-                "麦克风",
-                pystray.Menu(self._mic_items),
-            ),
-            pystray.MenuItem(
-                "热键",
-                pystray.Menu(self._hotkey_items),
-            ),
-            pystray.MenuItem(
-                "模型",
-                pystray.Menu(self._model_items),
-            ),
-            pystray.MenuItem(
-                "语义顺滑",
-                self._callbacks.on_toggle_disfluency,
-                checked=lambda _item: self._state_provider().disfluency == "smooth",
-            ),
-            pystray.MenuItem(
-                "持续听写",
-                self._callbacks.on_toggle_continuous,
-                checked=lambda _item: self._state_provider().continuous,
-            ),
-            pystray.MenuItem(
-                "离线翻译",
-                pystray.Menu(self._translate_items),
-            ),
-            pystray.MenuItem(
-                "上屏字幕",
-                pystray.Menu(self._overlay_items),
-            ),
-            pystray.MenuItem(
-                "开机自启",
-                self._callbacks.on_toggle_autostart,
-                checked=lambda _item: self._state_provider().autostart,
-            ),
-            pystray.MenuItem("输入诊断", self._callbacks.on_show_diagnostics),
-            pystray.MenuItem("检查更新", self._callbacks.on_check_update),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出", self._callbacks.on_exit),
+        """Render the current spec; pystray calls this again on every open."""
+        inputs = MenuInputs(
+            microphones=list_microphone_names(),
+            system_audio=list_system_audio_devices(),
+            hotkey_names=list_hotkey_names(),
         )
+        spec = build_menu(self._state_provider(), self._callbacks, inputs)
+        return pystray.Menu(*(self._render(entry) for entry in spec))
 
-    def _mic_items(self) -> list[pystray.MenuItem]:
-        """Return fresh items; pystray re-evaluates this on each menu open."""
-        items = [
-            pystray.MenuItem(
-                "（系统默认）",
-                self._select_mic(""),
-                checked=lambda _item: self._state_provider().current_mic == "",
-            )
-        ]
-        items.extend(
-            pystray.MenuItem(
-                device.name,
-                self._select_mic(device.name),
-                checked=self._mic_checked(device.name),
-            )
-            for device in recorder_mod.list_input_devices()
+    def _render(self, entry: Entry) -> pystray.MenuItem:
+        """Turn one spec row into a pystray item (recursively for submenus)."""
+        if entry.separator:
+            return pystray.Menu.SEPARATOR
+        label: str | Callable[[object], str]
+        if entry.text is not None:
+            getter = entry.text
+            label = lambda _item: getter()  # noqa: E731 - pystray wants a callable
+        else:
+            label = entry.label
+        if entry.children:
+            return pystray.MenuItem(label, pystray.Menu(*(self._render(c) for c in entry.children)))
+        checked = None if entry.checked is None else (lambda _item, value=entry.checked: value)
+        return pystray.MenuItem(
+            label,
+            entry.action,
+            checked=checked,
+            enabled=entry.enabled,
+            radio=entry.radio,
+            default=False,
         )
-        # System audio (WASAPI loopback) shows up as extra entries: picking one
-        # switches the source, picking a real mic switches it back.
-        loopbacks = loopback_mod.list_loopback_devices()
-        if loopbacks:
-            items.append(pystray.Menu.SEPARATOR)
-            items.extend(
-                pystray.MenuItem(
-                    device.name,
-                    self._select_system_audio(device.device_id),
-                    checked=self._system_audio_checked(device.device_id),
-                )
-                for device in loopbacks
-            )
-        return items
-
-    def _select_system_audio(self, device_id: str) -> Callable[[], None]:
-        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
-
-        def action() -> None:
-            self._callbacks.on_select_system_audio(device_id)
-
-        return action
-
-    def _system_audio_checked(self, device_id: str) -> Callable[[object], bool]:
-        def checked(_item: object) -> bool:
-            state = self._state_provider()
-            return state.audio_source == "system" and state.current_system_audio == device_id
-
-        return checked
-
-    def _mic_checked(self, name: str) -> Callable[[object], bool]:
-        def checked(_item: object) -> bool:
-            return self._state_provider().current_mic == name
-
-        return checked
-
-    def _select_mic(self, name: str) -> Callable[[], None]:
-        """Zero-arg action factory: pystray hands 1-arg actions an Icon, not a name."""
-
-        def action() -> None:
-            self._callbacks.on_select_mic(name)
-
-        return action
-
-    def _select_hotkey(self, key: str | int) -> Callable[[], None]:
-        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
-
-        def action() -> None:
-            self._callbacks.on_select_hotkey(key)
-
-        return action
-
-    def _hotkey_checked(self, key: str | int) -> Callable[[object], bool]:
-        def checked(_item: object) -> bool:
-            return self._state_provider().current_hotkey == key
-
-        return checked
-
-    def _select_model(self, kind: str) -> Callable[[], None]:
-        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
-
-        def action() -> None:
-            self._callbacks.on_select_model(kind)
-
-        return action
-
-    def _model_checked(self, kind: str) -> Callable[[object], bool]:
-        def checked(_item: object) -> bool:
-            return self._state_provider().current_model == kind
-
-        return checked
-
-    def _model_items(self) -> list[pystray.MenuItem]:
-        """Model choices; pystray re-evaluates this on each menu open."""
-        return [
-            pystray.MenuItem(
-                label,
-                self._select_model(kind),
-                checked=self._model_checked(kind),
-                radio=True,
-            )
-            for kind, label in _MODEL_LABELS.items()
-        ]
-
-    def _translate_items(self) -> list[pystray.MenuItem]:
-        """Return the translation submenu: on/off plus the direction (which models to use)."""
-        state = self._state_provider()
-        return [
-            pystray.MenuItem(
-                "开启离线翻译",
-                self._callbacks.on_toggle_translate,
-                checked=lambda _item: self._state_provider().translate,
-            ),
-            pystray.Menu.SEPARATOR,
-            *[
-                pystray.MenuItem(
-                    label,
-                    self._select_translate_route(route),
-                    checked=self._translate_route_checked(route),
-                    radio=True,
-                )
-                for route, label in TRANSLATE_ROUTES.items()
-            ],
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                _translate_model_hint(state),
-                None,
-                enabled=False,
-            ),
-        ]
-
-    def _select_translate_route(self, route: str) -> Callable[[], None]:
-        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
-
-        def action() -> None:
-            self._callbacks.on_select_translate_route(route)
-
-        return action
-
-    def _translate_route_checked(self, route: str) -> Callable[[object], bool]:
-        def checked(_item: object) -> bool:
-            return self._state_provider().translate_route == route
-
-        return checked
-
-    def _overlay_items(self) -> list[pystray.MenuItem]:
-        """Subtitle-bar submenu: on/off plus where the text is delivered."""
-        return [
-            pystray.MenuItem(
-                "开启上屏字幕",
-                self._callbacks.on_toggle_overlay,
-                checked=lambda _item: self._state_provider().overlay,
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "只上屏（不打字）",
-                self._select_overlay_output("screen"),
-                checked=self._overlay_output_checked("screen"),
-                radio=True,
-            ),
-            pystray.MenuItem(
-                "上屏 + 打字到光标",
-                self._select_overlay_output("both"),
-                checked=self._overlay_output_checked("both"),
-                radio=True,
-            ),
-            pystray.MenuItem(
-                "只打字（上屏仅预览）",
-                self._select_overlay_output("type"),
-                checked=self._overlay_output_checked("type"),
-                radio=True,
-            ),
-        ]
-
-    def _select_overlay_output(self, mode: str) -> Callable[[], None]:
-        """Zero-arg action factory (same pystray arity trap as _select_mic)."""
-
-        def action() -> None:
-            self._callbacks.on_select_overlay_output(mode)
-
-        return action
-
-    def _overlay_output_checked(self, mode: str) -> Callable[[object], bool]:
-        def checked(_item: object) -> bool:
-            return self._state_provider().overlay_output == mode
-
-        return checked
-
-    def _hotkey_items(self) -> list[pystray.MenuItem]:
-        """Hotkey presets plus a custom-key capture entry; re-evaluated per open."""
-        return [
-            pystray.MenuItem(
-                _hotkey_label(name),
-                self._select_hotkey(name),
-                checked=self._hotkey_checked(name),
-                radio=True,
-            )
-            for name in HOTKEY_VK
-        ] + [
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("自定义按键…", self._callbacks.on_capture_hotkey),
-        ]
-
-    def _status_text(self, _item: object) -> str:
-        state = self._state_provider()
-        if not state.ready:
-            return "状态：启动中…"
-        arrow = _ROUTE_ARROWS.get(state.translate_route, "中→英")
-        suffix = _translate_suffix(state, arrow)
-        if state.continuous:
-            return f"状态：持续听写中（热键已停用，说话即上屏）{suffix}"
-        label = _hotkey_label(state.current_hotkey)
-        if state.paused:
-            return f"状态：已暂停（{label} 只保留原功能）"
-        suffix = f" · 翻译开（{arrow}）" if state.translate else ""
-        return f"状态：就绪 — 按住 {label} 说话，松开出字{suffix}"
-
-
-def _translate_suffix(state: TrayState, arrow: str) -> str:
-    """Say what the subtitles actually show — translated, or source only."""
-    if not state.translate:
-        return " · 上屏中（翻译未开，显示原文）" if state.overlay else ""
-    if not state.translator_ready:
-        return " · 翻译开但模型未就绪"
-    return f" · 翻译开（{arrow}）"
-
-
-def _translate_model_hint(state: TrayState) -> str:
-    """Explain which local model the current direction uses (disabled label)."""
-    if state.translate_route == "ja-zh":
-        return "模型：opus-mt-ja-en → opus-mt-en-zh（首次约 240MB + 245MB）"
-    if state.translate_route == "en-zh":
-        return "模型：opus-mt-en-zh"
-    return "模型：opus-mt-zh-en"
 
 
 def _draw_icon() -> Image.Image:
