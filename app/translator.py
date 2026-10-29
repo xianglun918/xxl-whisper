@@ -48,6 +48,7 @@ __all__ = [
     "BILINGUAL_SEPARATOR",
     "TRANSLATE_MODES",
     "TRANSLATE_ROUTES",
+    "route_text",
     "TRANSLATE_TARGETS",
     "ChainedTranslator",
     "MarianTokenizer",
@@ -75,7 +76,18 @@ TRANSLATE_ROUTES: dict[str, str] = {
     "zh-en": "中 → 英（说中文，出英文）",
     "en-zh": "英 → 中（说英文，出中文）",
     "ja-zh": "日 → 中（说日语，出中文，经英文中转）",
+    "ja-en": "日 → 英（说日语，出英文，直出一段）",
 }
+
+def route_text(route: str) -> str:
+    """Return the human label for *route*, falling back to the raw key.
+
+    Never index ``TRANSLATE_ROUTES`` directly from the UI path: a route added to
+    the config vocabulary but missing a label would raise ``KeyError`` inside the
+    worker and make the menu look broken (it happened once, with ja-en).
+    """
+    return TRANSLATE_ROUTES.get(route, route)
+
 
 #: How the translated text reaches the cursor.
 TRANSLATE_MODES: dict[str, str] = {

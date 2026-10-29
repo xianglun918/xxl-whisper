@@ -61,7 +61,7 @@ from app.hotkey_logic import (
 from app.partial import SubtitleGate, level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
 from app.translator import (
-    TRANSLATE_ROUTES,
+    route_text,
     TranslationError,
     Translator,
     compose_text,
@@ -728,7 +728,7 @@ class DictationApp:
             return
         previous = route_of(self._config)
         if wanted == previous:
-            self._indicator.flash(f"翻译方向已是 {TRANSLATE_ROUTES[wanted]}", 1800)
+            self._indicator.flash(f"翻译方向已是 {route_text(wanted)}", 1800)
             return
         self._flush_typing()  # let the in-flight sentence use the old translator
         if not self._controls.set_translate_route(wanted):
@@ -736,11 +736,11 @@ class DictationApp:
         self._tray.refresh_menu()  # tick moves now, not after the download
         if not self._config.translate:
             self._indicator.flash(
-                f"翻译方向记为 {TRANSLATE_ROUTES[wanted]}（翻译未开，开启后生效）", 3000
+                f"翻译方向记为 {route_text(wanted)}（翻译未开，开启后生效）", 3000
             )
             return
         self._translator = None  # no stale direction may translate meanwhile
-        self._indicator.flash(f"正在加载 {TRANSLATE_ROUTES[wanted]} 模型…", 3000)
+        self._indicator.flash(f"正在加载 {route_text(wanted)} 模型…", 3000)
         threading.Thread(
             target=self._load_route_model,
             args=(wanted, previous),
@@ -760,16 +760,16 @@ class DictationApp:
             log.exception("route-load: failed for %s", wanted)
         if translator is not None:
             self._translator = translator
-            self._indicator.flash(f"翻译方向：{TRANSLATE_ROUTES[wanted]}", 2000)
+            self._indicator.flash(f"翻译方向：{route_text(wanted)}", 2000)
             log.info("route-load: %s ready", wanted)
             return
         # Roll back so the tray never shows a direction the app cannot run.
-        reason = f"{TRANSLATE_ROUTES[wanted]} 模型不可用，已回退"
+        reason = f"{route_text(wanted)} 模型不可用，已回退"
         log.warning("route-load: %s unavailable; rolling back to %s", wanted, previous)
         if previous is not None:
             self._controls.set_translate_route(previous)
         self._tray.refresh_menu()
-        self._tray.notify(f"{TRANSLATE_ROUTES[wanted]} 模型下载/加载失败，翻译方向已回退")
+        self._tray.notify(f"{route_text(wanted)} 模型下载/加载失败，翻译方向已回退")
         self._indicator.flash(reason, 4000)
 
     # -- subtitle overlay ------------------------------------------------------

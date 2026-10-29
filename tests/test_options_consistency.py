@@ -111,3 +111,35 @@ def test_custom_hotkey_renders_readably() -> None:
     """A recorded key is a raw VK integer and must not print as a bare number."""
     assert label_of(HOTKEY_OPTIONS, 0x71) == "自定义按键（VK 0x71）"
     assert label_of(HOTKEY_OPTIONS, "caps_lock") == "CapsLock"
+
+
+def test_every_route_has_a_label_and_a_model(tmp_path: Path) -> None:
+    """The route vocabulary lives in four places; they must agree.
+
+    A route present in ``config.TranslateRoute`` but missing from
+    ``TRANSLATE_ROUTES`` raised ``KeyError`` inside the worker, so clicking the
+    new 日→英 option failed with a traceback while every other test passed.
+    """
+    from app.downloader import TRANSLATE_ROUTE_MODELS
+    from app.translator import TRANSLATE_ROUTES
+
+    config = _config_module(tmp_path)
+    vocabulary = _values(config.TranslateRoute)
+    menu = {option.key for option in ROUTE_OPTIONS}
+
+    assert vocabulary == menu == set(TRANSLATE_ROUTES) == set(TRANSLATE_ROUTE_MODELS), (
+        vocabulary,
+        menu,
+        set(TRANSLATE_ROUTES),
+        set(TRANSLATE_ROUTE_MODELS),
+    )
+    for route in vocabulary:
+        assert TRANSLATE_ROUTES[route].strip(), f"{route} has an empty label"
+        assert TRANSLATE_ROUTE_MODELS[route], f"{route} has no model chain"
+
+
+def test_route_text_never_raises_for_unknown_routes() -> None:
+    from app.translator import route_text
+
+    assert route_text("ja-en")
+    assert route_text("xx-yy") == "xx-yy"
