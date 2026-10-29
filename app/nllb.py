@@ -4,16 +4,17 @@ Why it exists: Marian has no official ja→zh weight, so the default route chain
 ja→en→zh. English is a poor pivot for Japanese — pro-drop subjects get invented,
 keigo gets flattened, names get transliterated twice — so the two-hop output is
 noticeably worse than the same engine's zh↔en. NLLB translates jpn_Jpan→zho_Hans
-in one pass.
+in a single pass.
 
-Cost: ~890 MB of int8 ONNX and ~1 GB resident, hence optional (a config switch)
-rather than the default. The two-hop route stays available for smaller machines.
+Cost: ~890 MB of int8 ONNX and ~1 GB resident, plus a decoder pass per token, so
+it is opt-in rather than the default. The two-hop route stays available for
+machines that cannot afford it.
 """
 
 from __future__ import annotations
 
 import logging
-from array import array
+import re
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -21,31 +22,38 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-#: NLLB sentence pieces for the two languages this build cares about.
+#: NLLB sentence pieces for the languages this build cares about.
 SRC_JAPANESE: str = "jpn_Jpan"
 TGT_CHINESE: str = "zho_Hans"
 
-_EOS_TOKEN: str = "</s>"
-_PAD_TOKEN: str = "<pad>"
+#: NLLB language tokens look like ``jpn_Jpan`` / ``zho_Hans``.
+_LANG_TOKEN_RE = re.compile(r"^[a-z]{3}_[A-Z][a-z]{3}$")
 
-#: Encoder/decoder geometry of nllb-200-distilled-600M (12 layers, 16 heads × 64).
+_EOS_TOKEN: str = "</s>"
 
 
 class TokenizerLike(Protocol):
     """The slice of ``tokenizers.Tokenizer`` this module uses."""
 
     def encode(self, text: str) -> Any: ...
-    def decode(self, ids: list[int]) -> str: ...
+    def decode(self, ids: list[int], skip_special_tokens: bool = ...) -> str: ...
     def token_to_id(self, token: str) -> int | None: ...
 
 
 class NllbTranslator:
     """Greedy NLLB decoder over the quantized ONNX export (transformers.js layout).
 
-    The merged decoder keeps its own KV cache: the first pass runs with
-    ``use_cache_branch = False`` and empty past tensors, later passes feed the
-    previous ``present.*`` outputs back in. That keeps a 600M decoder at roughly
-    one token-step per forward pass instead of re-encoding the whole prefix.
+    Two conventions were established by experiment against the real weights; both
+    are easy to get wrong and neither is documented:
+
+    1. The tokenizer's post-processor prepends ``eng_Latn`` and appends ``</s>``.
+       Both must be removed before prepending the real source language token and
+       one terminator — otherwise the encoder sees two language tokens and two
+       end-of-sentence tokens.
+    2. The decoder starts from ``</s>`` and the **first** emitted token is forced
+       to the target language token (what ``generate(forced_bos_token_id=...)``
+       does). Starting the decoder *with* the language token collapses the
+       distribution into one repeated piece.
     """
 
     def __init__(
@@ -59,7 +67,7 @@ class NllbTranslator:
         session_factory: Any = None,
         tokenizer: TokenizerLike | None = None,
     ) -> None:
-        import onnxruntime as ort  # noqa: PLC0415 - heavy, only when this engine is on
+        import onnxruntime as ort  # noqa: PLC0415 - only when this engine is on
         import tokenizers  # noqa: PLC0415
 
         options = ort.SessionOptions()
@@ -72,11 +80,9 @@ class NllbTranslator:
             sess_options=options,
             providers=["CPUExecutionProvider"],
         )
-        # Non-merged decoder on purpose: the merged (cached) export reshapes the
-        # past tensors unconditionally, and a zero-length past fails that Reshape
-        # in onnxruntime ("The dimension with value zero exceeds the dimension
-        # size"). Recomputing the prefix per token is slower but correct, and this
-        # engine is optional quality-mode.
+        # Plain (non-merged) decoder: the cached export reshapes past tensors
+        # unconditionally and a zero-length past fails that Reshape in
+        # onnxruntime. Recomputing the prefix per token is slower but correct.
         self._decoder = factory(
             str(model_dir / "onnx" / "decoder_model_quantized.onnx"),
             sess_options=options,
@@ -105,40 +111,49 @@ class NllbTranslator:
         source = text.strip()
         if not source:
             return ""
-        ids = [self._src_id, *self._tokenizer.encode(source).ids, self._eos_id]
-        input_ids = np.asarray([ids], dtype=np.int64)
+        input_ids = np.asarray(
+            [[self._src_id, *self._source_ids(source), self._eos_id]], dtype=np.int64
+        )
         attention = np.ones_like(input_ids)
+        hidden = self._encoder.run(
+            None, {"input_ids": input_ids, "attention_mask": attention}
+        )[0]
 
-        hidden = self._encoder.run(None, {
-            "input_ids": input_ids,
-            "attention_mask": attention,
-        })[0]
-
-        generated = self._decode(hidden, attention)
-        if not generated:
+        produced = self._decode(hidden, attention)
+        if not produced:
             return ""
-        return self._tokenizer.decode(generated, skip_special_tokens=True).strip()
+        return self._tokenizer.decode(
+            produced, skip_special_tokens=True
+        ).strip()
+
+    def _source_ids(self, text: str) -> list[int]:
+        """Token ids for *text*, without the language token / terminator the export adds."""
+        encoded = self._tokenizer.encode(text)
+        ids = list(encoded.ids)
+        tokens = list(getattr(encoded, "tokens", []))
+        if ids and tokens and _LANG_TOKEN_RE.match(tokens[0]):
+            ids = ids[1:]
+        if ids and ids[-1] == self._eos_id:
+            ids = ids[:-1]
+        return ids
 
     def _decode(self, hidden: np.ndarray, attention: np.ndarray) -> list[int]:
-        """Greedy loop over the plain decoder: feed the whole prefix each step."""
-        prefix = [self._tgt_id]
+        """Greedy decode following NLLB's own conventions (see class docstring)."""
+        prefix = [self._eos_id]
         produced: list[int] = []
-        for _ in range(self._max_new_tokens):
-            feeds = {
-                "input_ids": np.asarray([prefix], dtype=np.int64),
-                "encoder_attention_mask": attention,
-                "encoder_hidden_states": hidden,
-            }
-            logits = self._decoder.run(None, feeds)[0]
-            next_id = int(np.argmax(logits[0, -1]))
+        for step in range(self._max_new_tokens):
+            logits = self._decoder.run(
+                None,
+                {
+                    "input_ids": np.asarray([prefix], dtype=np.int64),
+                    "encoder_attention_mask": attention,
+                    "encoder_hidden_states": hidden,
+                },
+            )[0]
+            next_id = self._tgt_id if step == 0 else int(np.argmax(logits[0, -1]))
             if next_id == self._eos_id:
                 break
-            produced.append(next_id)
             prefix.append(next_id)
+            if step > 0:
+                produced.append(next_id)
         return produced
-
-
-def _unused(value: object) -> None:
-    """Keep ``array`` import meaningful for type checkers on empty inputs."""
-    if isinstance(value, array):
-        return

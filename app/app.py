@@ -134,6 +134,12 @@ class SetModel:
 
 
 @dataclass(frozen=True, slots=True)
+class SetNllb:
+    """Toggle the optional direct 日→中 engine."""
+
+    enabled: bool
+
+
 class SetDisfluency:
     kind: str
 
@@ -400,6 +406,7 @@ class DictationApp:
             translate=self._config.translate,
             translate_route=route_of(self._config) or "",
             translator_ready=self._translator is not None,
+            nllb=self._config.nllb_ja_zh,
             audio_source=self._config.audio_source,
             current_system_audio=self._config.mic if self._config.audio_source == "system" else "",
             overlay=self._config.overlay_enabled,
@@ -477,6 +484,8 @@ class DictationApp:
                 self._controls.start_key_capture(self._on_captured_vk)
             case SetModel(kind=kind):
                 self._swap_model(kind)
+            case SetNllb(enabled=enabled):
+                self._set_nllb(enabled)
             case SetDisfluency(kind=kind):
                 self._set_disfluency(kind)
             case SetContinuous():
@@ -722,6 +731,36 @@ class DictationApp:
         """Tray thread: log the click, then hand it to the worker."""
         log.info("tray: route action fired %r", route)
         self._queue.put(SetTranslateRoute(route=route))
+
+    def _set_nllb(self, enabled: bool) -> None:
+        """Switch the 日→中 engine between two-hop Marian and direct NLLB.
+
+        Rebuilding is deferred to the route loader: NLLB is ~890 MB and takes
+        seconds to load, so it must not block the worker while a sentence is in
+        flight.
+        """
+        if not self._controls.set_nllb(enabled):
+            return
+        self._flush_typing()
+        self._tray.refresh_menu()
+        if not self._config.translate or route_of(self._config) != "ja-zh":
+            self._indicator.flash(
+                "NLLB 已%s（仅在「日→中」方向生效）" % ("开启" if enabled else "关闭"),
+                2500,
+            )
+            return
+        self._translator = None
+        self._indicator.flash(
+            "正在加载 NLLB（约 890MB，首次较久）…" if enabled else "正在切回两段翻译…",
+            3000,
+        )
+        current = route_of(self._config)
+        threading.Thread(
+            target=self._load_route_model,
+            args=(current, None),
+            daemon=True,
+            name="route-load",
+        ).start()
 
     def _set_translate_route(self, route: str) -> None:
         """Switch 中→英 / 英→中 / 日→中.
