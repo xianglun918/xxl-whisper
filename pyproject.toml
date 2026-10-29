@@ -11,7 +11,9 @@ dependencies = [
     "sherpa-onnx-core>=1.13.6",
     "onnxruntime>=1.18",
     "sentencepiece>=0.2",
-    "pystray>=0.19",
+    # 0.19.5 is the version whose Item.text/Item.checked/action-arity semantics
+    # the tray adapter is verified against (tests/test_tray_adapter.py).
+    "pystray>=0.19.5,<0.20",
     "pillow>=10.0",
     "pyobjc-framework-quartz>=12.2.2 ; sys_platform == 'darwin'",
     "pyobjc-framework-cocoa>=12.2.2 ; sys_platform == 'darwin'",

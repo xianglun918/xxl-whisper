@@ -242,6 +242,7 @@ class DictationApp:
         #: thread free: ASR must never queue behind a slow translation.
         self._emit_queue = EmitQueue(maxsize=_EMIT_QUEUE_MAX)
         self._emit_thread: threading.Thread | None = None
+        self._worker_thread: threading.Thread | None = None
         #: Glues force-cut ASR pieces back into whole sentences for typing.
         self._batcher = TypeBatcher()
         self._partial_thread: threading.Thread | None = None
@@ -332,8 +333,10 @@ class DictationApp:
             disarmed_prompt=self._show_loading_prompt,
         )
         self._mouse_hook.start_and_wait()
-        worker = threading.Thread(target=self._worker, daemon=True, name="asr-worker")
-        worker.start()
+        self._worker_thread = threading.Thread(
+            target=self._worker, daemon=True, name="asr-worker"
+        )
+        self._worker_thread.start()
         self._emit_thread = threading.Thread(
             target=self._emit_loop, daemon=True, name="emit-worker"
         )
@@ -463,6 +466,8 @@ class DictationApp:
             self._handle(action)
 
     def _dispatch(self, message: WorkerMsg) -> None:  # noqa: C901, PLR0912 - flat message table
+        if not isinstance(message, KeyTransition):
+            log.info("worker: %s", type(message).__name__)
         match message:
             case KeyTransition(pressed=pressed, ts_ms=ts):
                 self._on_key_transition(pressed=pressed, ts_ms=ts)
@@ -663,6 +668,9 @@ class DictationApp:
         enabled = self._controls.toggle_translate()
         self._translator = self._controls.build_translator() if enabled else None
         self._tray.refresh_menu()
+        self._indicator.flash(
+            "离线翻译：已开启" if enabled else "离线翻译：已关闭", 2000
+        )
         log.info(
             "translate enabled=%s translator=%s",
             enabled,
@@ -676,7 +684,26 @@ class DictationApp:
         wiring) from "the click was applied but had no visible effect" (state).
         """
         log.info("tray: %s", name)
+        self._ensure_worker_alive()
         action()
+
+    def _ensure_worker_alive(self) -> None:
+        """Restart the worker thread if it died.
+
+        Every menu switch is dispatched through the worker queue, so a dead
+        worker makes the whole menu look broken: clicks are accepted, logged,
+        and never acted on. The loop catches per-message exceptions, but a failure
+        at start-up (model init, native call) can still take the thread down.
+        """
+        thread = self._worker_thread
+        if thread is not None and thread.is_alive():
+            return
+        log.error("worker thread is not running; restarting it")
+        self._worker_thread = threading.Thread(
+            target=self._worker, daemon=True, name="asr-worker"
+        )
+        self._worker_thread.start()
+        self._indicator.flash("后台线程已重启（上次异常退出，详见日志）", 4000)
 
     def _on_tray_route(self, route: str) -> None:
         """Tray thread: log the click, then hand it to the worker."""

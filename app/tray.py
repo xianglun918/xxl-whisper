@@ -30,6 +30,20 @@ from app.menu_spec import (
 log = logging.getLogger(__name__)
 
 
+def _safe[T](producer: Callable[[], T], default: T) -> T:
+    """Call *producer*, falling back to *default* when the device layer fails.
+
+    Enumerating audio devices touches PortAudio/WASAPI, which can fail while
+    another application holds the endpoint; that must cost the menu its device
+    list, not the whole menu.
+    """
+    try:
+        return producer()
+    except Exception:
+        log.exception("tray: device enumeration failed")
+        return default
+
+
 def list_microphone_names() -> tuple[str, ...]:
     """Capture devices PortAudio can see, in index order."""
     return tuple(device.name for device in recorder_mod.list_input_devices())
@@ -89,9 +103,16 @@ class Tray:
         )
 
     def _apply_menu_refresh(self) -> None:
-        """Rebuild and re-render the native menu; never raises."""
+        """Re-render the native menu; never raises.
+
+        The menu **object is not replaced**: pystray's Win32 backend destroys and
+        recreates the native handle inside ``update_menu()``; swapping the
+        descriptor tree as well means two rebuilds and, if it happens while the
+        popup is on screen, a handle that no longer matches the clicked ids.
+        Every dynamic value in the tree is a callable, so ``update_menu()`` alone
+        already re-evaluates labels and ticks against live state.
+        """
         try:
-            self._icon.menu = self._build_menu()
             self._icon.update_menu()
         except Exception:
             log.exception("tray: menu refresh failed")
