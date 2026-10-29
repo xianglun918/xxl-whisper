@@ -562,7 +562,7 @@ class DictationApp:
 
     def _on_hold_confirmed(self) -> None:
         """Timer thread: a press held past the threshold is a real hold."""
-        if self._holding:
+        if self._holding and not self._subtitles():
             self._indicator.show("● 正在听…")
 
     def _finish_hold(self) -> None:
@@ -583,7 +583,8 @@ class DictationApp:
             audio.shape[0] / 16_000,
             float(np.sqrt(np.mean(audio**2))),
         )
-        self._indicator.update("识别中…")
+        if not self._subtitles():
+            self._indicator.update("识别中…")
         text = recognizer.transcribe(audio)
         log.info("asr: %r", text)
         if text:
@@ -897,7 +898,10 @@ class DictationApp:
         translator = self._translator
         if translator is None or not self._config.translate or not has_translatable_text(text):
             return "", False
-        self._indicator.update("翻译中…")
+        if not self._subtitles():
+            # The bar already shows the in-progress line; a sticky "翻译中…" pill
+            # on top of it is just noise, and it never clears on its own.
+            self._indicator.update("翻译中…")
         started = time.monotonic()
         try:
             translated = translator.translate(text)
@@ -920,7 +924,7 @@ class DictationApp:
         """
         if translated.strip():
             return compose_text(text, translated, self._config.translate_mode)
-        if attempted:
+        if attempted and not self._subtitles():
             self._indicator.flash("翻译失败，已上屏原文", 1800)
         return text
 
