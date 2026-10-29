@@ -10,6 +10,7 @@ lets the parent rows carry live state such as
 ``翻译与字幕：日→中 · 上屏+打字``.
 """
 
+import logging
 from collections.abc import Callable
 
 import pystray
@@ -17,6 +18,7 @@ from PIL import Image, ImageDraw
 
 import app.loopback as loopback_mod
 import app.recorder as recorder_mod
+from app.menu_refresh import DEFAULT_REFRESH_DELAY_S, guarded, schedule_refresh
 from app.menu_spec import (
     Entry,
     MenuInputs,
@@ -24,6 +26,8 @@ from app.menu_spec import (
     TrayState,
     build_menu,
 )
+
+log = logging.getLogger(__name__)
 
 
 def list_microphone_names() -> tuple[str, ...]:
@@ -66,16 +70,31 @@ class Tray:
         self._icon.notify(message, title)
 
     def refresh_menu(self) -> None:
-        """Rebuild the native menu from the current state.
+        """Refresh the native menu *after* the click that changed state returns.
 
-        ``update_menu()`` alone only re-renders the existing native menu on
-        Windows: the item objects (and therefore the ``checked`` callables
-        captured when they were created) stay as they were, so a switch could be
-        flipped while the tick mark never moved. Assigning a brand-new Menu
-        forces pystray to recreate every item from a fresh state snapshot.
+        Two things matter here, both learned the hard way:
+
+        * ``update_menu()`` alone does not re-evaluate anything on Windows while
+          the native menu exists, so the menu object is rebuilt;
+        * rebuilding it **inside** the action that pystray is still unwinding from
+          frees the very item being invoked — that wedges the menu thread, and
+          from then on no click has any effect (the "开关全都不生效" symptom).
+
+        So the rebuild is deferred by a few dozen milliseconds on a helper thread.
         """
-        self._icon.menu = self._build_menu()
-        self._icon.update_menu()
+        schedule_refresh(
+            self._apply_menu_refresh,
+            lambda reason: log.warning("tray: %s", reason),
+            delay=DEFAULT_REFRESH_DELAY_S,
+        )
+
+    def _apply_menu_refresh(self) -> None:
+        """Rebuild and re-render the native menu; never raises."""
+        try:
+            self._icon.menu = self._build_menu()
+            self._icon.update_menu()
+        except Exception:
+            log.exception("tray: menu refresh failed")
 
     # -- rendering ---------------------------------------------------------
 
@@ -105,7 +124,7 @@ class Tray:
         checked = None if entry.checked is None else (lambda _item, fn=entry.checked: fn())
         return pystray.MenuItem(
             label,
-            entry.action,
+            guarded(entry.action, lambda reason: log.warning("tray: %s", reason)),
             checked=checked,
             enabled=entry.enabled,
             radio=entry.radio,
