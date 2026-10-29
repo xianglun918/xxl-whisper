@@ -2,13 +2,18 @@
 
 Kept separate from :mod:`app.tray` for two reasons:
 
-* the layout is a **design decision** worth testing — at most six top-level
-  entries, related things grouped, and labels that carry the current state so
-  the user does not have to open a submenu to find out what is on;
+* the layout is a **design decision** worth testing — a short top-level list,
+  related things grouped, and labels that carry the current state;
 * :mod:`app.tray` pulls in pystray/PIL (display-bound), so nothing defined there
   can be unit-tested on a headless machine.
 
-The menu is grouped by intent:
+Everything dynamic is a **callable over a state provider**, never a snapshot:
+pystray builds the native menu once and then asks the callbacks for the current
+label/tick every time the menu is opened. Capturing ``state.paused`` at build
+time (an earlier version did) freezes the tick marks — the switch works but the
+menu keeps showing the old state.
+
+Menu layout::
 
     状态行
     ─────────────
@@ -19,9 +24,6 @@ The menu is grouped by intent:
     更多设置    ▸ 热键 / 模型 / 顺滑 / 自启 / 诊断 / 更新
     ─────────────
     退出
-
-Device and hotkey lists are injected (:class:`MenuInputs`) rather than imported,
-so this module depends on nothing but the standard library.
 """
 
 from __future__ import annotations
@@ -43,13 +45,10 @@ OUTPUT_LABELS: dict[str, str] = {
     "type": "只打字（无字幕）",
 }
 
-#: Short route names echoed in the parent label.
 _ROUTE_ARROWS: dict[str, str] = {"zh-en": "中→英", "en-zh": "英→中", "ja-zh": "日→中"}
 
-#: Short output names echoed in the parent label.
 _OUTPUT_ARROWS: dict[str, str] = {"screen": "只上屏", "both": "上屏+打字", "type": "只打字"}
 
-#: Preset hotkey names -> labels.
 HOTKEY_LABELS: dict[str, str] = {
     "caps_lock": "CapsLock",
     "f2": "F2",
@@ -110,6 +109,9 @@ class TrayState:
     current_system_audio: str
 
 
+type StateProvider = Callable[[], TrayState]
+
+
 @dataclass(frozen=True, slots=True)
 class MenuInputs:
     """Machine-dependent lists, gathered by the tray and injected here."""
@@ -125,12 +127,13 @@ class Entry:
 
     label: str = ""
     action: Callable[[], None] | None = None
-    checked: bool | None = None
+    #: Called when the menu opens; a plain bool here would freeze the tick mark.
+    checked: Callable[[], bool] | None = None
     enabled: bool = True
     radio: bool = False
     children: tuple[Entry, ...] = ()
     separator: bool = False
-    #: Rendered instead of ``label`` when the menu is opened (live state).
+    #: Rendered instead of ``label`` when the menu opens (live state).
     text: Callable[[], str] | None = None
 
 
@@ -155,23 +158,44 @@ def _pick_key(callback: Callable[[str | int], None], value: str | int) -> Callab
     return action
 
 
+def _tick(provider: StateProvider, getter: Callable[[TrayState], bool]) -> Callable[[], bool]:
+    """Wrap a state getter so the tick is evaluated on every menu open."""
+    return lambda: getter(provider())
+
+
 def build_menu(
-    state: TrayState, callbacks: TrayCallbacks, inputs: MenuInputs | None = None
+    state_provider: StateProvider,
+    callbacks: TrayCallbacks,
+    inputs: MenuInputs | None = None,
 ) -> tuple[Entry, ...]:
-    """Return the whole tray menu for *state* (rebuilt on every open)."""
+    """Return the tray menu; dynamic rows read *state_provider* when opened."""
     lists = inputs or MenuInputs()
     return (
-        Entry(text=lambda: state_text(state), enabled=False),
+        Entry(text=lambda: state_text(state_provider()), enabled=False),
         separator(),
-        Entry(label="暂停语音热键", action=callbacks.on_toggle_pause, checked=state.paused),
-        # 持续听写是和暂停同级的日常开关：换场景就要开/关，埋在二级里太深。
-        Entry(label="持续听写", action=callbacks.on_toggle_continuous, checked=state.continuous),
-        Entry(label=input_label(state), children=_input_entries(state, callbacks, lists)),
         Entry(
-            label=translate_label(state),
-            children=_translate_entries(state, callbacks),
+            label="暂停语音热键",
+            action=callbacks.on_toggle_pause,
+            checked=_tick(state_provider, lambda state: state.paused),
         ),
-        Entry(label="更多设置", children=_settings_entries(state, callbacks, lists)),
+        # 持续听写是和暂停同级的日常开关：换场景就要开/关，埋在二级里太深。
+        Entry(
+            label="持续听写",
+            action=callbacks.on_toggle_continuous,
+            checked=_tick(state_provider, lambda state: state.continuous),
+        ),
+        Entry(
+            text=lambda: input_label(state_provider()),
+            children=_input_entries(state_provider, callbacks, lists),
+        ),
+        Entry(
+            text=lambda: translate_label(state_provider()),
+            children=_translate_entries(state_provider, callbacks),
+        ),
+        Entry(
+            label="更多设置",
+            children=_settings_entries(state_provider, callbacks, lists),
+        ),
         separator(),
         Entry(label="退出", action=callbacks.on_exit),
     )
@@ -181,21 +205,27 @@ def build_menu(
 
 
 def _input_entries(
-    state: TrayState, callbacks: TrayCallbacks, inputs: MenuInputs
+    provider: StateProvider, callbacks: TrayCallbacks, inputs: MenuInputs
 ) -> tuple[Entry, ...]:
     """Microphones plus system-audio endpoints (Windows loopback)."""
     entries: list[Entry] = [
         Entry(
             label="（系统默认）",
             action=_pick(callbacks.on_select_mic, ""),
-            checked=state.audio_source == "mic" and state.current_mic == "",
+            checked=_tick(
+                provider, lambda state: state.audio_source == "mic" and state.current_mic == ""
+            ),
         )
     ]
     entries.extend(
         Entry(
             label=name,
             action=_pick(callbacks.on_select_mic, name),
-            checked=state.audio_source == "mic" and state.current_mic == name,
+            checked=_tick(
+                provider,
+                lambda state, name=name: state.audio_source == "mic"
+                and state.current_mic == name,
+            ),
         )
         for name in inputs.microphones
     )
@@ -205,21 +235,24 @@ def _input_entries(
             Entry(
                 label=label,
                 action=_pick(callbacks.on_select_system_audio, device_id),
-                checked=state.audio_source == "system"
-                and state.current_system_audio == device_id,
+                checked=_tick(
+                    provider,
+                    lambda state, device_id=device_id: state.audio_source == "system"
+                    and state.current_system_audio == device_id,
+                ),
             )
             for label, device_id in inputs.system_audio
         )
     return tuple(entries)
 
 
-def _translate_entries(state: TrayState, callbacks: TrayCallbacks) -> tuple[Entry, ...]:
+def _translate_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tuple[Entry, ...]:
     """Return the translation/subtitle rows: two switches plus their radios."""
     entries: list[Entry] = [
         Entry(
             label="开启离线翻译",
             action=callbacks.on_toggle_translate,
-            checked=state.translate,
+            checked=_tick(provider, lambda state: state.translate),
         ),
         separator(),
     ]
@@ -227,9 +260,9 @@ def _translate_entries(state: TrayState, callbacks: TrayCallbacks) -> tuple[Entr
         Entry(
             label=label,
             action=_pick(callbacks.on_select_translate_route, route),
-            checked=state.translate_route == route,
+            checked=_tick(provider, lambda state, route=route: state.translate_route == route),
             radio=True,
-            enabled=state.translate,
+            enabled=True,
         )
         for route, label in ROUTE_LABELS.items()
     )
@@ -238,33 +271,32 @@ def _translate_entries(state: TrayState, callbacks: TrayCallbacks) -> tuple[Entr
         Entry(
             label="开启上屏字幕",
             action=callbacks.on_toggle_overlay,
-            checked=state.overlay,
+            checked=_tick(provider, lambda state: state.overlay),
         )
     )
     entries.extend(
         Entry(
             label=label,
             action=_pick(callbacks.on_select_overlay_output, mode),
-            checked=state.overlay_output == mode,
+            checked=_tick(provider, lambda state, mode=mode: state.overlay_output == mode),
             radio=True,
-            enabled=state.overlay,
         )
         for mode, label in OUTPUT_LABELS.items()
     )
     entries.append(separator())
-    entries.append(Entry(text=lambda: translate_hint(state), enabled=False))
+    entries.append(Entry(text=lambda: translate_hint(provider()), enabled=False))
     return tuple(entries)
 
 
 def _settings_entries(
-    state: TrayState, callbacks: TrayCallbacks, inputs: MenuInputs
+    provider: StateProvider, callbacks: TrayCallbacks, inputs: MenuInputs
 ) -> tuple[Entry, ...]:
     """Everything configured once: keys, model, behaviour, updates."""
     hotkey_entries: list[Entry] = [
         Entry(
             label=HOTKEY_LABELS.get(name, str(name)),
             action=_pick_key(callbacks.on_select_hotkey, name),
-            checked=state.current_hotkey == name,
+            checked=_tick(provider, lambda state, name=name: state.current_hotkey == name),
             radio=True,
         )
         for name in inputs.hotkey_names
@@ -276,7 +308,7 @@ def _settings_entries(
         Entry(
             label=label,
             action=_pick(callbacks.on_select_model, kind),
-            checked=state.current_model == kind,
+            checked=_tick(provider, lambda state, kind=kind: state.current_model == kind),
             radio=True,
         )
         for kind, label in MODEL_LABELS.items()
@@ -288,9 +320,13 @@ def _settings_entries(
         Entry(
             label="语义顺滑（去语气词）",
             action=callbacks.on_toggle_disfluency,
-            checked=state.disfluency == "smooth",
+            checked=_tick(provider, lambda state: state.disfluency == "smooth"),
         ),
-        Entry(label="开机自启", action=callbacks.on_toggle_autostart, checked=state.autostart),
+        Entry(
+            label="开机自启",
+            action=callbacks.on_toggle_autostart,
+            checked=_tick(provider, lambda state: state.autostart),
+        ),
         separator(),
         Entry(label="输入诊断", action=callbacks.on_show_diagnostics),
         Entry(label="检查更新", action=callbacks.on_check_update),

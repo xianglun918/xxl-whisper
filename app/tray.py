@@ -84,7 +84,9 @@ class Tray:
             system_audio=list_system_audio_devices(),
             hotkey_names=list_hotkey_names(),
         )
-        spec = build_menu(self._state_provider(), self._callbacks, inputs)
+        # The provider (not a snapshot) is what keeps ticks and labels live:
+        # pystray builds the native menu once and re-asks on every open.
+        spec = build_menu(self._state_provider, self._callbacks, inputs)
         return pystray.Menu(*(self._render(entry) for entry in spec))
 
     def _render(self, entry: Entry) -> pystray.MenuItem:
@@ -99,7 +101,7 @@ class Tray:
             label = entry.label
         if entry.children:
             return pystray.MenuItem(label, pystray.Menu(*(self._render(c) for c in entry.children)))
-        checked = None if entry.checked is None else (lambda _item, value=entry.checked: value)
+        checked = None if entry.checked is None else (lambda _item, fn=entry.checked: fn())
         return pystray.MenuItem(
             label,
             entry.action,

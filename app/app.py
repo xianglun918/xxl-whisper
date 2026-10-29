@@ -900,7 +900,10 @@ class DictationApp:
         self._decode_thread.start()
         self._partial_thread.start()
         self._persist_continuous(enabled=True)
-        self._indicator.flash_listen("持续听写已开启", _LISTEN_TEXT, 1500)
+        if self._subtitles():
+            self._indicator.hide()  # the subtitle bar carries the state instead
+        else:
+            self._indicator.flash_listen("持续听写已开启", _LISTEN_TEXT, 1500)
         log.info("continuous: on")
 
     def _stop_continuous(self) -> None:
@@ -1087,7 +1090,7 @@ class DictationApp:
                     batch.segments, endpoint_ts=batch.endpoint_ts
                 )
                 finished_segments += len(batch.segments)
-                if emitted:
+                if emitted and not self._subtitles():
                     self._indicator.flash_listen(
                         _COMMIT_TEXT, _LISTEN_TEXT, _COMMIT_FLASH_MS
                     )
@@ -1165,7 +1168,10 @@ class DictationApp:
         shown = new_text_or_none(previous, truncate_partial(text))
         if shown is None:
             return None
-        self._indicator.update(f"● {shown}")
+        # With the subtitle bar on, the pill would just duplicate the caption
+        # one line higher — keep it quiet and let the bar do the talking.
+        if not self._subtitles():
+            self._indicator.update(f"● {shown}")
         return shown
 
     def _insert_segments(

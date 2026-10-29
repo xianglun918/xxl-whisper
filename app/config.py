@@ -190,8 +190,8 @@ def default_config() -> Config:
         overlay_opacity=0.85,
         overlay_width_ratio=0.72,
         overlay_bottom_margin=80,
-        overlay_hold_seconds=4.0,
-        overlay_max_lines=3,
+        overlay_hold_seconds=8.0,
+        overlay_max_lines=6,
         overlay_click_through=True,
     )
 
@@ -306,8 +306,8 @@ def load_config(path: Path) -> Config:
         overlay_opacity=p.float_in("overlay_opacity", 0.85, 0.2, 1.0),
         overlay_width_ratio=p.float_in("overlay_width_ratio", 0.72, 0.2, 1.0),
         overlay_bottom_margin=p.int_in("overlay_bottom_margin", 80, 0, 600),
-        overlay_hold_seconds=p.float_in("overlay_hold_seconds", 4.0, 0.5, 30.0),
-        overlay_max_lines=p.int_in("overlay_max_lines", 3, 1, 6),
+        overlay_hold_seconds=p.float_in("overlay_hold_seconds", 8.0, 0.5, 60.0),
+        overlay_max_lines=p.int_in("overlay_max_lines", 6, 1, 12),
         overlay_click_through=p.bool_flag("overlay_click_through", True),
     )
 
