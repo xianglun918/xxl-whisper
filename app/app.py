@@ -28,7 +28,6 @@ from app.config import (
     models_root,
     route_of,
     save_config,
-    segmenter_limits,
 )
 from app.controls import Controls, ControlsDeps
 from app.decode_scheduler import (
@@ -44,7 +43,7 @@ from app.downloader import (
     manual_download_guide,
 )
 from app.emit import Channel, EmitSettings, emit_text
-from app.emit_queue import EmitQueue
+from app.emit_queue import EmitQueue, PendingEmit
 from app.hotkey_logic import (
     Action,
     Click,
@@ -58,6 +57,7 @@ from app.partial import level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
 from app.translator import TranslationError, Translator, compose_text, has_translatable_text
 from app.tray import Tray, TrayCallbacks, TrayState
+from app.type_batcher import TypeBatcher
 from app.update_flow import UpdateFlow, UpdateFlowDeps
 from app.vad import SAMPLE_RATE, Segmenter, VadSettings
 
@@ -230,6 +230,8 @@ class DictationApp:
         #: thread free: ASR must never queue behind a slow translation.
         self._emit_queue = EmitQueue(maxsize=_EMIT_QUEUE_MAX)
         self._emit_thread: threading.Thread | None = None
+        #: Glues force-cut ASR pieces back into whole sentences for typing.
+        self._batcher = TypeBatcher()
         self._partial_thread: threading.Thread | None = None
         self._continuous_queue: queue.Queue[np.ndarray] | None = None
         self._decode_queue: queue.Queue[FinishedBatch] | None = None
@@ -471,6 +473,8 @@ class DictationApp:
 
     def _set_paused(self, paused: bool) -> None:
         """Toggle pause; in continuous mode the live pill follows it."""
+        if paused:
+            self._flush_typing()  # don't strand a half-typed sentence while paused
         self._paused = paused
         self._tray.refresh_menu()  # pystray caches the menu; re-render the check
         if self._continuous:
@@ -644,6 +648,7 @@ class DictationApp:
         """Switch 中→英 / 英→中 / 日→中; each route has its own local model(s)."""
         if not self._controls.set_translate_route(route):
             return
+        self._flush_typing()  # flush with the old translator before swapping it
         self._translator = None  # drop the old direction before loading the new one
         if self._config.translate:
             self._translator = self._controls.build_translator()
@@ -699,6 +704,7 @@ class DictationApp:
         """Choose between subtitles only, subtitles + typing, or typing only."""
         if mode not in ("type", "screen", "both") or mode == self._config.overlay_output:
             return
+        self._flush_typing()  # the sentence in flight belongs to the old mode
         self._config = replace(self._config, overlay_output=cast("OverlayOutput", mode))
         save_config(config_path(), self._config)
         self._tray.refresh_menu()
@@ -714,6 +720,14 @@ class DictationApp:
     def _overlay_only(self) -> bool:
         """Return True when the user wants the subtitles instead of typing."""
         return self._config.overlay_enabled and self._config.overlay_output == "screen"
+
+    def _subtitles(self) -> bool:
+        """True when the subtitle bar is one of the outputs."""
+        return self._config.overlay_enabled and self._config.overlay_output != "type"
+
+    def _types(self) -> bool:
+        """True when finished sentences are pasted into the cursor."""
+        return not self._overlay_only()
 
     def _emit(self, text: str) -> Channel | None:
         """Deliver one utterance: translate once, then type and/or subtitle it.
@@ -790,15 +804,19 @@ class DictationApp:
         download (manual guide) and re-raised so the worker's generic handler
         surfaces the "出错了" indicator.
         """
-        # Subtitles need a brisk cadence; plain continuous typing keeps the
-        # looser defaults (and push-to-talk never gets here at all).
-        subtitles = self._config.overlay_enabled and self._config.overlay_output != "type"
-        min_silence_ms, max_speech_ms = segmenter_limits(self._config, subtitles=subtitles)
+        # One cadence for every continuous session: short segments are fine
+        # because typing re-joins them (app.type_batcher) while subtitles want
+        # them short. Push-to-talk never reaches this code.
+        self._batcher = TypeBatcher(
+            window_s=self._config.typing_merge_ms / 1000,
+            max_chars=self._config.typing_merge_chars,
+        )
         log.info(
-            "continuous: mode=%s min_silence=%dms max_speech=%dms",
-            "subtitles" if subtitles else "typing",
-            min_silence_ms,
-            max_speech_ms,
+            "continuous: min_silence=%dms max_speech=%dms typing_merge=%dms/%dchars",
+            self._config.live_min_silence_ms,
+            self._config.live_max_speech_ms,
+            self._config.typing_merge_ms,
+            self._config.typing_merge_chars,
         )
         try:
             vad_path = ensure_vad_model(
@@ -814,8 +832,8 @@ class DictationApp:
                 model_path=vad_path,
                 threshold=self._config.vad_threshold,
                 min_speech_s=self._config.vad_min_speech_ms / 1000,
-                min_silence_s=min_silence_ms / 1000,
-                max_speech_s=max_speech_ms / 1000,
+                min_silence_s=self._config.live_min_silence_ms / 1000,
+                max_speech_s=self._config.live_max_speech_ms / 1000,
                 num_threads=self._config.num_threads,
             )
         )
@@ -859,6 +877,7 @@ class DictationApp:
         log.info("continuous: on")
 
     def _stop_continuous(self) -> None:
+        self._flush_typing()
         """Stop the segment loop, release the microphone, restore push-to-talk."""
         self._continuous = False
         if self._recorder is not None:
@@ -1154,7 +1173,9 @@ class DictationApp:
                 asr_done = time.monotonic()
                 if endpoint_ts is not None:
                     log.info("continuous: endpoint→asr %.3f s", asr_done - endpoint_ts)
-                if not self._emit_queue.submit(text, endpoint_ts=endpoint_ts):
+                seconds = samples.shape[0] / SAMPLE_RATE
+                forced = seconds >= self._config.live_max_speech_ms / 1000 - 0.15
+                if not self._emit_queue.submit(text, endpoint_ts=endpoint_ts, forced=forced):
                     log.info("continuous: emit queue full, dropped an older sentence")
             except Exception:
                 log.exception("continuous: segment decode failed; continuing")
@@ -1163,29 +1184,71 @@ class DictationApp:
         return emitted
 
     def _emit_loop(self) -> None:
-        """Daemon thread: translate and deliver finished sentences, in order.
+        """Daemon thread: subtitles per piece, typing per whole sentence.
 
-        Runs MT and the cursor/overlay write here so the decode thread never
-        waits on them — with non-stop speech that was the difference between
-        subtitles keeping up and drifting a sentence further behind per sentence.
+        Runs MT and both outputs here so the decode thread never waits on them.
+        The two channels deliberately keep different cadences: the subtitle bar
+        is consumed while the speaker is still talking, so each piece goes up
+        immediately; the cursor is a document, so force-cut pieces are glued back
+        together by :class:`~app.type_batcher.TypeBatcher` and pasted once.
         """
         while not self._stop_event.is_set():
             item = self._emit_queue.get(timeout=0.2)
             if item is None:
+                if self._batcher.should_flush():
+                    self._type_batch()
+                continue
+            if item.flush:
+                self._type_batch()
+                self._emit_queue.task_done()
                 continue
             try:
-                channel = self._emit(item.text)
-                if item.endpoint_ts is not None:
-                    log.info(
-                        "continuous: endpoint→shown %.3f s via %s (queued %.2f s)",
-                        time.monotonic() - item.endpoint_ts,
-                        channel or "overlay",
-                        item.enqueued_at - item.endpoint_ts,
-                    )
+                self._serve(item)
             except Exception:  # one bad sentence must not stop the loop
                 log.exception("emit failed for %r", item.text[:40])
             finally:
                 self._emit_queue.task_done()
+        self._type_batch()  # never leave a half-sentence behind on shutdown
+
+    def _serve(self, item: PendingEmit) -> None:
+        """Translate and deliver one finished ASR piece."""
+        translated = ""
+        if self._subtitles():
+            translated, _attempted = self._translate(item.text)
+            self._present(item.text, translated)
+        if self._types():
+            ready = self._batcher.add(item.text, forced=item.forced)
+            if ready is not None:
+                self._type_batch(ready)
+        if item.endpoint_ts is not None:
+            log.info(
+                "continuous: endpoint→shown %.3f s (queued %.2f s, forced=%s)",
+                time.monotonic() - item.endpoint_ts,
+                item.enqueued_at - item.endpoint_ts,
+                item.forced,
+            )
+
+    def _type_batch(self, text: str | None = None) -> None:
+        """Translate (if needed) and paste one whole sentence into the cursor."""
+        sentence = text if text is not None else self._batcher.flush()
+        if not sentence:
+            return
+        translated, attempted = self._translate(sentence)
+        try:
+            emit_text(
+                self._payload(sentence, translated, attempted=attempted),
+                EmitSettings(
+                    restore_clipboard=self._config.restore_clipboard,
+                    paste_delay_ms=self._config.paste_delay_ms,
+                ),
+                self._indicator,
+            )
+        except Exception:  # one failed paste must not lose the rest
+            log.exception("typing failed for %r", sentence[:40])
+
+    def _flush_typing(self) -> None:
+        """Ask the emitter to type anything it is holding (safe from any thread)."""
+        self._emit_queue.submit_flush()
 
     def _set_hooks_armed(self) -> None:
         """Arm the hooks once the model is ready so dictation can suppress keys.
@@ -1220,6 +1283,7 @@ class DictationApp:
 
     def _teardown(self) -> None:
         log.info("shutting down")
+        self._flush_typing()
         self._stop_event.set()
         self._cancel_hold_confirm()
         self._updates.stop()

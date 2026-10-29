@@ -24,8 +24,9 @@ def test_missing_file_returns_defaults(tmp_path: Path) -> None:
     assert config.continuous is False
     assert config.vad_threshold == 0.5
     assert config.vad_min_speech_ms == 250
-    assert config.vad_min_silence_ms == 500
-    assert config.vad_max_speech_ms == 20_000
+    assert config.live_min_silence_ms == 400
+    assert config.live_max_speech_ms == 6_000
+    assert config.typing_merge_ms == 12_000
     assert config.translate is False
     assert config.translate_target == "en"
     assert config.translate_mode == "bilingual"
@@ -58,8 +59,8 @@ def test_roundtrip(tmp_path: Path) -> None:
         continuous=True,
         vad_threshold=0.6,
         vad_min_speech_ms=200,
-        vad_min_silence_ms=600,
-        vad_max_speech_ms=15_000,
+        live_min_silence_ms=600,
+        live_max_speech_ms=15_000,
         translate=True,
         translate_target="zh",
         translate_mode="replace",
@@ -143,8 +144,8 @@ def test_continuous_keys_roundtrip(tmp_path: Path) -> None:
         continuous=True,
         vad_threshold=0.35,
         vad_min_speech_ms=150,
-        vad_min_silence_ms=800,
-        vad_max_speech_ms=30_000,
+        live_min_silence_ms=800,
+        live_max_speech_ms=30_000,
     )
     save_config(path, original)
     loaded = load_config(path)
@@ -152,8 +153,8 @@ def test_continuous_keys_roundtrip(tmp_path: Path) -> None:
     assert loaded.continuous is True
     assert loaded.vad_threshold == 0.35
     assert loaded.vad_min_speech_ms == 150
-    assert loaded.vad_min_silence_ms == 800
-    assert loaded.vad_max_speech_ms == 30_000
+    assert loaded.live_min_silence_ms == 800
+    assert loaded.live_max_speech_ms == 30_000
 
 
 def test_vad_threshold_accepts_integer(tmp_path: Path) -> None:
@@ -182,8 +183,8 @@ def test_vad_ms_keys_clamped(tmp_path: Path) -> None:
     for key, value in (
         ("vad_min_speech_ms", 10),
         ("vad_min_speech_ms", 9_999),
-        ("vad_min_silence_ms", 10),
-        ("vad_min_silence_ms", 20_000),
+        ("live_min_silence_ms", 10),
+        ("live_min_silence_ms", 20_000),
         ("vad_max_speech_ms", 500),
         ("vad_max_speech_ms", 120_000),
     ):

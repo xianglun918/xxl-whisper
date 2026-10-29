@@ -130,10 +130,10 @@ class Config:
     continuous: bool
     vad_threshold: float
     vad_min_speech_ms: int
-    vad_min_silence_ms: int
-    vad_max_speech_ms: int
-    subtitle_min_silence_ms: int
-    subtitle_max_speech_ms: int
+    live_min_silence_ms: int
+    live_max_speech_ms: int
+    typing_merge_ms: int
+    typing_merge_chars: int
     translate: bool
     translate_target: TranslateTarget
     translate_source: TranslateSource
@@ -168,15 +168,17 @@ def default_config() -> Config:
         continuous=False,
         vad_threshold=0.5,
         vad_min_speech_ms=250,
-        vad_min_silence_ms=500,
-        vad_max_speech_ms=20_000,
-        # Live subtitles only: a 20 s cap means the first line appears long
-        # after the speaker has moved on, so subtitle mode cuts far sooner and
-        # accepts a shorter pause as a boundary. Push-to-talk and plain
-        # continuous typing keep the looser ``vad_*`` values — a held key is one
-        # utterance and must never be cut mid-sentence.
-        subtitle_min_silence_ms=400,
-        subtitle_max_speech_ms=6_000,
+        # Continuous dictation ("live"): the subtitle bar needs the line while
+        # it is still being talked about, so sentences are cut briskly. Typing
+        # does not suffer from this — app.type_batcher glues the cut pieces back
+        # together and pastes one whole sentence. Push-to-talk never uses these
+        # (a held key is one utterance).
+        live_min_silence_ms=400,
+        live_max_speech_ms=6_000,
+        #: How long a force-cut batch may stay open before it is typed anyway.
+        typing_merge_ms=12_000,
+        #: Character budget that closes a force-cut batch early.
+        typing_merge_chars=80,
         translate=False,
         translate_target="en",
         translate_source="zh",
@@ -232,20 +234,6 @@ def translate_route(source: str, target: str) -> TranslateRoute | None:
     return cast("TranslateRoute", key) if key in _TRANSLATE_ROUTES else None
 
 
-def segmenter_limits(config: Config, *, subtitles: bool) -> tuple[int, int]:
-    """Return ``(min_silence_ms, max_speech_ms)`` for a continuous session.
-
-    Subtitle mode cuts far sooner than plain continuous typing: a viewer needs
-    the line while it is still being talked about, so a long monologue is
-    force-split every ``subtitle_max_speech_ms``. Push-to-talk never reaches this
-    function at all — a held key is one utterance by design, and cutting it
-    mid-sentence would be exactly the wrong behaviour.
-    """
-    if subtitles:
-        return (config.subtitle_min_silence_ms, config.subtitle_max_speech_ms)
-    return (config.vad_min_silence_ms, config.vad_max_speech_ms)
-
-
 def route_of(config: Config) -> TranslateRoute | None:
     """Route key for a loaded config (None only for a hand-edited bad pair)."""
     return translate_route(config.translate_source, config.translate_target)
@@ -293,10 +281,17 @@ def load_config(path: Path) -> Config:
         continuous=p.bool_flag("continuous", False),
         vad_threshold=p.float_in("vad_threshold", 0.5, 0.0, 1.0),
         vad_min_speech_ms=p.int_in("vad_min_speech_ms", 250, 50, 5_000),
-        vad_min_silence_ms=p.int_in("vad_min_silence_ms", 500, 50, 10_000),
-        vad_max_speech_ms=p.int_in("vad_max_speech_ms", 20_000, 1_000, 60_000),
-        subtitle_min_silence_ms=p.int_in("subtitle_min_silence_ms", 400, 50, 10_000),
-        subtitle_max_speech_ms=p.int_in("subtitle_max_speech_ms", 6_000, 1_000, 60_000),
+        live_min_silence_ms=p.int_in(
+            "live_min_silence_ms", p.int_in("vad_min_silence_ms", 400, 50, 10_000), 50, 10_000
+        ),
+        live_max_speech_ms=p.int_in(
+            "live_max_speech_ms",
+            p.int_in("vad_max_speech_ms", 6_000, 1_000, 60_000),
+            1_000,
+            60_000,
+        ),
+        typing_merge_ms=p.int_in("typing_merge_ms", 12_000, 0, 60_000),
+        typing_merge_chars=p.int_in("typing_merge_chars", 80, 10, 500),
         translate=p.bool_flag("translate", False),
         translate_target=target,
         translate_source=source,
@@ -333,10 +328,10 @@ def save_config(path: Path, config: Config) -> None:
         f"continuous = {str(config.continuous).lower()}",
         f"vad_threshold = {config.vad_threshold}",
         f"vad_min_speech_ms = {config.vad_min_speech_ms}",
-        f"vad_min_silence_ms = {config.vad_min_silence_ms}",
-        f"vad_max_speech_ms = {config.vad_max_speech_ms}",
-        f"subtitle_min_silence_ms = {config.subtitle_min_silence_ms}",
-        f"subtitle_max_speech_ms = {config.subtitle_max_speech_ms}",
+        f"live_min_silence_ms = {config.live_min_silence_ms}",
+        f"live_max_speech_ms = {config.live_max_speech_ms}",
+        f"typing_merge_ms = {config.typing_merge_ms}",
+        f"typing_merge_chars = {config.typing_merge_chars}",
         f"translate = {str(config.translate).lower()}",
         f"translate_target = {_quote(config.translate_target)}",
         f"translate_source = {_quote(config.translate_source)}",

@@ -28,6 +28,11 @@ class PendingEmit:
     text: str
     enqueued_at: float
     endpoint_ts: float | None = None
+    #: True when the VAD cut this segment at the max-speech cap (the speaker is
+    #: still going). The typing side keeps such pieces and joins them later.
+    forced: bool = False
+    #: Control item: flush whatever the typing batcher is holding.
+    flush: bool = False
 
 
 class EmitQueue:
@@ -37,9 +42,16 @@ class EmitQueue:
         self._queue: queue.Queue[PendingEmit] = queue.Queue(maxsize=maxsize)
         self._dropped = 0
 
-    def submit(self, text: str, *, endpoint_ts: float | None = None) -> bool:
+    def submit(
+        self, text: str, *, endpoint_ts: float | None = None, forced: bool = False
+    ) -> bool:
         """Queue one sentence; returns False when an older one had to go."""
-        item = PendingEmit(text=text, enqueued_at=time.monotonic(), endpoint_ts=endpoint_ts)
+        item = PendingEmit(
+            text=text,
+            enqueued_at=time.monotonic(),
+            endpoint_ts=endpoint_ts,
+            forced=forced,
+        )
         try:
             self._queue.put_nowait(item)
         except queue.Full:
@@ -59,6 +71,24 @@ class EmitQueue:
             self._dropped += 1
             return False
         return False
+
+    def submit_flush(self) -> None:
+        """Ask the emitter to type whatever is batched (pause, exit, route swap).
+
+        Never dropped: a lost flush is lost words in the user's document.
+        """
+        item = PendingEmit(text="", enqueued_at=time.monotonic(), flush=True)
+        while True:
+            try:
+                self._queue.put_nowait(item)
+                return
+            except queue.Full:
+                try:
+                    self._queue.get_nowait()
+                    self._queue.task_done()
+                    self._dropped += 1
+                except queue.Empty:
+                    pass
 
     def get(self, timeout: float = 0.2) -> PendingEmit | None:
         """Next sentence, or None when nothing arrived within *timeout*."""
