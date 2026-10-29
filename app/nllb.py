@@ -29,7 +29,7 @@ TGT_CHINESE: str = "zho_Hans"
 #: NLLB language tokens look like ``jpn_Jpan`` / ``zho_Hans``.
 _LANG_TOKEN_RE = re.compile(r"^[a-z]{3}_[A-Z][a-z]{3}$")
 
-_EOS_TOKEN: str = "</s>"
+_EOS_TOKEN: str = "</s>"  # noqa: S105 - sentence-piece token, not a secret
 
 
 class TokenizerLike(Protocol):
@@ -66,7 +66,7 @@ class NllbTranslator:
         max_new_tokens: int = 64,
         session_factory: Any = None,
         tokenizer: TokenizerLike | None = None,
-    ) -> None:
+    ) -> None:  # noqa: PLR0913 - an engine needs its knobs visible
         import onnxruntime as ort  # noqa: PLC0415 - only when this engine is on
         import tokenizers  # noqa: PLC0415
 
