@@ -141,6 +141,7 @@ class Config:
     translate_target: TranslateTarget
     translate_source: TranslateSource
     translate_mode: TranslateMode
+    nllb_ja_zh: bool
     overlay_enabled: bool
     overlay_output: OverlayOutput
     overlay_mode: OverlayMode
@@ -190,6 +191,7 @@ def default_config() -> Config:
         translate_target="en",
         translate_source="zh",
         translate_mode="bilingual",
+        nllb_ja_zh=False,
         overlay_enabled=False,
         overlay_output="both",
         overlay_mode="target",
@@ -349,6 +351,7 @@ def load_config(path: Path) -> Config:
         translate_target=target,
         translate_source=source,
         translate_mode=p.translate_mode("translate_mode", "bilingual"),
+        nllb_ja_zh=p.bool_flag("nllb_ja_zh", False),
         # The bar exists iff text is not typing-only: one decision, not two.
         overlay_enabled=(
             p.bool_flag("overlay_enabled", False)

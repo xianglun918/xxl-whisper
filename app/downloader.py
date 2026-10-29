@@ -26,6 +26,7 @@ __all__ = [
     "ModelFiles",
     "ProgressFn",
     "ensure_model",
+    "ensure_nllb_model",
     "ensure_translate_model",
     "ensure_vad_model",
     "manual_download_guide",
@@ -86,6 +87,7 @@ _TRANSLATE_MODELS: dict[str, tuple[str, tuple[tuple[str, int], ...]]] = {
         (
             ("onnx/encoder_model_int8.onnx", 52_726_552),
             ("onnx/decoder_model_int8.onnx", 192_658_470),
+            ("config.json", 1_389),
             ("tokenizer.json", 6_381_339),
             ("source.spm", 804_677),
             ("target.spm", 806_530),
@@ -96,6 +98,7 @@ _TRANSLATE_MODELS: dict[str, tuple[str, tuple[tuple[str, int], ...]]] = {
         (
             ("onnx/encoder_model_int8.onnx", 52_726_553),
             ("onnx/decoder_model_int8.onnx", 192_658_471),
+            ("config.json", 1_503),
             ("tokenizer.json", 6_380_952),
             ("source.spm", 806_435),
             ("target.spm", 804_600),
@@ -109,6 +112,7 @@ _TRANSLATE_MODELS: dict[str, tuple[str, tuple[tuple[str, int], ...]]] = {
         (
             ("onnx/encoder_model_int8.onnx", 50_532_633),
             ("onnx/decoder_model_int8.onnx", 181_671_731),
+            ("config.json", 1_376),
             ("tokenizer.json", 5_991_485),
             ("source.spm", 781_853),
             ("target.spm", 801_883),
@@ -334,6 +338,64 @@ def ensure_translate_model(
             reason=f"{len(failures)} 个文件下载失败（{failures[0]}）",
         )
     return ModelFiles(kind=name, directory=model_dir)
+
+
+#: Optional direct 日→中 engine (NLLB-200 distilled 600M, int8 quantized).
+#: ~890 MB and ~1 GB resident, but a single hop with no English pivot, so quality
+#: holds up on Japanese. Optional on purpose: the two-hop route stays available
+#: for machines that cannot afford the memory.
+_NLLB_BASE_URLS: tuple[str, ...] = (
+    "https://hf-mirror.com/Xenova/nllb-200-distilled-600M/resolve/main",
+)
+
+_NLLB_FILES: tuple[tuple[str, int], ...] = (
+    ("onnx/encoder_model_quantized.onnx", 419_120_483),
+    ("onnx/decoder_model_merged_quantized.onnx", 475_505_771),
+    ("tokenizer.json", 17_331_224),
+)
+
+
+def ensure_nllb_model(models_root: Path, progress: ProgressFn, *, proxy: str = "") -> ModelFiles:
+    """Fetch the optional NLLB-200 日→中 engine (~890 MB, int8).
+
+    Same resumable, size-checked transfer as the Marian pairs, but a separate
+    directory so the two engines can coexist: the user may switch back to the
+    cheap two-hop route without re-downloading anything.
+    """
+    model_dir = models_root / "nllb-200-distilled-600M"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    failures: list[str] = []
+    for relative, size in _NLLB_FILES:
+        dest = model_dir / relative
+        if dest.exists() and dest.stat().st_size == size:
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        last_error: DownloadError | None = None
+        for base in _NLLB_BASE_URLS:
+            try:
+                _download(
+                    FileSpec(
+                        url=f"{base}/{relative}",
+                        dest=dest,
+                        expected_size=size,
+                        expected_sha256=frozenset(),
+                    ),
+                    progress,
+                    proxy=proxy,
+                )
+            except DownloadError as exc:
+                last_error = exc
+                log.info("nllb mirror failed (%s/%s): %s", base, relative, exc.reason)
+                continue
+            last_error = None
+            break
+        if last_error is not None:
+            failures.append(f"{Path(relative).name}: {last_error.reason}")
+    if failures:
+        raise DownloadError(
+            source="all", reason=f"{len(failures)} 个文件下载失败（{failures[0]}）"
+        )
+    return ModelFiles(kind="nllb-200-distilled-600M", directory=model_dir)
 
 
 def manual_download_guide(kind: str, models_root: Path) -> str:

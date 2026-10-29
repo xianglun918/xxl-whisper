@@ -44,6 +44,7 @@ from app.translator import (
     TranslationError,
     Translator,
     load_translator,
+    resolve_special_ids,
 )
 from app.tray import Tray
 
@@ -286,6 +287,18 @@ class Controls:
             self._deps.indicator.flash("已切到英→中：识别语言已设为 auto", 2500)
         return True
 
+    def _nmt_settings(self, model_dir: Path, pair: str) -> NmtSettings:
+        """Per-pair settings: each Marian export has its own vocab and start id."""
+        start, eos, unk = resolve_special_ids(model_dir)
+        return NmtSettings(
+            model_dir=model_dir,
+            target=pair.split("-")[1],
+            num_threads=self._deps.num_threads(),
+            start_token_id=start,
+            eos_token_id=eos,
+            unk_token_id=unk,
+        )
+
     def build_translator(
         self, route: str | None = None, *, disable_on_failure: bool = True
     ) -> Translator | None:
@@ -329,11 +342,7 @@ class Controls:
                 )
                 stages.append(
                     load_translator(
-                        NmtSettings(
-                            model_dir=files.directory,
-                            target=pair.split("-")[1],
-                            num_threads=self._deps.num_threads(),
-                        )
+                        self._nmt_settings(files.directory, pair)
                     )
                 )
             translator: Translator = (

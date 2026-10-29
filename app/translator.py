@@ -98,8 +98,11 @@ TRANSLATE_MODES: dict[str, str] = {
 #: Anything shorter than this is not worth a model pass ("嗯", "ok", "1").
 _MIN_CHARS: int = 2
 
-#: Marian special ids (``</s>``, ``<unk>``, ``<pad>``) in this export's vocab.
-_DEFAULT_START_TOKEN_ID: int = 65_000  # == <pad>, the decoder start token
+#: Fallback Marian special ids for exports without a ``config.json``.
+#: **Not** safe as constants: ``opus-mt-ja-en`` has a 60 716-entry vocabulary and
+#: its decoder start token is 60 715, so a hardcoded 65 000 produces
+#: ``indices element out of data bounds`` on every single translation.
+_DEFAULT_START_TOKEN_ID: int = 65_000  # == <pad> in the 65001-vocab exports
 _DEFAULT_EOS_TOKEN_ID: int = 0
 _DEFAULT_UNK_TOKEN_ID: int = 1
 
@@ -308,6 +311,45 @@ class NmtSettings:
     start_token_id: int = _DEFAULT_START_TOKEN_ID
     eos_token_id: int = _DEFAULT_EOS_TOKEN_ID
     unk_token_id: int = _DEFAULT_UNK_TOKEN_ID
+
+
+def _read_model_config(model_dir: Path) -> dict[str, Any]:
+    """Read the model's own ``config.json`` (post-download, alongside the graphs).
+
+    Each Marian pair has its own vocabulary size and decoder start id — 65001/65000
+    for zh↔en, but 60716/60715 for ja→en. Hardcoding one value breaks the other
+    model at the very first decode step.
+    """
+    path = model_dir / "config.json"
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("config.json unreadable (%s); using defaults", exc)
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def resolve_special_ids(model_dir: Path) -> tuple[int, int, int]:
+    """Return ``(start, eos, unk)`` ids that are valid for *this* model.
+
+    ``decoder_start_token_id`` from the model's config wins; it is clamped to the
+    declared vocabulary so a mismatched export degrades into a wrong-but-working
+    translation instead of raising on every sentence.
+    """
+    meta = _read_model_config(model_dir)
+    start = int(meta.get("decoder_start_token_id", _DEFAULT_START_TOKEN_ID))
+    eos = int(meta.get("eos_token_id", _DEFAULT_EOS_TOKEN_ID) or _DEFAULT_EOS_TOKEN_ID)
+    unk = int(meta.get("unk_token_id", _DEFAULT_UNK_TOKEN_ID))
+    vocab = int(meta.get("vocab_size", 0) or 0)
+    if vocab > 0 and not 0 <= start < vocab:
+        clamped = vocab - 1
+        log.warning(
+            "config.json start id %d outside vocab %d; using %d", start, vocab, clamped
+        )
+        start = clamped
+    return start, eos, unk
 
 
 def _read_meta(model_dir: Path) -> dict[str, Any]:

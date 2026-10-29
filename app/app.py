@@ -61,11 +61,11 @@ from app.hotkey_logic import (
 from app.partial import SubtitleGate, level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
 from app.translator import (
-    route_text,
     TranslationError,
     Translator,
     compose_text,
     has_translatable_text,
+    route_text,
 )
 from app.tray import Tray, TrayCallbacks, TrayState
 from app.type_batcher import TypeBatcher
@@ -239,6 +239,7 @@ class DictationApp:
         self._emit_queue = EmitQueue(maxsize=_EMIT_QUEUE_MAX)
         self._emit_thread: threading.Thread | None = None
         self._worker_thread: threading.Thread | None = None
+        self._started_at: float = time.monotonic()
         self._segment_max_speech_s: float = 4.0
         #: Glues force-cut ASR pieces back into whole sentences for typing.
         self._batcher = TypeBatcher()
@@ -622,6 +623,11 @@ class DictationApp:
 
     def _init_model(self) -> None:
         """Download (if needed) and load the recognizer on the worker thread."""
+        started = time.monotonic()
+        # Say what is happening: loading a 1 GB Fun-ASR-Nano takes seconds and
+        # used to show nothing at all, which read as "the app is dead".
+        if not self._model_downloaded:
+            self._indicator.show("正在加载识别模型…（首次约 3–10 秒）")
         try:
             files = ensure_model(
                 self._config.model,
@@ -643,7 +649,13 @@ class DictationApp:
             return
         self._model_ready = True
         self._set_hooks_armed()
-        log.info("model ready: %s", self._config.model)
+        elapsed = time.monotonic() - started
+        log.info(
+            "model ready: %s (%.1f s, startup total %.1f s)",
+            self._config.model,
+            elapsed,
+            time.monotonic() - self._started_at,
+        )
         if self._config.translate:
             # Lazy: the NMT model is only fetched/loaded when the user has
             # translation on, and a failure here must never block dictation.
@@ -651,6 +663,10 @@ class DictationApp:
         if self._model_downloaded:
             self._indicator.flash("模型下载完成，可以开始使用了", 4000)
             self._tray.notify("模型下载完成，可以开始使用了", title="xxl-whisper")
+        elif self._subtitles():
+            self._indicator.hide()  # the subtitle bar owns the screen from here
+        else:
+            self._indicator.flash("就绪：可以开始说话了", 2000)
         if self._config.continuous:  # honour the persisted mode from last run
             self._start_continuous()
 
