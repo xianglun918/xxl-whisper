@@ -141,3 +141,70 @@ def test_style_is_immutable() -> None:
     style = OverlayStyle()
     assert replace(style, mode="bilingual").mode == "bilingual"
     assert style.mode == "target"
+
+
+# -- the in-progress (partial) line -------------------------------------------
+
+
+def _live(**style: object) -> tuple[OverlayModel, FakeClock]:
+    """Model plus its fake clock (the existing helper already owns the name)."""
+    clock = FakeClock()
+    return OverlayModel(OverlayStyle(**style), clock=clock), clock  # type: ignore[arg-type]
+
+
+def test_provisional_line_is_replaced_in_place() -> None:
+    model, _clock = _live(mode="target")
+    assert model.push_provisional("我们今天", "")
+    assert model.push_provisional("我们今天来聊一聊", "")
+    rows = model.lines()
+    assert [row.text for row in rows] == ["我们今天来聊一聊"]
+    assert rows[-1].kind == "provisional"
+
+
+def test_provisional_line_sits_below_finished_segments() -> None:
+    model, _clock = _live(mode="target")
+    model.push("第一句。", "First.")
+    model.push_provisional("第二句还在说", "")
+    assert [row.text for row in model.lines()] == ["First.", "第二句还在说"]
+
+
+def test_finished_segment_clears_the_preview() -> None:
+    model, _clock = _live(mode="target")
+    model.push_provisional("半句", "half")
+    assert model.clear_provisional() is True
+    model.push("整句。", "Whole.")
+    rows = model.lines()
+    assert [row.text for row in rows] == ["Whole."]
+    assert all(row.kind == "target" for row in rows)
+
+
+def test_provisional_never_counts_against_max_lines() -> None:
+    model, _clock = _live(mode="target", max_lines=2, hold_seconds=100.0)
+    model.push("一。", "one")
+    model.push("二。", "two")
+    model.push_provisional("三（还在说）", "")
+    rows = model.lines()
+    assert len(rows) == 3  # two finished + one preview
+    assert rows[-1].kind == "provisional"
+
+
+def test_provisional_does_not_expire_with_the_hold_timer() -> None:
+    model, clock = _live(mode="target", hold_seconds=2.0)
+    model.push_provisional("还在说", "")
+    clock.now += 30.0
+    assert model.expire() is False
+    assert len(model.lines()) == 1
+
+
+def test_provisional_falls_back_to_source_when_untranslated() -> None:
+    model, _clock = _live(mode="target")
+    model.push_provisional("翻訳がない", "")
+    assert model.lines()[-1].text == "翻訳がない"
+
+
+def test_clear_drops_the_preview_too() -> None:
+    model, _clock = _live()
+    model.push_provisional("半句", "half")
+    model.clear()
+    assert model.is_empty()
+    assert model.lines() == []

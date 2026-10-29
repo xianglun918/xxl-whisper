@@ -52,6 +52,9 @@ _TICK_MS: int = 250
 _BG: str = "#101418"
 _FG: str = "#f2f4f6"
 _SOURCE_FG: str = "#9aa4ae"
+#: In-progress line: brighter than the grey source rows, dimmer than a finished
+#: translation, so the eye reads it as "not final yet".
+_PARTIAL_FG: str = "#cfd6dd"
 _MIN_WIDTH: int = 240
 _FONT_FAMILIES: dict[str, str] = {
     "win32": "Microsoft YaHei UI",
@@ -94,7 +97,7 @@ class Segment:
 class Line:
     """One rendered row; ``kind`` picks the font (grey source vs bright target)."""
 
-    kind: Literal["source", "target"]
+    kind: Literal["source", "target", "provisional"]
     text: str
 
 
@@ -110,6 +113,8 @@ class OverlayModel:
         self._style = style
         self._clock = clock
         self._segments: list[Segment] = []
+        #: The in-progress utterance: replaced in place, never stacked, never expired.
+        self._provisional: tuple[str, str] | None = None
 
     @property
     def style(self) -> OverlayStyle:
@@ -141,6 +146,30 @@ class OverlayModel:
             del self._segments[:overflow]
         return True
 
+    def push_provisional(self, source: str, target: str) -> bool:
+        """Show the utterance still being spoken; replaced in place each refresh.
+
+        Provisional text is *not* a finished segment: it never enters
+        ``_segments``, so it cannot be counted against ``max_lines`` or pushed
+        out by the hold timer. It disappears the moment the real sentence lands.
+        """
+        said = source.strip()
+        became = target.strip()
+        if not said and not became:
+            return False
+        current = (said, became)
+        if current == self._provisional:
+            return False
+        self._provisional = current
+        return True
+
+    def clear_provisional(self) -> bool:
+        """Drop the in-progress line; True when there was one to drop."""
+        if self._provisional is None:
+            return False
+        self._provisional = None
+        return True
+
     def expire(self) -> bool:
         """Drop segments past their hold time; True when something went away."""
         now = self._clock()
@@ -152,8 +181,9 @@ class OverlayModel:
         return True
 
     def clear(self) -> None:
-        """Forget every segment (the bar hides on the next render)."""
+        """Forget every segment and the provisional line."""
         self._segments.clear()
+        self._provisional = None
 
     def lines(self) -> list[Line]:
         """Rows to draw, newest last, already filtered by the style's mode."""
@@ -165,17 +195,36 @@ class OverlayModel:
                 text = seg.target or seg.source  # failed MT must not blank the bar
                 if text:
                     rows.append(Line(kind="target", text=text))
+        if self._provisional is not None:
+            said, became = self._provisional
+            if self._style.mode in ("source", "bilingual") and said:
+                rows.append(Line(kind="provisional", text=said))
+            if self._style.mode in ("target", "bilingual"):
+                text = became or said
+                if text:
+                    rows.append(Line(kind="provisional", text=text))
         return rows
 
     def is_empty(self) -> bool:
         """Return True when nothing is left to show."""
-        return not self._segments
+        return not self._segments and self._provisional is None
 
 
 @dataclass(frozen=True, slots=True)
 class _Push:
     source: str
     target: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PushPartial:
+    source: str
+    target: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ClearPartial:
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +237,7 @@ class _Quit:
     pass
 
 
-type _Command = _Push | _Clear | _Quit
+type _Command = _Push | _PushPartial | _ClearPartial | _Clear | _Quit
 
 
 class Overlay:
@@ -228,6 +277,14 @@ class Overlay:
     def push(self, source: str, target: str) -> None:
         """Show ``source``/``target`` as the newest subtitle segment."""
         self._queue.put(_Push(source=source, target=target))
+
+    def push_provisional(self, source: str, target: str) -> None:
+        """Queue the in-progress line (replaces the previous one in place)."""
+        self._queue.put(_PushPartial(source=source, target=target))
+
+    def clear_provisional(self) -> None:
+        """Queue removal of the in-progress line."""
+        self._queue.put(_ClearPartial())
 
     def clear(self) -> None:
         """Hide the bar and forget everything on it."""
@@ -357,7 +414,15 @@ class Overlay:
     def _apply(self, command: _Command) -> None:
         """Handle one non-quit command."""
         if isinstance(command, _Push):
-            if self._model.push(command.source, command.target):
+            cleared = self._model.clear_provisional()
+            pushed = self._model.push(command.source, command.target)
+            if cleared or pushed:
+                self._render()
+        elif isinstance(command, _PushPartial):
+            if self._model.push_provisional(command.source, command.target):
+                self._render()
+        elif isinstance(command, _ClearPartial):
+            if self._model.clear_provisional():
                 self._render()
         elif isinstance(command, _Clear):
             self._model.clear()
@@ -396,12 +461,20 @@ class Overlay:
             # Older segments fade towards the background so the eye lands on the
             # newest line first; the newest row always renders at full contrast.
             brightness = 0.42 + 0.58 * (index + 1) / len(rows)
-            base = _FG if row.kind == "target" else _SOURCE_FG
+            if row.kind == "target":
+                base = _FG
+            elif row.kind == "provisional":
+                base = _PARTIAL_FG
+                brightness *= 0.9  # provisional text is a preview, not the record
+            else:
+                base = _SOURCE_FG
             label.configure(
                 text=row.text,
                 fg=_fade(base, brightness),
+                # The preview is the line the user is reading right now, so it
+                # gets the subtitle font; only its colour marks it as not final.
                 font=(family, size, "bold")
-                if row.kind == "target"
+                if row.kind != "source"
                 else (family, max(11, size // 2)),
                 wraplength=wraplength,
             )

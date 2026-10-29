@@ -147,6 +147,8 @@ class Config:
     overlay_bottom_margin: int
     overlay_hold_seconds: float
     overlay_max_lines: int
+    partial_subtitle: bool
+    partial_subtitle_ms: int
     overlay_click_through: bool
 
 
@@ -192,6 +194,8 @@ def default_config() -> Config:
         overlay_bottom_margin=80,
         overlay_hold_seconds=8.0,
         overlay_max_lines=6,
+        partial_subtitle=True,
+        partial_subtitle_ms=800,
         overlay_click_through=True,
     )
 
@@ -316,6 +320,8 @@ def load_config(path: Path) -> Config:
         overlay_bottom_margin=p.int_in("overlay_bottom_margin", 80, 0, 600),
         overlay_hold_seconds=p.float_in("overlay_hold_seconds", 8.0, 0.5, 60.0),
         overlay_max_lines=p.int_in("overlay_max_lines", 6, 1, 12),
+        partial_subtitle=p.bool_flag("partial_subtitle", True),
+        partial_subtitle_ms=p.int_in("partial_subtitle_ms", 800, 200, 5_000),
         overlay_click_through=p.bool_flag("overlay_click_through", True),
     )
 
@@ -356,6 +362,8 @@ def save_config(path: Path, config: Config) -> None:
         f"overlay_bottom_margin = {config.overlay_bottom_margin}",
         f"overlay_hold_seconds = {config.overlay_hold_seconds}",
         f"overlay_max_lines = {config.overlay_max_lines}",
+        f"partial_subtitle = {str(config.partial_subtitle).lower()}",
+        f"partial_subtitle_ms = {config.partial_subtitle_ms}",
         f"overlay_click_through = {str(config.overlay_click_through).lower()}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

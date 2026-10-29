@@ -9,6 +9,8 @@ only place that touches the recognizer and the indicator.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 #: How many trailing characters of a long partial to keep on the pill.
@@ -50,3 +52,45 @@ def level_from_block(block: np.ndarray) -> float:
         return 0.0
     rms = float(np.sqrt(np.mean(np.square(block, dtype=np.float32))))
     return min(1.0, rms / _LEVEL_FULL_SCALE_RMS)
+
+
+@dataclass
+class SubtitleGate:
+    """Decide when a live partial is worth translating and showing.
+
+    Partial decodes arrive far faster than a human reads, and each translation
+    costs CPU that the recogniser needs. The gate keeps the bar alive without
+    letting it outrun the machine:
+
+    * the text must actually change;
+    * it must grow by ``min_growth`` characters (a decode that only re-punctuates
+      the same words would just make the line flicker);
+    * at most one refresh per ``min_interval_s``.
+    """
+
+    min_interval_s: float = 0.8
+    min_growth: int = 2
+    _last_text: str = ""
+    _last_at: float = float("-inf")
+
+    def offer(self, text: str, now: float) -> str | None:
+        """Return the text to show, or None when this refresh should be skipped."""
+        candidate = text.strip()
+        if not candidate:
+            return None
+        if candidate == self._last_text:
+            return None
+        grown = len(candidate) - len(self._last_text)
+        same_sentence = candidate.startswith(self._last_text)
+        if same_sentence and grown < self.min_growth:
+            return None
+        if now - self._last_at < self.min_interval_s:
+            return None
+        self._last_text = candidate
+        self._last_at = now
+        return candidate
+
+    def reset(self) -> None:
+        """Forget the previous utterance (new sentence, or bar cleared)."""
+        self._last_text = ""
+        self._last_at = float("-inf")

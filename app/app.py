@@ -56,7 +56,7 @@ from app.hotkey_logic import (
     loading_hint_visible,
     push_to_talk_active,
 )
-from app.partial import level_from_block, new_text_or_none, truncate_partial
+from app.partial import SubtitleGate, level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
 from app.translator import (
     TRANSLATE_ROUTES,
@@ -220,6 +220,9 @@ class DictationApp:
         #: Created lazily: a user who never turns the subtitles on never pays for
         #: a second Tk interpreter.
         self._overlay: native.overlay.Overlay | None = None
+        self._subtitle_gate = SubtitleGate(
+            min_interval_s=config.partial_subtitle_ms / 1000
+        )
         self._recognizer: Recognizer | None = None
         self._translator: Translator | None = None
         self._recorder: Recorder | None = None
@@ -817,6 +820,7 @@ class DictationApp:
         overlay = self._overlay
         if overlay is None or not self._config.overlay_enabled:
             return
+        self._subtitle_gate.reset()  # the finished sentence replaces the preview
         overlay.push(text, translated)
 
     def _overlay_only(self) -> bool:
@@ -1251,7 +1255,31 @@ class DictationApp:
         # one line higher — keep it quiet and let the bar do the talking.
         if not self._subtitles():
             self._indicator.update(f"● {shown}")
+        self._offer_partial_subtitle(text)
         return shown
+
+    def _offer_partial_subtitle(self, text: str) -> None:
+        """Translate the still-being-spoken sentence and show it as a preview.
+
+        Throttled by :class:`~app.partial.SubtitleGate` (change + growth + one
+        refresh per interval): a partial decode arrives several times a second
+        and each translation competes with the recogniser for the same CPU.
+        """
+        if not self._config.partial_subtitle:
+            return
+        overlay = self._overlay
+        if overlay is None or not self._subtitles():
+            return
+        offered = self._subtitle_gate.offer(text, time.monotonic())
+        if offered is None:
+            return
+        translated = ""
+        if self._config.translate:
+            translated, _attempted = self._translate(offered)
+        overlay.push_provisional(offered, translated)
+        log.info(
+            "partial subtitle: %d chars translated=%s", len(offered), bool(translated)
+        )
 
     def _insert_segments(
         self,
