@@ -1,6 +1,14 @@
 """Hold/click discrimination for the push-to-talk hotkey."""
 
-from app.hotkey_logic import Click, EndHold, HoldClickDetector, Press, Release, StartHold
+from app.hotkey_logic import (
+    Click,
+    EndHold,
+    HoldClickDetector,
+    Press,
+    Release,
+    StartHold,
+    push_to_talk_active,
+)
 
 
 def test_press_starts_hold() -> None:
@@ -49,3 +57,9 @@ def test_cycle_resets_state() -> None:
     detector.feed(Release(timestamp_ms=1_100))  # Click
     assert detector.feed(Press(timestamp_ms=2_000)) == StartHold()
     assert detector.feed(Release(timestamp_ms=5_000)) == EndHold(duration_ms=3_000)
+
+
+def test_push_to_talk_is_inert_while_continuous_owns_the_mic() -> None:
+    """The two modes are mutually exclusive: a press must not start a recording."""
+    assert push_to_talk_active(continuous=False) is True
+    assert push_to_talk_active(continuous=True) is False

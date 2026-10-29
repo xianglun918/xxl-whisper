@@ -52,6 +52,7 @@ from app.hotkey_logic import (
     Press,
     Release,
     StartHold,
+    push_to_talk_active,
 )
 from app.partial import level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
@@ -433,6 +434,10 @@ class DictationApp:
                 self._tray.notify("语音处理出错，详见日志")
 
     def _on_key_transition(self, pressed: bool, ts_ms: int) -> None:
+        if not push_to_talk_active(continuous=self._continuous):
+            # Continuous dictation owns the mic: the key is swallowed so it cannot
+            # toggle CapsLock, but it must not start a recording either.
+            return
         event = Press(timestamp_ms=ts_ms) if pressed else Release(timestamp_ms=ts_ms)
         action = self._detector.feed(event)
         if action is not None:
@@ -835,6 +840,10 @@ class DictationApp:
             self._config.typing_merge_ms,
             self._config.typing_merge_chars,
         )
+        self._cancel_hold_confirm()
+        if self._holding and self._recorder is not None:
+            self._recorder.stop()  # discard a hold that was in progress
+            self._holding = False
         try:
             vad_path = ensure_vad_model(
                 models_root(), self._on_vad_progress, proxy=self._config.proxy
@@ -863,7 +872,7 @@ class DictationApp:
         if self._recorder is not None:
             self._recorder.start_sink(blocks)
         self._continuous = True
-        self._set_hooks_armed()  # stays disarmed: continuous owns the microphone
+        self._set_hooks_armed()  # stays armed: swallow the key, ignore the press
         # Three threads, so no role can stall another: the VAD consumer stays
         # real-time (never decodes), the finished-sentence decoder always wins,
         # and the live partial runs on its own thread so an in-flight partial
@@ -1277,10 +1286,15 @@ class DictationApp:
         """Arm the hooks once the model is ready so dictation can suppress keys.
 
         While the model loads the hooks stay disarmed (CapsLock is native) so a
-        click toggles caps even though the worker is busy decoding. Continuous
-        dictation keeps them disarmed for as long as it owns the microphone.
+        click toggles caps even though the worker is busy decoding.
+
+        Continuous dictation stays *armed* on purpose: armed means "swallow the
+        key", which is exactly what we want while the mic is owned by continuous
+        mode — otherwise a stray CapsLock press would toggle caps (and pop the
+        "model loading" hint) in the middle of a live transcript. The press is
+        ignored a layer above, in ``_on_key_transition``.
         """
-        armed = self._model_ready and not self._continuous
+        armed = self._model_ready
         if self._hook is not None:
             self._hook.set_armed(armed)
         if self._mouse_hook is not None:

@@ -10,6 +10,18 @@ from dataclasses import dataclass
 from typing import assert_never
 
 
+def push_to_talk_active(*, continuous: bool) -> bool:
+    """Return whether a hotkey press may start a push-to-talk recording.
+
+    Push-to-talk and continuous dictation are mutually exclusive: continuous
+    mode already owns the microphone, so a press must be **inert** — no
+    recording, no pill, no "model loading" hint. The key is still swallowed by
+    the hook (see ``DictationApp._set_hooks_armed``) so it cannot toggle CapsLock
+    or type into the document while the user is dictating.
+    """
+    return not continuous
+
+
 @dataclass(frozen=True, slots=True)
 class Press:
     """Key transitioned to down at this monotonic timestamp (ms)."""
