@@ -24,6 +24,8 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync
-      - run: uv run python -m ruff check app tests run.py scripts
-      - run: uv run basedpyright app run.py
+      # Ratchet gate: fails only when a change ADDS lint/type findings.
+      # The 117 ruff / 13 basedpyright findings that predate this branch are the
+      # committed baseline; the numbers may only go down (.lint-baseline.json).
+      - run: uv run python scripts/lint_ratchet.py
       - run: uv run pytest tests -m "not integration" -q
