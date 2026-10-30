@@ -49,8 +49,10 @@ __all__ = [
 
 _POLL_MS: int = 60
 _TICK_MS: int = 250
+# Colours and font follow the "正在听…" pill (app/indicator.py): the subtitle
+# bar is the same surface, just wider — one visual language, not two.
 _BG: str = "#101418"
-_FG: str = "#f2f4f6"
+_FG: str = "#e8eaed"
 _SOURCE_FG: str = "#9aa4ae"
 #: In-progress line: brighter than the grey source rows, dimmer than a finished
 #: translation, so the eye reads it as "not final yet".
@@ -60,7 +62,11 @@ _FONT_FAMILIES: dict[str, str] = {
     "win32": "Microsoft YaHei UI",
     "darwin": "PingFang SC",
 }
-_DEFAULT_FONT_SIZE: int = 32
+#: The pill draws its text at 11 pt; the bar sits further from the eye and is
+#: read while looking at something else, so it gets a few points more — not the
+#: 32 pt it used to shout at.
+_DEFAULT_FONT_SIZE: int = 15
+_SOURCE_SIZE_DELTA: int = 3
 
 #: What the bar shows for one segment: only the translation, only what was
 #: said, or both (source in a smaller grey line above the translation).
@@ -471,17 +477,20 @@ class Overlay:
             label.configure(
                 text=row.text,
                 fg=_fade(base, brightness),
-                # The preview is the line the user is reading right now, so it
-                # gets the subtitle font; only its colour marks it as not final.
-                font=(family, size, "bold")
+                # Same face and weight as the pill; only the colour marks a
+                # line as "not final yet", and the source line is a few points
+                # smaller so the translation stays the thing being read.
+                font=(family, size)
                 if row.kind != "source"
-                else (family, max(11, size // 2)),
+                else (family, max(11, size - _SOURCE_SIZE_DELTA)),
                 wraplength=wraplength,
             )
             label.pack(
                 fill="x",
-                padx=24,
-                pady=(14 if index == 0 else (10 if row.kind == "source" else 2), 8),
+                # Padding matches the pill's proportions (18 px sides) now that
+                # the text is pill-sized instead of poster-sized.
+                padx=18,
+                pady=(10 if index == 0 else (6 if row.kind == "source" else 2), 6),
             )
 
     def _place(self) -> None:
