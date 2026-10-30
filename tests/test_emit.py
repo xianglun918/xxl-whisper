@@ -7,6 +7,7 @@ ladder lands in M4.
 import sys
 import time
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from app.emit import (
@@ -198,6 +199,29 @@ def test_restore_disabled_never_touches_the_snapshot(
     assert events == ["stage:hi"]
 
 
+def _stateful_clipboard(
+    monkeypatch: pytest.MonkeyPatch, initial: object
+) -> dict[str, object]:
+    """Install a fake clipboard that actually holds its content."""
+    board: dict[str, object] = {"content": initial, "snapshots": 0, "restored": []}
+
+    def _snapshot() -> object:
+        board["snapshots"] = int(board["snapshots"]) + 1
+        return board["content"]
+
+    def _stage(text: str) -> None:
+        board["content"] = text
+
+    def _restore(snapshot: object) -> None:
+        cast("list[object]", board["restored"]).append(snapshot)
+        board["content"] = snapshot
+
+    monkeypatch.setattr(native.io, "snapshot_clipboard", _snapshot)
+    monkeypatch.setattr(native.io, "set_clipboard_text", _stage)
+    monkeypatch.setattr(native.io, "restore_clipboard", _restore)
+    return board
+
+
 def test_burst_keeps_the_original_snapshot_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -210,15 +234,7 @@ def test_burst_keeps_the_original_snapshot_once(
     _stub_target(monkeypatch)
     monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: True)
     monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
-    snapshots: list[int] = []
-    monkeypatch.setattr(
-        native.io,
-        "snapshot_clipboard",
-        lambda: (snapshots.append(1), "USER_ORIGINAL")[1],
-    )
-    restored: list[object] = []
-    monkeypatch.setattr(native.io, "restore_clipboard", restored.append)
-    monkeypatch.setattr(native.io, "set_clipboard_text", lambda _text: None)
+    board = _stateful_clipboard(monkeypatch, "USER_ORIGINAL")
     monkeypatch.setattr(native.io, "paste_text", lambda *_a, **_k: None)
     indicator = _FakeIndicator()
     settings = EmitSettings(restore_clipboard=True, paste_delay_ms=150)
@@ -226,11 +242,87 @@ def test_burst_keeps_the_original_snapshot_once(
     emit_text("第一句", settings, indicator)
     emit_text("第二句", settings, indicator)
 
-    assert len(snapshots) == 1  # one snapshot for the whole burst
+    assert board["snapshots"] == 2  # read every time, but the value must not change
+    assert board["content"] == "第二句"  # the last sentence is what waits to be pasted
+
     deadline = time.monotonic() + 2.0
-    while not restored and time.monotonic() < deadline:
+    while not board["restored"] and time.monotonic() < deadline:
         time.sleep(0.02)
-    assert restored == ["USER_ORIGINAL"]
+    assert board["restored"] == ["USER_ORIGINAL"]
+    assert board["content"] == "USER_ORIGINAL"
+
+
+def test_new_copy_between_bursts_is_not_overwritten(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale snapshot must not clobber something the user copied later."""
+    _stub_target(monkeypatch)
+    monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: True)
+    monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
+    board = _stateful_clipboard(monkeypatch, "USER_ORIGINAL")
+    monkeypatch.setattr(native.io, "paste_text", lambda *_a, **_k: None)
+    indicator = _FakeIndicator()
+    settings = EmitSettings(restore_clipboard=True, paste_delay_ms=0)
+
+    emit_text("第一句", settings, indicator)
+    assert board["content"] == "USER_ORIGINAL"  # restored immediately (delay 0)
+
+    board["content"] = "USER_NEW_COPY"  # the user copies something else
+    emit_text("第二句", settings, indicator)
+
+    assert board["restored"][-1] == "USER_NEW_COPY"
+
+
+def test_copy_during_the_restore_window_is_not_lost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user copies something while a restore is still pending.
+
+    The pending snapshot is the burst's original; if the clipboard no longer holds
+    our staged text, that snapshot is stale and must be replaced — otherwise the
+    late restore overwrites the fresh copy.
+    """
+    _stub_target(monkeypatch)
+    monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: True)
+    monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
+    board = _stateful_clipboard(monkeypatch, "USER_ORIGINAL")
+    monkeypatch.setattr(native.io, "paste_text", lambda *_a, **_k: None)
+    indicator = _FakeIndicator()
+    slow = EmitSettings(restore_clipboard=True, paste_delay_ms=1_000)
+
+    emit_text("第一句", slow, indicator)  # restore is now pending for 1 s
+    board["content"] = "USER_NEW_COPY"  # the user copies something else
+    emit_text("第二句", slow, indicator)
+
+    deadline = time.monotonic() + 3.0
+    while not board["restored"] and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert board["restored"][-1] == "USER_NEW_COPY"
+
+
+def test_undelivered_text_stays_on_the_clipboard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the fallback used to restore the original while telling the
+    user to paste manually — they pasted their old clipboard instead."""
+    _stub_target(monkeypatch)
+    monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: False)
+    monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
+    monkeypatch.setattr(native.io, "focused_control_class", lambda: "SomeUnknownControl")
+    board = _stateful_clipboard(monkeypatch, "USER_ORIGINAL")
+    monkeypatch.setattr(native.io, "probe_focused", lambda: SimpleNamespace(writable=False))
+    monkeypatch.setattr(native.io, "post_wm_paste_to_focus", lambda: False)
+    monkeypatch.setattr(native.uia, "probe_focused", lambda: SimpleNamespace(writable=False))
+    indicator = _FakeIndicator()
+
+    channel = emit_text(
+        "退化句", EmitSettings(restore_clipboard=True, paste_delay_ms=0), indicator
+    )
+
+    assert channel is Channel.CLIPBOARD
+    assert board["content"] == "退化句"  # must stay, or the paste hint lies
+    assert board["restored"] == []
+    assert any("剪贴板" in text for text, _ms in indicator.flashes)
 
 
 def test_uia_delivery_restores_the_clipboard_immediately(

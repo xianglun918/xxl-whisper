@@ -105,6 +105,10 @@ class Recorder:
         self._source = source
         self._on_stream_error = on_stream_error
         self._lock = threading.Lock()
+        #: Serialises the open/close decisions against each other: the hook
+        #: thread and the worker can both call start()/stop() for one hold, and
+        #: "check → open → mark" is not atomic on its own.
+        self._lifecycle = threading.Lock()
         self._buffer: list[np.ndarray] = []
         self._recording = False
         self._buffered_samples = 0
@@ -116,6 +120,13 @@ class Recorder:
             self._open_stream()
 
     def _open_stream(self) -> None:
+        """Open the capture stream; a second call is a no-op.
+
+        Idempotent on purpose: macOS opens a stream per hold, so a double open
+        meant a leaked stream and a lit microphone indicator for every sentence.
+        """
+        if self._stream is not None:
+            return
         if self._source == "system":
             # System audio: WASAPI loopback resampled to 16 kHz mono, pushed
             # through the same callback shape PortAudio uses.
@@ -157,16 +168,17 @@ class Recorder:
         open for every sentence — a lit microphone indicator, doubled audio and
         a stream leak per utterance (``stop()`` only closes the last one).
         """
-        if self._capturing_hold():
-            return
-        if not native.RECORDER_KEEP_OPEN:
-            self._open_stream()
-        with self._lock:
-            if self._recording:
+        with self._lifecycle:
+            if self._capturing_hold():
                 return
-            self._buffer = []
-            self._buffered_samples = 0
-            self._recording = True
+            if not native.RECORDER_KEEP_OPEN:
+                self._open_stream()
+            with self._lock:
+                if self._recording:
+                    return
+                self._buffer = []
+                self._buffered_samples = 0
+                self._recording = True
 
     def _capturing_hold(self) -> bool:
         """Return True when a hold is already captured on a live stream."""
@@ -196,16 +208,25 @@ class Recorder:
 
     def stop(self) -> np.ndarray | None:
         """Finish a capture; None when it was too short to be speech."""
-        with self._lock:
-            self._recording = False
-            chunks = self._buffer
-            self._buffer = []
-            self._buffered_samples = 0
-        if not native.RECORDER_KEEP_OPEN:
-            self._close_stream()
+        with self._lifecycle:
+            with self._lock:
+                self._recording = False
+                chunks = self._buffer
+                self._buffer = []
+                self._buffered_samples = 0
+            if not native.RECORDER_KEEP_OPEN:
+                self._close_stream()
         if not chunks:
             return None
         audio = np.concatenate(chunks, axis=0).reshape(-1)
+        if audio.shape[0] > _MAX_HOLD_SAMPLES:
+            # Nobody holds a hotkey for two minutes: this capture was never
+            # stopped (a skipped press, a lost key-up). Shipping it to the model
+            # would paste minutes of stale audio, so drop it instead of "capping".
+            log.warning(
+                "recorder: dropped a runaway capture (%.0f s)", audio.shape[0] / SAMPLE_RATE
+            )
+            return None
         if audio.shape[0] < SAMPLE_RATE * MIN_RECORD_MS // 1000:
             return None
         return audio
