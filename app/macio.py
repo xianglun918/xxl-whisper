@@ -150,6 +150,29 @@ def foreground_window_title() -> str:
     return str(front.localizedName()) if front is not None else ""
 
 
+def snapshot_clipboard() -> list[tuple[str, bytes]]:
+    """Capture the whole pasteboard so :func:`restore_clipboard` can put it back.
+
+    Taken by the emit chain *before* the dictated text is staged; see
+    :func:`app.winio.snapshot_clipboard` for why the order matters.
+    """
+    try:
+        return _snapshot_pasteboard()
+    except Exception:
+        log.exception("clipboard snapshot failed")
+        return []
+
+
+def restore_clipboard(snapshot: object) -> None:
+    """Put a :func:`snapshot_clipboard` result back (no-op for an empty one)."""
+    if not isinstance(snapshot, list) or not snapshot:
+        return
+    try:
+        _restore_pasteboard(snapshot)
+    except Exception:
+        log.exception("clipboard restore failed")
+
+
 def set_clipboard_text(text: str) -> None:
     """Replace the general pasteboard contents with ``text``."""
     pasteboard = AppKit.NSPasteboard.generalPasteboard()

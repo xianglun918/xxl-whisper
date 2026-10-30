@@ -8,12 +8,12 @@ from app.asr import _FUNASR_NANO_PROMPTS
 from app.config import ConfigError, default_config, hotkey_vk, load_config, save_config
 from app.controls import disfluency_for_model
 
-from app import native
+from app import keycodes
 
 
 def test_missing_file_returns_defaults(tmp_path: Path) -> None:
     config = load_config(tmp_path / "absent.toml")
-    assert config.hotkey == native.hotkey.DEFAULT_HOTKEY
+    assert config.hotkey == keycodes.DEFAULT_HOTKEY
     assert config.hold_threshold_ms == 400
     assert config.mic == ""
     assert config.language == "zh"
@@ -24,8 +24,8 @@ def test_missing_file_returns_defaults(tmp_path: Path) -> None:
     assert config.continuous is False
     assert config.vad_threshold == 0.5
     assert config.vad_min_speech_ms == 250
-    assert config.live_min_silence_ms == 400
-    assert config.live_max_speech_ms == 6_000
+    assert config.live_min_silence_ms == 350
+    assert config.live_max_speech_ms == 4_000
     assert config.typing_merge_ms == 12_000
     assert config.translate is False
     assert config.translate_target == "en"
@@ -38,7 +38,7 @@ def test_partial_file_merges_with_defaults(tmp_path: Path) -> None:
     config = load_config(path)
     assert config.mic == "USB Microphone"
     assert config.hold_threshold_ms == 400
-    assert config.hotkey == native.hotkey.DEFAULT_HOTKEY
+    assert config.hotkey == keycodes.DEFAULT_HOTKEY
 
 
 def test_roundtrip(tmp_path: Path) -> None:
@@ -63,6 +63,7 @@ def test_roundtrip(tmp_path: Path) -> None:
         live_max_speech_ms=15_000,
         translate=True,
         translate_target="zh",
+        translate_source="en",
         translate_mode="replace",
     )
     save_config(path, original)
@@ -98,8 +99,8 @@ def test_custom_vk_hotkey_out_of_range_rejected(tmp_path: Path) -> None:
 
 
 def test_hotkey_vk_resolves_names_and_ints() -> None:
-    default = native.hotkey.DEFAULT_HOTKEY
-    assert hotkey_vk(default) == native.hotkey.PRESET_KEYCODES[default]
+    default = keycodes.DEFAULT_HOTKEY
+    assert hotkey_vk(default) == keycodes.PRESET_KEYCODES[default]
     assert hotkey_vk(0x2B) == 0x2B
 
 

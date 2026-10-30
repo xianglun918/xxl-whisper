@@ -4,8 +4,8 @@ import time
 from pathlib import Path
 
 import numpy as np
-import sentencepiece
 import onnxruntime as ort
+import sentencepiece
 
 ROOT = Path("/tmp/mtmodels/opus-mt-zh-en")
 TEXT = "你好，世界。"

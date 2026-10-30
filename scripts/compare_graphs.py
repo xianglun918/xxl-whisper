@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from debug_translate import run  # noqa: E402
+from debug_translate import run
 
 ROOT = Path("/tmp/mtmodels/opus-mt-zh-en/onnx")
 TEXT = "你好，世界。"

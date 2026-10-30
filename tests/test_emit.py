@@ -74,6 +74,8 @@ def _stub_target(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(native.io, "foreground_window_title", lambda: "test-window")
     monkeypatch.setattr(native.io, "focused_control_hwnd", lambda: 0)
     monkeypatch.setattr(native.io, "focused_control_class", lambda: "Edit")
+    monkeypatch.setattr(native.io, "snapshot_clipboard", lambda: "OLD")
+    monkeypatch.setattr(native.io, "restore_clipboard", lambda _snapshot: None)
 
 
 def test_choose_delivery_path_type_text_for_non_text_clipboard() -> None:
@@ -129,27 +131,46 @@ def test_emit_non_text_clipboard_dead_injection_leaves_clipboard_untouched(
     assert indicator.flashes  # honest terminal message, not "copied to clipboard"
 
 
-def test_emit_text_clipboard_paste_path_stages_and_restores(
+def test_emit_text_snapshots_the_clipboard_before_staging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Regression: the snapshot must be taken *before* the stage.
+
+    Taking it afterwards read our own dictated text back, so the "restore" put
+    that text on the clipboard and destroyed whatever the user had copied —
+    while the log claimed the clipboard had been restored.
+    """
     _stub_target(monkeypatch)
     monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: True)
     monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
-    staged: list[str] = []
-    pasted: list[tuple[str, bool, int]] = []
-    monkeypatch.setattr(native.io, "set_clipboard_text", staged.append)
+    events: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        native.io,
+        "snapshot_clipboard",
+        lambda: (events.append(("snapshot", None)), "OLD")[1],
+    )
+    monkeypatch.setattr(
+        native.io, "set_clipboard_text", lambda text: events.append(("stage", text))
+    )
+    monkeypatch.setattr(
+        native.io, "restore_clipboard", lambda snap: events.append(("restore", snap))
+    )
 
     def _record_paste(text: str, restore_clipboard: bool, delay_ms: int) -> None:
-        pasted.append((text, restore_clipboard, delay_ms))
+        events.append(("paste", (text, restore_clipboard, delay_ms)))
 
     monkeypatch.setattr(native.io, "paste_text", _record_paste)
     indicator = _FakeIndicator()
 
-    channel = emit_text("hello", EmitSettings(restore_clipboard=True, paste_delay_ms=42), indicator)
+    channel = emit_text("hello", EmitSettings(restore_clipboard=True, paste_delay_ms=0), indicator)
 
     assert channel is Channel.KEYS
-    assert staged == ["hello"]
-    assert pasted == [("hello", True, 42)]
+    assert events[0] == ("snapshot", None)  # before the stage
+    assert events[1] == ("stage", "hello")
+    # The paste must not restore on its own: after the stage it would read our
+    # text back. emit owns the restore, and it puts the *original* back.
+    assert events[2] == ("paste", ("hello", False, 0))
+    assert events[-1] == ("restore", "OLD")
     assert indicator.hidden == 1
 
 

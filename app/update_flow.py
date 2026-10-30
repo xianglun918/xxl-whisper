@@ -9,6 +9,8 @@ download page. Network failures become a log line (auto) or a small info box
 (manual).
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 import threading
@@ -16,6 +18,7 @@ import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from app import native
 from app.config import updates_dir
@@ -49,7 +52,7 @@ class UpdateFlowDeps:
     """Live dependencies the update flow reports through."""
 
     tray: Tray
-    indicator: native.indicator.Indicator
+    indicator: Any
     current_version: str
     on_quit: Callable[[], None]
     get_proxy: Callable[[], str]

@@ -140,7 +140,7 @@ class FakeMenu:
         return tuple(kept)
 
 
-@pytest.fixture()
+@pytest.fixture
 def tray_module(monkeypatch):
     """Import app.tray with pystray/PIL/sounddevice stubbed out."""
     pystray = types.ModuleType("pystray")
@@ -216,7 +216,7 @@ def tray_module(monkeypatch):
     for name in ("app.tray", "app.recorder", "app.loopback", "app.menu_spec", "app.config"):
         monkeypatch.delitem(sys.modules, name, raising=False)
 
-    import app.tray as tray
+    from app import tray
 
     tray._TEST_ICONS = icons
     return tray
@@ -361,7 +361,6 @@ def test_refresh_is_deferred_and_never_replaces_the_menu(tray_module, monkeypatc
 
     def fake_schedule(refresh, on_error, *, delay, timer_factory=None):
         scheduled.append(refresh)
-        return None
 
     monkeypatch.setattr(tray_module, "schedule_refresh", fake_schedule)
     instance.refresh_menu()

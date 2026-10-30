@@ -14,6 +14,7 @@ from types import MappingProxyType
 from typing import Literal, NoReturn, cast
 
 from app import native
+from app.keycodes import DEFAULT_HOTKEY, MOUSE_KEYCODES, PRESET_KEYCODES
 
 APP_DIR_NAME: str = "xxl-whisper"
 
@@ -53,15 +54,15 @@ type OverlayMode = Literal["target", "source", "bilingual"]
 #: both. ``screen`` is the read-only "don't type into my meeting notes" mode.
 type OverlayOutput = Literal["type", "screen", "both"]
 
-#: Preset hotkey names -> platform keycodes (owned by the platform hook module).
+#: Preset hotkey names -> platform keycodes (data owned by :mod:`app.keycodes`).
 #: Any other keycode (1..254) is also accepted as a raw integer for
 #: user-defined keys. Keys that are dangerous to remap (modifiers) are
 #: rejected at capture time, not here.
-HOTKEY_VK: Mapping[str, int] = native.hotkey.PRESET_KEYCODES
+HOTKEY_VK: Mapping[str, int] = PRESET_KEYCODES
 
 #: Buttons that live on the mouse, watched by the mouse LL hook instead of the
 #: keyboard LL hook (empty on macOS).
-MOUSE_VKS: frozenset[int] = native.hotkey.MOUSE_KEYCODES
+MOUSE_VKS: frozenset[int] = MOUSE_KEYCODES
 
 _MODELS: Mapping[str, None] = MappingProxyType(
     {"sensevoice": None, "funasr_nano": None, "whisper_turbo": None}
@@ -158,7 +159,7 @@ class Config:
 def default_config() -> Config:
     """First-run defaults: platform push-to-talk key, Chinese, 400 ms cutoff."""
     return Config(
-        hotkey=native.hotkey.DEFAULT_HOTKEY,
+        hotkey=DEFAULT_HOTKEY,
         hold_threshold_ms=400,
         mic="",
         audio_source="mic",
@@ -282,7 +283,7 @@ def language_for_route(current_language: str, route: str) -> str:
     gibberish. Leaving a 日→… route restores a sensible default, but a user who
     deliberately chose ``auto`` keeps it.
     """
-    source = route.split("-")[0]
+    source = route.split("-", maxsplit=1)[0]
     if source == "ja":
         return "ja"
     if current_language == "ja":
@@ -330,7 +331,7 @@ def load_config(path: Path) -> Config:
         )
         source = inferred
     return Config(
-        hotkey=p.hotkey("hotkey", native.hotkey.DEFAULT_HOTKEY),
+        hotkey=p.hotkey("hotkey", DEFAULT_HOTKEY),
         hold_threshold_ms=p.int_in("hold_threshold_ms", 400, 10, 2_000),
         mic=p.text("mic", ""),
         audio_source=p.audio_source("audio_source", "mic"),
@@ -485,9 +486,10 @@ class _Parser:
         value = self._raw.get(name, default)
         if not isinstance(value, str) or value not in _MODELS:
             self._fail(f"{name} must be one of: {', '.join(sorted(_MODELS))}")
-        if value == "sensevoice":
-            return "sensevoice"
-        return "funasr_nano"
+        # Hand back the validated value verbatim: whitelisting the names and
+        # then mapping everything but "sensevoice" to "funasr_nano" silently
+        # turned a saved "whisper_turbo" into Fun-ASR-Nano on the next start.
+        return cast("ModelKind", value)
 
     def audio_source(self, name: str, default: AudioSource) -> AudioSource:
         value = self.choice(name, default, _AUDIO_SOURCES)

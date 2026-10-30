@@ -6,6 +6,8 @@ worker owns the detector + recorder state machine so no locks are needed
 around them. Tray-driven control actions live in app.controls.
 """
 
+from __future__ import annotations
+
 import contextlib
 import logging
 import queue
@@ -13,17 +15,16 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import assert_never, cast
+from typing import Any, assert_never
 
 import numpy as np
 
-from app import __version__, native
+from app import __version__, logsafe, native
 from app.asr import Recognizer
 from app.audio_flow import plan_recovery
 from app.config import (
     MOUSE_VKS,
     Config,
-    OverlayOutput,
     config_path,
     hotkey_vk,
     models_root,
@@ -59,6 +60,7 @@ from app.hotkey_logic import (
     loading_hint_visible,
     push_to_talk_active,
 )
+from app.menu_spec import TrayCallbacks, TrayState
 from app.partial import SubtitleGate, level_from_block, new_text_or_none, truncate_partial
 from app.recorder import Recorder
 from app.translator import (
@@ -68,7 +70,7 @@ from app.translator import (
     has_translatable_text,
     route_text,
 )
-from app.tray import Tray, TrayCallbacks, TrayState
+from app.tray import Tray
 from app.type_batcher import TypeBatcher
 from app.update_flow import UpdateFlow, UpdateFlowDeps
 from app.vad import SAMPLE_RATE, Segmenter, VadSettings
@@ -76,7 +78,6 @@ from app.vad import SAMPLE_RATE, Segmenter, VadSettings
 log = logging.getLogger(__name__)
 
 _VK_DISABLED: int = 0
-_VK_ESCAPE: int = 0x1B
 
 #: Bounded continuous-capture queue: the audio callback drops the oldest block
 #: when this fills, so a slow decode can never stall the microphone stream.
@@ -216,15 +217,15 @@ class DictationApp:
         self._indicator = native.indicator.Indicator()
         #: Created lazily: a user who never turns the subtitles on never pays for
         #: a second Tk interpreter.
-        self._overlay: native.overlay.Overlay | None = None
+        self._overlay: Any | None = None
         self._subtitle_gate = SubtitleGate(
             min_interval_s=config.partial_subtitle_ms / 1000
         )
         self._recognizer: Recognizer | None = None
         self._translator: Translator | None = None
         self._recorder: Recorder | None = None
-        self._hook: native.hotkey.HotkeyHook | None = None
-        self._mouse_hook: native.mousehook.MouseHook | None = None
+        self._hook: Any | None = None
+        self._mouse_hook: Any | None = None
         self._paused = False
         self._ready = False
         self._skip_hold = False
@@ -361,9 +362,29 @@ class DictationApp:
     # -- wiring callbacks (foreign threads) ---------------------------------
 
     def _on_transition(self, pressed: bool) -> None:
+        """Prewarm the capture on the hook thread, then let the worker decide.
+
+        The worker may still be decoding the previous sentence (that decode used
+        to run 0.2-3.5 s on the same thread), and every millisecond spent
+        queueing here is speech that never reaches the model — the classic
+        "第二句开头被吞掉". Only the stream start moves off the worker: the
+        press/click/hold decision stays serialised on the worker.
+        """
+        self._prewarm_capture(pressed)
         self._queue.put(
             KeyTransition(pressed=pressed, ts_ms=time.perf_counter_ns() // 1_000_000)
         )
+
+    def _prewarm_capture(self, pressed: bool) -> None:
+        """Start recording the instant the hotkey goes down (hook thread)."""
+        if not pressed or self._paused or self._continuous:
+            return
+        if self._recorder is None or not self._model_ready:
+            return
+        try:
+            self._recorder.start()
+        except Exception:
+            log.exception("press: capture prewarm failed")
 
     def _on_model_progress(self, filename: str, downloaded: int, total: int) -> None:
         self._model_downloaded = True
@@ -580,7 +601,7 @@ class DictationApp:
         if not self._subtitles():
             self._indicator.update("识别中…")
         text = recognizer.transcribe(audio)
-        log.info("asr: %r", text)
+        log.info("asr: %s", logsafe.describe_text(text))
         if text:
             self._emit(text)
         else:
@@ -605,10 +626,30 @@ class DictationApp:
             self._hook.set_armed(False)
         if self._mouse_hook is not None:
             self._mouse_hook.set_armed(False)
-        recognizer = self._controls.swap_model(kind)
-        self._set_hooks_armed()
+        recognizer: Recognizer | None = None
+        try:
+            recognizer = self._controls.swap_model(kind)
+        except Exception:
+            # Re-arming the hooks used to be skipped when the swap raised, which
+            # left them disarmed for the rest of the session: push-to-talk stayed
+            # dead and the only trace was one log line. Rebuild the current model
+            # (the config was already switched) so dictation keeps working.
+            log.exception("model switch failed for %r", kind)
+            self._indicator.update("切换模型失败，正在恢复")
+            recognizer = self._rebuild_after_failed_swap()
+        finally:
+            self._set_hooks_armed()
         if recognizer is not None:
             self._recognizer = recognizer
+
+    def _rebuild_after_failed_swap(self) -> Recognizer | None:
+        """Try to bring a recognizer back after a failed model switch."""
+        rebuilt = self._controls.rebuild_recognizer()
+        if rebuilt is None:
+            self._indicator.update("模型不可用，请查看日志")
+        else:
+            self._indicator.flash("已恢复原模型", 1500)
+        return rebuilt
 
     def _set_disfluency(self, kind: str) -> None:
         # Rebuilding the recognizer (Fun-ASR-Nano) blocks the worker; disarm the
@@ -617,8 +658,14 @@ class DictationApp:
             self._hook.set_armed(False)
         if self._mouse_hook is not None:
             self._mouse_hook.set_armed(False)
-        recognizer = self._controls.set_disfluency(kind)
-        self._set_hooks_armed()
+        recognizer: Recognizer | None = None
+        try:
+            recognizer = self._controls.set_disfluency(kind)
+        except Exception:
+            log.exception("disfluency switch failed for %r", kind)
+            recognizer = self._rebuild_after_failed_swap()
+        finally:
+            self._set_hooks_armed()
         if recognizer is not None:
             self._recognizer = recognizer
 
@@ -810,11 +857,11 @@ class DictationApp:
 
     # -- subtitle overlay ------------------------------------------------------
 
-    def _overlay_style(self) -> native.overlay.OverlayStyle:
+    def _overlay_style(self) -> Any:
         """Map the flat config onto the overlay's window style."""
         return native.overlay.build_style(self._config)
 
-    def _ensure_overlay(self) -> native.overlay.Overlay | None:
+    def _ensure_overlay(self) -> Any | None:
         """Start the subtitle window on first use; None when it cannot exist.
 
         A headless/no-Tk environment must not break dictation: the switch is
@@ -849,7 +896,7 @@ class DictationApp:
             return
         self._flush_typing()  # the sentence in flight belongs to the old mode
         wants_bar = mode != "type"
-        self._config = with_overlay_mode(self._config, cast("OverlayOutput", mode))
+        self._config = with_overlay_mode(self._config, mode)
         save_config(config_path(), self._config)
         if wants_bar:
             self._ensure_overlay()
@@ -938,7 +985,11 @@ class DictationApp:
             log.exception("translate failed unexpectedly")
             translated = ""
         elapsed = time.monotonic() - started
-        log.info("translate: %.3f s -> %r", elapsed, translated)
+        log.info(
+            "translate: %.3f s (%s)",
+            elapsed,
+            logsafe.describe_pair(text, translated),
+        )
         return translated, True
 
     def _payload(self, text: str, translated: str, *, attempted: bool) -> str:
@@ -1450,7 +1501,7 @@ class DictationApp:
                 log.info("continuous: decode %.3f s", time.monotonic() - started)
                 if not text:
                     continue
-                log.info("continuous asr: %r", text)
+                log.info("continuous asr: %s", logsafe.describe_text(text))
                 asr_done = time.monotonic()
                 if endpoint_ts is not None:
                     log.info("continuous: endpoint→asr %.3f s", asr_done - endpoint_ts)
@@ -1486,7 +1537,7 @@ class DictationApp:
             try:
                 self._serve(item)
             except Exception:  # one bad sentence must not stop the loop
-                log.exception("emit failed for %r", item.text[:40])
+                log.exception("emit failed for %s", logsafe.describe_text(item.text))
             finally:
                 self._emit_queue.task_done()
         self._type_batch()  # never leave a half-sentence behind on shutdown
@@ -1494,6 +1545,7 @@ class DictationApp:
     def _serve(self, item: PendingEmit) -> None:
         """Translate and deliver one finished ASR piece."""
         translated = ""
+        attempted = False
         if self._subtitles():
             if self._translator is None:
                 log.info(
@@ -1501,12 +1553,16 @@ class DictationApp:
                     self._config.translate,
                     route_of(self._config),
                 )
-            translated, _attempted = self._translate(item.text)
+            translated, attempted = self._translate(item.text)
             self._present(item.text, translated)
         if self._types():
             ready = self._batcher.add(item.text, forced=item.forced)
             if ready is not None:
-                self._type_batch(ready)
+                # Reuse the subtitle translation when the batcher emitted exactly
+                # this sentence; a merged batch covers other text and must be
+                # translated on its own.
+                cached = (translated, attempted) if ready == item.text else None
+                self._type_batch(ready, cached=cached)
         if item.endpoint_ts is not None:
             log.info(
                 "continuous: endpoint→shown %.3f s (queued %.2f s, forced=%s)",
@@ -1515,12 +1571,22 @@ class DictationApp:
                 item.forced,
             )
 
-    def _type_batch(self, text: str | None = None) -> None:
-        """Translate (if needed) and paste one whole sentence into the cursor."""
+    def _type_batch(
+        self,
+        text: str | None = None,
+        *,
+        cached: tuple[str, bool] | None = None,
+    ) -> None:
+        """Translate (if needed) and paste one whole sentence into the cursor.
+
+        *cached* carries a translation already computed for this very sentence
+        (the subtitle path does one), so the emitter does not run the NMT model
+        twice per sentence.
+        """
         sentence = text if text is not None else self._batcher.flush()
         if not sentence:
             return
-        translated, attempted = self._translate(sentence)
+        translated, attempted = cached if cached is not None else self._translate(sentence)
         try:
             emit_text(
                 self._payload(sentence, translated, attempted=attempted),
@@ -1531,7 +1597,7 @@ class DictationApp:
                 self._indicator,
             )
         except Exception:  # one failed paste must not lose the rest
-            log.exception("typing failed for %r", sentence[:40])
+            log.exception("typing failed for %s", logsafe.describe_text(sentence))
 
     def _flush_typing(self) -> None:
         """Ask the emitter to type anything it is holding (safe from any thread)."""
@@ -1572,7 +1638,7 @@ class DictationApp:
 
     def _on_captured_vk(self, vk: int) -> None:
         """Hook-thread callback: route the captured key through the worker."""
-        if vk == _VK_ESCAPE:
+        if vk == native.ESCAPE_VK:
             self._indicator.hide()
             return
         self._queue.put(SetHotkey(key=vk))

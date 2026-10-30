@@ -143,6 +143,11 @@ class Recorder:
         if not native.RECORDER_KEEP_OPEN:
             self._open_stream()
         with self._lock:
+            if self._recording:
+                # The hook thread prewarms on key-down; the worker's StartHold
+                # then re-enters here. Resetting the buffer would throw away
+                # exactly the audio the prewarm was meant to save.
+                return
             self._buffer = []
             self._recording = True
 

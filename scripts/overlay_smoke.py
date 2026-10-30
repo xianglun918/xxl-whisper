@@ -28,7 +28,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.overlay import Overlay, OverlayStyle  # noqa: E402 - path bootstrap above
+from app.overlay import Overlay, OverlayStyle
 
 _WORK_AREA = (0, 0, 1280, 800)
 

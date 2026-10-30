@@ -11,8 +11,9 @@ import logging
 import threading
 from collections.abc import Callable, Mapping
 from ctypes import wintypes
-from types import MappingProxyType
 from typing import override
+
+from app import keycodes
 
 log = logging.getLogger(__name__)
 
@@ -32,26 +33,16 @@ _MODIFIER_VKS: frozenset[int] = frozenset(
     {0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}
 )  # Shift/Ctrl/Alt/Win (left+right variants)
 
-#: Preset hotkey names -> Windows virtual-key codes (the Windows half of the
-#: platform key data; app.native re-exports it to config).
-PRESET_KEYCODES: Mapping[str, int] = MappingProxyType(
-    {
-        "caps_lock": 0x14,
-        "f2": 0x71,
-        "f4": 0x73,
-        "f6": 0x75,
-        "f8": 0x77,
-        "scroll_lock": 0x91,
-        "mouse_x1": 0x05,  # VK_XBUTTON1 — mouse side button
-        "mouse_x2": 0x06,  # VK_XBUTTON2
-    }
-)
+#: Preset hotkey names -> Windows virtual-key codes. The data lives in
+#: :mod:`app.keycodes` so :mod:`app.config` can map hotkeys without importing a
+#: native backend; this name stays for the Windows-only call sites.
+PRESET_KEYCODES: Mapping[str, int] = keycodes.WIN_PRESET_KEYCODES
 
 #: Preset selected on a fresh Windows install.
-DEFAULT_HOTKEY: str = "caps_lock"
+DEFAULT_HOTKEY: str = keycodes.WIN_DEFAULT_HOTKEY
 
 #: Buttons watched by the mouse LL hook instead of the keyboard hook.
-MOUSE_KEYCODES: frozenset[int] = frozenset({0x05, 0x06})
+MOUSE_KEYCODES: frozenset[int] = keycodes.WIN_MOUSE_KEYCODES
 
 
 class HotkeyError(Exception):

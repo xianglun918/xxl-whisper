@@ -1,9 +1,13 @@
 """Entry point: logging, single instance, DPI awareness, config, app loop."""
 
+import faulthandler
 import logging
 import sys
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from types import TracebackType
+from typing import Any, cast
 
 from app import native
 from app.app import DictationApp
@@ -15,6 +19,7 @@ def entry() -> None:
     """Process entry: never returns when the app runs to completion."""
     config_dir().mkdir(parents=True, exist_ok=True)
     _setup_logging()
+    _install_crash_handlers()
     # The self-update helper runs before any normal startup: no tray, no config
     # prompt, and crucially no single-instance acquisition (it must observe the
     # running app release that mutex, not compete with it).
@@ -34,8 +39,11 @@ def entry() -> None:
         sys.exit(1)
     try:
         DictationApp(config).run()
-    except Exception:
+    except Exception as exc:
+        # A windowed build has no console: re-raising only ever produced a
+        # silent vanishing tray icon. Record it, then say so on screen.
         logging.getLogger(__name__).exception("fatal error")
+        _show_fatal(exc)
         raise
 
 
@@ -50,3 +58,57 @@ def _setup_logging() -> None:
         format="%(asctime)s %(levelname)s %(threadName)s %(name)s %(message)s",
         handlers=[handler],
     )
+
+
+class _CrashFile:
+    """Holds the crash log handle: faulthandler writes to it, so it must live on."""
+
+    handle: object | None = None
+
+
+def _install_crash_handlers() -> None:
+    """Log every uncaught exception, thread death and fatal signal.
+
+    Three silent failure modes used to leave nothing behind: an exception on the
+    main thread, an exception in one of the daemon threads (decode, VAD, emit,
+    hooks), and a hard crash in native code. All three now land in
+    ``logs/app.log`` / ``logs/crash.log``, which is the only diagnostic a user of
+    a windowed app can hand over.
+    """
+    log = logging.getLogger(__name__)
+
+    def _hook(
+        exc_type: type[BaseException],
+        exc: BaseException,
+        tb: TracebackType | None,
+    ) -> None:
+        log.critical("uncaught exception", exc_info=(exc_type, exc, tb))
+
+    def _thread_hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is SystemExit:
+            return
+        log.critical(
+            "uncaught exception in thread %r",
+            args.thread.name if args.thread is not None else "?",
+            exc_info=cast("Any", (args.exc_type, args.exc_value, args.exc_traceback)),
+        )
+
+    sys.excepthook = _hook
+    threading.excepthook = _thread_hook
+    try:
+        _CrashFile.handle = (Path(config_dir()) / "logs" / "crash.log").open(
+            "a", encoding="utf-8"
+        )
+        faulthandler.enable(file=_CrashFile.handle)
+    except OSError as exc:
+        log.warning("crash log unavailable: %s", exc)
+
+
+def _show_fatal(exc: BaseException) -> None:
+    """Best-effort dialog after a fatal error; never raises."""
+    try:
+        native.util.show_error(
+            f"xxl-whisper 遇到错误已退出：\n{exc}\n\n日志：{config_dir() / 'logs' / 'app.log'}"
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("could not show the fatal-error dialog")

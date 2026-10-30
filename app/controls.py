@@ -5,12 +5,14 @@ so the dictation pipeline never races a settings change. The module owns the
 *what*; the app owns the *components* it mutates.
 """
 
+from __future__ import annotations
+
 import dataclasses
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from app import native
 from app.asr import Recognizer
@@ -63,12 +65,12 @@ def disfluency_for_model(kind: str, current: Disfluency) -> Disfluency:
 class ControlsDeps:
     """Live dependencies the panel actions mutate through."""
 
-    indicator: native.indicator.Indicator
+    indicator: Any
     tray: Tray
     get_config: Callable[[], Config]
     set_config: Callable[[Config], None]
     get_hooks: Callable[
-        [], tuple[native.hotkey.HotkeyHook | None, native.mousehook.MouseHook | None]
+        [], tuple[Any | None, Any | None]
     ]
     get_recorder: Callable[[], Recorder | None]
     rebuild_recorder: Callable[[str], Recorder]

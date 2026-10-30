@@ -50,7 +50,6 @@ __all__ = [
     "BILINGUAL_SEPARATOR",
     "TRANSLATE_MODES",
     "TRANSLATE_ROUTES",
-    "route_text",
     "TRANSLATE_TARGETS",
     "ChainedTranslator",
     "MarianTokenizer",
@@ -63,6 +62,7 @@ __all__ = [
     "compose_text",
     "has_translatable_text",
     "load_translator",
+    "route_text",
 ]
 
 #: Bilingual output separator. A newline keeps the two lines visually paired in
@@ -431,7 +431,7 @@ class OnnxNmtTranslator:
             return onnxruntime.InferenceSession(
                 str(path), sess_options=options, providers=["CPUExecutionProvider"]
             )
-        except Exception as exc:  # noqa: BLE001 - ORT raises many types
+        except Exception as exc:
             raise TranslationError(f"加载翻译模型失败：{path.name}: {exc}") from exc
 
     def _load_encoder(self) -> Any:
@@ -467,7 +467,7 @@ class OnnxNmtTranslator:
 
         try:
             hidden = self._encoder.run(None, self._encoder_feed(source, mask))[0]
-        except Exception as exc:  # noqa: BLE001 - ORT raises many types
+        except Exception as exc:
             raise TranslationError(f"编码失败：{exc}") from exc
 
         sequence = [self._start_id]
@@ -475,7 +475,7 @@ class OnnxNmtTranslator:
         for _ in range(max(1, self._max_new)):
             try:
                 logits = self._decoder.run(None, self._decoder_feed(sequence, hidden, mask))[0]
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise TranslationError(f"解码失败：{exc}") from exc
             row = np.array(logits[0, -1], dtype=np.float32, copy=True)
             for banned in blocked_tokens(produced, self._no_repeat):

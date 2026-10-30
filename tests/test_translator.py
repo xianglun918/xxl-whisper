@@ -4,7 +4,6 @@ import json
 
 import numpy as np
 import pytest
-
 from app.translator import (
     MarianTokenizer,
     NmtSettings,
@@ -14,7 +13,6 @@ from app.translator import (
     compose_text,
     has_translatable_text,
 )
-
 
 # -- pure helpers -------------------------------------------------------------
 

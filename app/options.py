@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app import keycodes
+
 
 @dataclass(frozen=True, slots=True)
 class Option:
@@ -28,17 +30,27 @@ class Option:
     label: str
 
 
-#: Push-to-talk key presets. Keys mirror ``config.HOTKEY_VK`` / the platform's
-#: ``PRESET_KEYCODES``; a custom recorded key is stored as a raw VK integer.
-HOTKEY_OPTIONS: tuple[Option, ...] = (
-    Option("caps_lock", "CapsLock"),
-    Option("f2", "F2"),
-    Option("f4", "F4"),
-    Option("f6", "F6"),
-    Option("f8", "F8"),
-    Option("scroll_lock", "Scroll Lock"),
-    Option("mouse_x1", "鼠标侧键 X1（后退键）"),
-    Option("mouse_x2", "鼠标侧键 X2（前进键）"),
+#: Human labels for every preset name in either platform key table.
+_HOTKEY_LABELS: dict[str, str] = {
+    "caps_lock": "CapsLock",
+    "f2": "F2",
+    "f4": "F4",
+    "f6": "F6",
+    "f8": "F8",
+    "scroll_lock": "Scroll Lock",
+    "mouse_x1": "鼠标侧键 X1（后退键）",
+    "mouse_x2": "鼠标侧键 X2（前进键）",
+    "right_cmd": "右 Command",
+}
+
+#: Push-to-talk key presets, built **from the active platform table**
+#: (:mod:`app.keycodes`) instead of a hard-coded list. A custom recorded key is
+#: stored as a raw keycode integer. Deriving the menu from the same table the
+#: hook arms is what stops the two from drifting: macOS used to offer CapsLock /
+#: Scroll Lock / mouse side buttons it cannot observe, while hiding its own
+#: default 右 Command.
+HOTKEY_OPTIONS: tuple[Option, ...] = tuple(
+    Option(key, _HOTKEY_LABELS[key]) for key in keycodes.PRESET_KEYCODES
 )
 
 #: Recogniser model, mirroring ``config.ModelKind``.

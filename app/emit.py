@@ -12,7 +12,10 @@ Each channel can still fail at runtime, so the caller attempts them in the
 returned order and stops at the first success.
 """
 
+from __future__ import annotations
+
 import logging
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,6 +25,17 @@ from typing import Protocol, assert_never
 from app import native
 
 log = logging.getLogger(__name__)
+
+_RESTORE_LOCK: threading.Lock = threading.Lock()
+
+
+class _PendingRestore:
+    """Holder for the one queued clipboard restore (kept out of a global)."""
+
+    timer: threading.Timer | None = None
+
+
+_PENDING = _PendingRestore()
 
 #: How long an injection probe's answer is trusted. ``keyboard_injection_alive``
 #: presses F13 and sleeps 10 ms, so probing on every sentence of a burst is
@@ -67,6 +81,11 @@ class Channel(StrEnum):
     WM_PASTE = "wm_paste"
     UIA = "uia"
     CLIPBOARD = "clipboard"
+
+
+#: Channels whose delivery reads the clipboard, i.e. the ones that make the
+#: snapshot worth restoring afterwards.
+_CLIPBOARD_READERS: frozenset[Channel] = frozenset({Channel.KEYS, Channel.WM_PASTE})
 
 
 class DeliveryPath(StrEnum):
@@ -138,7 +157,11 @@ class EmitSettings:
     paste_delay_ms: int
 
 
-def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> Channel:
+def emit_text(  # noqa: C901 - one linear channel ladder beats five helpers
+    text: str,
+    settings: EmitSettings,
+    indicator: _IndicatorLike,
+) -> Channel:
     """Stage the text on the clipboard, then deliver via the best live channel.
 
     Returns the channel that delivered, or CLIPBOARD when nothing could. Every
@@ -164,42 +187,96 @@ def emit_text(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> C
     log.info("emit: delivery path=%s", path)
     if path is DeliveryPath.TYPE_TEXT:
         return _emit_clipboard_free(text, alive, indicator)
+    # Snapshot *before* staging. Staging overwrites the clipboard, so a snapshot
+    # taken afterwards reads our own dictated text back and the "restore" puts
+    # that text straight back — the user's clipboard is destroyed while the log
+    # says it was restored.
+    snapshot = native.io.snapshot_clipboard() if settings.restore_clipboard else None
     _stage_clipboard(text)  # always staged: manual paste also works
-    probe = TargetProbe(
-        injection_alive=alive,
-        is_classic_control=is_classic_control(control_class),
-        uia_writable=False if alive else native.uia.probe_focused().writable,
-    )
-    for channel in channels_in_order(probe):
-        match channel:
-            case Channel.KEYS:
-                if _try_keys(text, settings, indicator):
-                    return Channel.KEYS
-            case Channel.WM_PASTE:
-                if native.io.post_wm_paste_to_focus():
-                    log.info("emit: delivered via WM_PASTE (class=%r)", control_class)
-                    indicator.flash("已粘贴（WM_PASTE）", 1200)
-                    return Channel.WM_PASTE
-                log.info("emit: WM_PASTE skipped (no focused control resolved)")
-            case Channel.UIA:
-                if _try_uia(text, control_class, indicator):
-                    return Channel.UIA
-            case Channel.CLIPBOARD:
-                pass  # terminal fallback handled after the loop
-            case unreachable:
-                assert_never(unreachable)
-    log.warning(
-        "emit: no channel delivered (window=%r class=%r focus_hwnd=0x%X); text on clipboard",
-        window,
-        control_class,
-        focus_hwnd,
-    )
-    indicator.flash(f"已复制到剪贴板，请手动 {native.io.PASTE_COMBO}", 2500)
-    return Channel.CLIPBOARD
+    delivered = Channel.CLIPBOARD
+    try:
+        probe = TargetProbe(
+            injection_alive=alive,
+            is_classic_control=is_classic_control(control_class),
+            uia_writable=False if alive else native.uia.probe_focused().writable,
+        )
+        for channel in channels_in_order(probe):
+            match channel:
+                case Channel.KEYS:
+                    delivered = Channel.KEYS
+                    if _try_keys(text, indicator):
+                        return Channel.KEYS
+                    delivered = Channel.CLIPBOARD
+                case Channel.WM_PASTE:
+                    if native.io.post_wm_paste_to_focus():
+                        log.info("emit: delivered via WM_PASTE (class=%r)", control_class)
+                        indicator.flash("已粘贴（WM_PASTE）", 1200)
+                        return Channel.WM_PASTE
+                    log.info("emit: WM_PASTE skipped (no focused control resolved)")
+                case Channel.UIA:
+                    if _try_uia(text, control_class, indicator):
+                        return Channel.UIA
+                case Channel.CLIPBOARD:
+                    pass  # terminal fallback handled after the loop
+                case unreachable:
+                    assert_never(unreachable)
+        log.warning(
+            "emit: no channel delivered (window=%r class=%r focus_hwnd=0x%X); text on clipboard",
+            window,
+            control_class,
+            focus_hwnd,
+        )
+        indicator.flash(f"已复制到剪贴板，请手动 {native.io.PASTE_COMBO}", 2500)
+        return Channel.CLIPBOARD
+    finally:
+        if snapshot is not None and delivered in _CLIPBOARD_READERS:
+            _restore_clipboard_later(snapshot, settings.paste_delay_ms)
+
+
+def _restore_clipboard_later(snapshot: object, delay_ms: int) -> None:
+    """Put the user's clipboard back once the target app has read ours.
+
+    Both the wait and the write used to happen inline, on the emit thread, so
+    every sentence paid ``paste_delay_ms`` (200 ms by default) of dead time
+    before the next one could be typed. The wait only exists for the *target*
+    app, so it runs on a timer instead; a new sentence cancels the pending
+    restore (it is about to write the clipboard again anyway).
+    """
+    if delay_ms <= 0:
+        _do_restore(snapshot)
+        return
+    delay_s = max(delay_ms, 50) / 1000
+    with _RESTORE_LOCK:
+        if _PENDING.timer is not None:
+            _PENDING.timer.cancel()
+            _PENDING.timer = None
+        timer = threading.Timer(delay_s, _do_restore, args=(snapshot,))
+        timer.daemon = True
+        _PENDING.timer = timer
+    timer.start()
+
+
+def _do_restore(snapshot: object) -> None:
+    """Write a snapshot back, logging (never raising) on failure."""
+    with _RESTORE_LOCK:
+        _PENDING.timer = None
+    try:
+        native.io.restore_clipboard(snapshot)
+    except Exception:
+        log.exception("emit: clipboard restore failed")
+
+
+def _cancel_pending_restore() -> None:
+    """Drop a queued clipboard restore (called before staging new text)."""
+    with _RESTORE_LOCK:
+        if _PENDING.timer is not None:
+            _PENDING.timer.cancel()
+            _PENDING.timer = None
 
 
 def _stage_clipboard(text: str) -> None:
     """Best-effort stage of the text for the paste channels."""
+    _cancel_pending_restore()
     try:
         native.io.set_clipboard_text(text)
     except (native.io.PasteError, OSError) as exc:
@@ -233,13 +310,12 @@ def _try_type_text(text: str, indicator: _IndicatorLike) -> bool:
     return True
 
 
-def _try_keys(text: str, settings: EmitSettings, indicator: _IndicatorLike) -> bool:
+def _try_keys(text: str, indicator: _IndicatorLike) -> bool:
     try:
-        native.io.paste_text(
-            text,
-            restore_clipboard=settings.restore_clipboard,
-            delay_ms=settings.paste_delay_ms,
-        )
+        # ``emit_text`` already staged the text and owns the restore, so the
+        # paste must not read the "previous" clipboard (it would read ours) and
+        # must not sleep here: the delay is the caller's timer now.
+        native.io.paste_text(text, restore_clipboard=False, delay_ms=0)
     except (native.io.PasteError, OSError) as exc:
         log.warning("emit: keys path failed: %s", exc)
         return False

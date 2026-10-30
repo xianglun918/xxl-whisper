@@ -17,27 +17,22 @@ import time
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
+from app import keycodes
+
 Quartz = importlib.import_module("Quartz")
 
 log = logging.getLogger(__name__)
 
 #: mac virtual keycodes for the hotkey presets (kVK_*). macOS has no Scroll
-#: Lock and drops mouse side buttons, so neither appears here.
-PRESET_KEYCODES: Mapping[str, int] = MappingProxyType(
-    {
-        "right_cmd": 0x36,
-        "f2": 0x78,
-        "f4": 0x76,
-        "f6": 0x61,
-        "f8": 0x64,
-    }
-)
+#: Lock and drops mouse side buttons, so neither appears here. The numbers live
+#: in :mod:`app.keycodes` (see the Windows module for why).
+PRESET_KEYCODES: Mapping[str, int] = keycodes.MAC_PRESET_KEYCODES
 
 #: Preset selected on a fresh macOS install.
-DEFAULT_HOTKEY: str = "right_cmd"
+DEFAULT_HOTKEY: str = keycodes.MAC_DEFAULT_HOTKEY
 
 #: No mouse side-button hotkeys on macOS.
-MOUSE_KEYCODES: frozenset[int] = frozenset()
+MOUSE_KEYCODES: frozenset[int] = keycodes.MAC_MOUSE_KEYCODES
 
 #: Modifier keycodes -> the CGEventFlags bit that means "this key is down".
 _MODIFIER_FLAGS: Mapping[int, int] = MappingProxyType(

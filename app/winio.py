@@ -6,8 +6,11 @@ recognized text via clipboard + Ctrl+V with best-effort clipboard restore.
 """
 
 import ctypes
+import logging
 import time
 from ctypes import wintypes
+
+log = logging.getLogger(__name__)
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -156,11 +159,15 @@ def paste_text(text: str, restore_clipboard: bool, delay_ms: int) -> None:
     ``delay_ms`` lets the target application read the clipboard before we
     swap the previous content back in.
     """
+    # Only read-and-restore when the caller did not stage the text itself: after
+    # a stage, ``_clipboard_text()`` would return our own text and the "restore"
+    # would write it straight back (the user's clipboard lost for good).
     previous = _clipboard_text() if restore_clipboard else None
-    _set_clipboard_text(text)
+    if not restore_clipboard:
+        _set_clipboard_text(text)
     _press_ctrl_v()
-    time.sleep(delay_ms / 1000)
     if previous is not None:
+        time.sleep(delay_ms / 1000)
         _set_clipboard_text(previous)
 
 
@@ -203,6 +210,30 @@ def foreground_window_title() -> str:
 def set_clipboard_text(text: str) -> None:
     """Public clipboard setter (the emit chain always stages text here)."""
     _set_clipboard_text(text)
+
+
+def snapshot_clipboard() -> str | None:
+    """Return the clipboard's plain text, or None when there is none.
+
+    The emit chain takes this snapshot *before* staging the dictated text: the
+    staging overwrites the clipboard, so anything read afterwards is our own
+    text and restoring it silently destroys what the user had copied.
+    """
+    try:
+        return _clipboard_text()
+    except (PasteError, OSError) as exc:
+        log.warning("clipboard snapshot failed: %s", exc)
+        return None
+
+
+def restore_clipboard(snapshot: object) -> None:
+    """Put a :func:`snapshot_clipboard` result back (no-op for None)."""
+    if not isinstance(snapshot, str):
+        return
+    try:
+        _set_clipboard_text(snapshot)
+    except (PasteError, OSError) as exc:
+        log.warning("clipboard restore failed: %s", exc)
 
 
 def clipboard_has_non_text() -> bool:

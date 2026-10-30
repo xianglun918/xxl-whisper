@@ -16,13 +16,37 @@ from types import SimpleNamespace
 import numpy as np
 from app.app import DictationApp
 from app.decode_scheduler import FinishedBatch, LatestSlot, PartialCadence
-from app.emit import Channel
 
 _BASE_INTERVAL_S = 0.35
 
 
 class _TransientError(RuntimeError):
     """Test-only failure injected to prove the loop survives it."""
+
+
+class _RecordingQueue:
+    """Stand-in for ``EmitQueue`` that records what the decoder hands over."""
+
+    def __init__(self) -> None:
+        self.items: list[str] = []
+
+    def submit(self, text: str, **_kwargs: object) -> bool:
+        """Record one queued sentence."""
+        self.items.append(text)
+        return True
+
+
+class _FailingRecognizer:
+    """Yields three segments; the middle decode raises."""
+
+    def __init__(self) -> None:
+        self._texts = iter(["first", "second", "third"])
+
+    def transcribe(self, _samples) -> str:
+        text = next(self._texts)
+        if text == "second":
+            raise _TransientError
+        return text
 
 
 class _FakeIndicator:
@@ -88,6 +112,19 @@ def _bare_app() -> DictationApp:
     app._partial_slot = LatestSlot()
     app._partial_cadence = PartialCadence(_BASE_INTERVAL_S)
     app._vad_done = threading.Event()
+    # The partial and finished paths both consult the config (subtitles on/off)
+    # and hand finished sentences to the emit queue; without these the old tests
+    # only passed by swallowing the AttributeError in the loop's except branch.
+    app._config = SimpleNamespace(
+        restore_clipboard=False,
+        paste_delay_ms=0,
+        overlay_enabled=False,
+        overlay_output="type",
+        partial_subtitle=False,
+        translate=False,
+    )
+    app._emit_queue = _RecordingQueue()
+    app._segment_max_speech_s = 30.0
     return app
 
 
@@ -104,25 +141,16 @@ def test_loop_survives_a_block_failure() -> None:
     assert app._continuous is False
 
 
-def test_insert_segments_isolates_a_failed_emit(monkeypatch) -> None:
+def test_insert_segments_isolates_a_failed_decode() -> None:
+    """One failed segment must not stop the rest reaching the emitter."""
     app = _bare_app()
-    app._recognizer = _FakeRecognizer(["first", "second", "third"])
-    app._config = SimpleNamespace(restore_clipboard=False, paste_delay_ms=0)
-    calls: list[str] = []
-
-    def fake_emit(text, settings, indicator):
-        calls.append(text)
-        if text == "second":
-            raise _TransientError
-        return Channel.KEYS
-
-    monkeypatch.setattr("app.app.emit_text", fake_emit)
+    app._recognizer = _FailingRecognizer()
     segments = [np.zeros(8, dtype=np.float32) for _ in range(3)]
 
     emitted = app._insert_segments(segments)
 
-    assert calls == ["first", "second", "third"]  # the third still ran
-    assert emitted == 2  # only the successful deliveries counted
+    assert app._emit_queue.items == ["first", "third"]  # the third still ran
+    assert emitted == 2  # only the successful decodes counted
 
 
 @dataclass(slots=True)
@@ -271,18 +299,10 @@ def test_vad_loop_skips_the_snapshot_past_the_partial_ceiling() -> None:
     assert app._partial_slot.take() is None
 
 
-def test_decode_loop_emits_finished_sentences_and_ignores_partials(monkeypatch) -> None:
+def test_decode_loop_hands_finished_sentences_to_the_emitter() -> None:
     """The finished path owns its own thread and never touches partial work."""
     app = _bare_app()
-    app._config = SimpleNamespace(restore_clipboard=False, paste_delay_ms=0)
     app._recognizer = _FakeRecognizer(["finished"])
-    emitted: list[str] = []
-
-    def fake_emit(text: str, _settings: object, _indicator: object) -> Channel:
-        emitted.append(text)
-        return Channel.KEYS
-
-    monkeypatch.setattr("app.app.emit_text", fake_emit)
     decode_queue: queue.Queue[FinishedBatch] = queue.Queue()
     decode_queue.put(
         FinishedBatch(
@@ -297,8 +317,7 @@ def test_decode_loop_emits_finished_sentences_and_ignores_partials(monkeypatch) 
 
     app._decode_loop(decode_queue, vad_done)
 
-    assert emitted == ["finished"]
-    assert app._indicator.flashes == ["✓ 已上屏"]
+    assert app._emit_queue.items == ["finished"]
     assert slot.take() is not None  # the partial is the partial thread's job
 
 

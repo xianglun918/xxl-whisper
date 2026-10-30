@@ -10,10 +10,13 @@ lets the parent rows carry live state such as
 ``翻译与字幕：日→中 · 上屏+打字``.
 """
 
+from __future__ import annotations
+
+import importlib
 import logging
 from collections.abc import Callable
+from typing import Any
 
-import pystray
 from PIL import Image, ImageDraw
 
 import app.loopback as loopback_mod
@@ -29,19 +32,33 @@ from app.menu_spec import (
 
 log = logging.getLogger(__name__)
 
+#: pystray picks a backend *at import time*; on a headless Linux box that raises
+#: Xlib's DisplayNameError and used to make this module — and therefore the whole
+#: app and its test suite — unimportable. Load it once, lazily, and turn a
+#: missing/failed backend into one clear error at tray construction time.
+_pystray: Any = None
+_pystray_error: Exception | None = None
+try:
+    _pystray = importlib.import_module("pystray")
+except Exception as exc:  # noqa: BLE001 - backend init touches the display server
+    _pystray_error = exc
 
-def _safe[T](producer: Callable[[], T], default: T) -> T:
-    """Call *producer*, falling back to *default* when the device layer fails.
 
-    Enumerating audio devices touches PortAudio/WASAPI, which can fail while
-    another application holds the endpoint; that must cost the menu its device
-    list, not the whole menu.
-    """
-    try:
-        return producer()
-    except Exception:
-        log.exception("tray: device enumeration failed")
-        return default
+class TrayUnavailableError(RuntimeError):
+    """Raised when the running system has no usable tray backend."""
+
+
+class _TrayBackend:
+    """Module proxy that resolves :mod:`pystray` on first attribute access."""
+
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - a module proxy is Any by nature
+        if _pystray is None:
+            msg = f"系统托盘不可用：{_pystray_error}"
+            raise TrayUnavailableError(msg)
+        return getattr(_pystray, name)
+
+
+pystray: Any = _TrayBackend()
 
 
 def list_microphone_names() -> tuple[str, ...]:
@@ -80,8 +97,17 @@ class Tray:
         self._icon.stop()
 
     def notify(self, message: str, title: str = "xxl-whisper") -> None:
-        """Show a native notification balloon."""
-        self._icon.notify(message, title)
+        """Show a native notification balloon; never raises.
+
+        This is called from the worker's ``except`` block to *report* a failure.
+        pystray's macOS backend shells out to ``osascript``, so a raise here used
+        to escape that handler and kill the worker — the error report itself took
+        dictation down.
+        """
+        try:
+            self._icon.notify(message, title)
+        except Exception:
+            log.exception("tray: notification failed")
 
     def refresh_menu(self) -> None:
         """Refresh the native menu *after* the click that changed state returns.
@@ -119,7 +145,7 @@ class Tray:
 
     # -- rendering ---------------------------------------------------------
 
-    def _build_menu(self) -> pystray.Menu:
+    def _build_menu(self) -> object:
         """Render the current spec; pystray calls this again on every open."""
         inputs = MenuInputs(
             microphones=list_microphone_names(),
@@ -130,7 +156,7 @@ class Tray:
         spec = build_menu(self._state_provider, self._callbacks, inputs)
         return pystray.Menu(*(self._render(entry) for entry in spec))
 
-    def _render(self, entry: Entry) -> pystray.MenuItem:
+    def _render(self, entry: Entry) -> object:
         """Turn one spec row into a pystray item (recursively for submenus)."""
         if entry.separator:
             return pystray.Menu.SEPARATOR

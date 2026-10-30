@@ -8,7 +8,28 @@ permissions:
   contents: write
 
 jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync
+      - run: uv run python -m ruff check app tests run.py scripts
+      - run: uv run basedpyright app run.py
+      - run: uv run pytest tests -m "not integration" -q
+      - name: Tag must match app/__init__.py __version__
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(uv run python -c "import app; print(app.__version__)")
+          echo "tag=$tag version=$ver"
+          test "$tag" = "$ver"
+
   build:
+    needs: gates
     strategy:
       fail-fast: false
       matrix:

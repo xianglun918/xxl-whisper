@@ -81,12 +81,24 @@ def download(spec: FileSpec, progress: ProgressFn, *, proxy: str = "") -> None:
         part.unlink(missing_ok=True)
         raise DownloadError(source=url, reason=f"size mismatch: {actual}")
     digest = verify_sha256(part, expected_sha256, source=url)
-    log.info(
-        "download complete: %s (%d bytes, sha256 %s)",
-        dest.name,
-        actual,
-        digest or "unchecked",
-    )
+    if not expected_sha256:
+        # The translation routes are third-party artefacts with no pinned digest
+        # yet. Say so out loud instead of logging "unchecked" in the same shape
+        # as a verified download: a poisoned mirror would otherwise look正常.
+        log.warning(
+            "download complete WITHOUT integrity check: %s (%d bytes, sha256 %s); "
+            "pin this digest in app.downloader to turn the check on",
+            dest.name,
+            actual,
+            digest,
+        )
+    else:
+        log.info(
+            "download complete: %s (%d bytes, sha256 %s)",
+            dest.name,
+            actual,
+            digest or "checked",
+        )
     part.replace(dest)
 
 
