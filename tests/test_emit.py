@@ -5,6 +5,8 @@ ladder lands in M4.
 """
 
 import sys
+import time
+from types import SimpleNamespace
 
 import pytest
 from app.emit import (
@@ -172,6 +174,88 @@ def test_emit_text_snapshots_the_clipboard_before_staging(
     assert events[2] == ("paste", ("hello", False, 0))
     assert events[-1] == ("restore", "OLD")
     assert indicator.hidden == 1
+
+
+def test_restore_disabled_never_touches_the_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``restore_clipboard = false`` must not snapshot or restore anything."""
+    _stub_target(monkeypatch)
+    monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: True)
+    monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
+    events: list[str] = []
+    monkeypatch.setattr(native.io, "snapshot_clipboard", lambda: events.append("snapshot"))
+    monkeypatch.setattr(
+        native.io, "restore_clipboard", lambda _snap: events.append("restore")
+    )
+    monkeypatch.setattr(
+        native.io, "set_clipboard_text", lambda text: events.append(f"stage:{text}")
+    )
+    monkeypatch.setattr(native.io, "paste_text", lambda *_a, **_k: None)
+
+    emit_text("hi", EmitSettings(restore_clipboard=False, paste_delay_ms=0), _FakeIndicator())
+
+    assert events == ["stage:hi"]
+
+
+def test_burst_keeps_the_original_snapshot_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two sentences in a burst must still restore what the user had copied.
+
+    Regression: the second sentence took a fresh snapshot — of the *first*
+    sentence's text — and the stage cancelled the only good snapshot, so the
+    user's clipboard was lost exactly when talking continuously.
+    """
+    _stub_target(monkeypatch)
+    monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: True)
+    monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
+    snapshots: list[int] = []
+    monkeypatch.setattr(
+        native.io,
+        "snapshot_clipboard",
+        lambda: (snapshots.append(1), "USER_ORIGINAL")[1],
+    )
+    restored: list[object] = []
+    monkeypatch.setattr(native.io, "restore_clipboard", restored.append)
+    monkeypatch.setattr(native.io, "set_clipboard_text", lambda _text: None)
+    monkeypatch.setattr(native.io, "paste_text", lambda *_a, **_k: None)
+    indicator = _FakeIndicator()
+    settings = EmitSettings(restore_clipboard=True, paste_delay_ms=150)
+
+    emit_text("第一句", settings, indicator)
+    emit_text("第二句", settings, indicator)
+
+    assert len(snapshots) == 1  # one snapshot for the whole burst
+    deadline = time.monotonic() + 2.0
+    while not restored and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert restored == ["USER_ORIGINAL"]
+
+
+def test_uia_delivery_restores_the_clipboard_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: only KEYS set ``delivered``, so UIA/WM_PASTE never restored."""
+    _stub_target(monkeypatch)
+    monkeypatch.setattr(native.io, "focused_control_class", lambda: "Chrome_RenderWidgetHostHWND")
+    monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: False)
+    monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
+    monkeypatch.setattr(native.io, "snapshot_clipboard", lambda: "USER_ORIGINAL")
+    monkeypatch.setattr(native.io, "set_clipboard_text", lambda _text: None)
+    monkeypatch.setattr(native.io, "probe_focused", lambda: SimpleNamespace(writable=True))
+    monkeypatch.setattr(native.io, "append_text", lambda _text: None)
+    restored: list[object] = []
+    monkeypatch.setattr(native.io, "restore_clipboard", restored.append)
+    monkeypatch.setattr(native.uia, "probe_focused", lambda: SimpleNamespace(writable=True))
+    monkeypatch.setattr(native.uia, "append_text", lambda _text: None)
+
+    channel = emit_text(
+        "hello", EmitSettings(restore_clipboard=True, paste_delay_ms=200), _FakeIndicator()
+    )
+
+    assert channel is Channel.UIA
+    assert restored == ["USER_ORIGINAL"]  # immediately, not after 200 ms
 
 
 class _Clock:

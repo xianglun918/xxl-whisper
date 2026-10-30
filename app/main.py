@@ -17,8 +17,19 @@ from app.selfupdate import parse_update_args, run_helper
 
 def entry() -> None:
     """Process entry: never returns when the app runs to completion."""
-    config_dir().mkdir(parents=True, exist_ok=True)
-    _setup_logging()
+    try:
+        config_dir().mkdir(parents=True, exist_ok=True)
+        _setup_logging()
+    except OSError as exc:
+        # These two lines ran before any handler existed, so a read-only or full
+        # disk meant the process vanished without a trace. Nothing can log yet:
+        # write to stderr and try one dialog.
+        print(  # noqa: T201 - no handler exists yet, stderr is all we have
+            f"xxl-whisper: 无法准备数据目录 {config_dir()}: {exc}",
+            file=sys.stderr,
+        )
+        _show_fatal(exc)
+        return
     _install_crash_handlers()
     # The self-update helper runs before any normal startup: no tray, no config
     # prompt, and crucially no single-instance acquisition (it must observe the

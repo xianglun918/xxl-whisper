@@ -2,10 +2,18 @@
 
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 from app.asr import _FUNASR_NANO_PROMPTS
-from app.config import ConfigError, default_config, hotkey_vk, load_config, save_config
+from app.config import (
+    ConfigError,
+    ModelKind,
+    default_config,
+    hotkey_vk,
+    load_config,
+    save_config,
+)
 from app.controls import disfluency_for_model
 
 from app import keycodes
@@ -102,6 +110,37 @@ def test_hotkey_vk_resolves_names_and_ints() -> None:
     default = keycodes.DEFAULT_HOTKEY
     assert hotkey_vk(default) == keycodes.PRESET_KEYCODES[default]
     assert hotkey_vk(0x2B) == 0x2B
+
+
+def test_every_model_kind_survives_a_roundtrip(tmp_path: Path) -> None:
+    """Regression: ``model_kind`` silently rewrote whisper_turbo to funasr_nano.
+
+    Nothing covered this: the only round-trip used the default (sensevoice), so
+    the original bug — pick Whisper, restart, quietly get Fun-ASR-Nano and leave a
+    1 GB model unused on disk — reproduced with the whole suite green.
+    """
+    for kind in ("sensevoice", "funasr_nano", "whisper_turbo"):
+        path = tmp_path / f"{kind}.toml"
+        save_config(path, replace(default_config(), model=cast("ModelKind", kind)))
+        assert load_config(path).model == kind
+
+
+def test_japanese_route_survives_a_roundtrip(tmp_path: Path) -> None:
+    """ja→zh must come back as ja→zh.
+
+    The old test used en→zh, which happens to equal the value inferred from the
+    target alone, so a save that dropped ``translate_source`` still passed.
+    """
+    path = tmp_path / "ja.toml"
+    original = replace(
+        default_config(),
+        translate=True,
+        translate_target="zh",
+        translate_source="ja",
+    )
+    save_config(path, original)
+    loaded = load_config(path)
+    assert (loaded.translate_source, loaded.translate_target) == ("ja", "zh")
 
 
 def test_invalid_language_rejected(tmp_path: Path) -> None:

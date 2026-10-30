@@ -534,6 +534,11 @@ class DictationApp:
             case StartHold():
                 if self._paused or self._recorder is None or not self._model_ready:
                     self._skip_hold = True
+                    # The hook thread prewarmed the capture on key-down; nobody
+                    # else will stop it, and the buffer would keep growing (and
+                    # the next hold would ship stale audio to the model).
+                    if self._recorder is not None:
+                        self._recorder.stop()
                     return
                 self._skip_hold = False
                 self._holding = True
@@ -857,11 +862,11 @@ class DictationApp:
 
     # -- subtitle overlay ------------------------------------------------------
 
-    def _overlay_style(self) -> Any:
+    def _overlay_style(self) -> Any:  # noqa: ANN401 - platform overlay style is dynamic
         """Map the flat config onto the overlay's window style."""
         return native.overlay.build_style(self._config)
 
-    def _ensure_overlay(self) -> Any | None:
+    def _ensure_overlay(self) -> Any | None:  # noqa: ANN401 - see above
         """Start the subtitle window on first use; None when it cannot exist.
 
         A headless/no-Tk environment must not break dictation: the switch is
@@ -1561,7 +1566,12 @@ class DictationApp:
                 # Reuse the subtitle translation when the batcher emitted exactly
                 # this sentence; a merged batch covers other text and must be
                 # translated on its own.
-                cached = (translated, attempted) if ready == item.text else None
+                # Only reuse when a translation really ran: with subtitles off
+                # ``translated`` is "" and reusing it would silently skip the
+                # translation this sentence needs for typing.
+                cached = (
+                    (translated, attempted) if ready == item.text and attempted else None
+                )
                 self._type_batch(ready, cached=cached)
         if item.endpoint_ts is not None:
             log.info(

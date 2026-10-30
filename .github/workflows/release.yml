@@ -25,10 +25,16 @@ jobs:
       - run: uv run pytest tests -m "not integration" -q
       - name: Tag must match app/__init__.py __version__
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          # Normalise before comparing: a tag may be written v0.8.0-rc1 while
+          # __version__ carries PEP 440's 0.8.0rc1, and v0.7 vs 0.7.0.
+          norm() {
+            echo "$1" | sed -e "s/^v//" -e "s/-//g" \
+              | awk -F. '{ printf "%d.%d.%d", $1, $2, $3 }'
+          }
+          tag="${GITHUB_REF_NAME}"
           ver=$(uv run python -c "import app; print(app.__version__)")
-          echo "tag=$tag version=$ver"
-          test "$tag" = "$ver"
+          echo "tag=$tag version=$ver normalised=$(norm "$tag") vs $(norm "$ver")"
+          test "$(norm "$tag")" = "$(norm "$ver")"
 
   build:
     needs: gates

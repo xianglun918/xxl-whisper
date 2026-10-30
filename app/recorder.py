@@ -12,6 +12,7 @@ push-to-talk behavior is byte-for-byte unchanged while no sink is set.
 """
 
 import contextlib
+import logging
 import queue
 import threading
 from collections.abc import Callable
@@ -23,8 +24,15 @@ import sounddevice as sd
 
 from app import loopback, native
 
+log = logging.getLogger(__name__)
+
 SAMPLE_RATE: int = 16_000
 MIN_RECORD_MS: int = 300  # shorter captures are treated as accidental
+
+#: Hard cap on the push-to-talk buffer (2 minutes). Nothing should ever hold the
+#: key that long; the cap exists so a capture nobody stopped cannot grow forever.
+MAX_HOLD_S: float = 120.0
+_MAX_HOLD_SAMPLES: int = int(SAMPLE_RATE * MAX_HOLD_S)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +107,7 @@ class Recorder:
         self._lock = threading.Lock()
         self._buffer: list[np.ndarray] = []
         self._recording = False
+        self._buffered_samples = 0
         self._sink: queue.Queue[np.ndarray] | None = None
         #: Monotonic count of blocks handed to a sink — proof the stream is live.
         self.blocks_delivered: int = 0
@@ -140,16 +149,50 @@ class Recorder:
             stream.close()
 
     def start(self) -> None:
+        """Begin a hold capture; safe to call twice for the same hold.
+
+        The hook thread prewarms on key-down and the worker's ``StartHold`` then
+        re-enters here. The guard must come *before* ``_open_stream()``: macOS
+        opens a stream per hold, so opening before the guard left a second stream
+        open for every sentence — a lit microphone indicator, doubled audio and
+        a stream leak per utterance (``stop()`` only closes the last one).
+        """
+        if self._capturing_hold():
+            return
         if not native.RECORDER_KEEP_OPEN:
             self._open_stream()
         with self._lock:
             if self._recording:
-                # The hook thread prewarms on key-down; the worker's StartHold
-                # then re-enters here. Resetting the buffer would throw away
-                # exactly the audio the prewarm was meant to save.
                 return
             self._buffer = []
+            self._buffered_samples = 0
             self._recording = True
+
+    def _capturing_hold(self) -> bool:
+        """Return True when a hold is already captured on a live stream."""
+        return self._recording and (native.RECORDER_KEEP_OPEN or self._stream is not None)
+
+    def _cap_buffer(self) -> None:
+        """Keep the hold buffer bounded even if nobody stops the capture.
+
+        The hook thread prewarms on key-down; if the worker then decides the
+        press must be skipped (paused, model still loading) nothing would stop
+        that capture, and the buffer grew for as long as the app stayed open —
+        then the next hold shipped minutes of stale audio to the model.
+        """
+        if not self._recording:
+            return
+        dropped = False
+        with self._lock:
+            while (
+                self._buffered_samples > _MAX_HOLD_SAMPLES and len(self._buffer) > 1
+            ):
+                oldest = self._buffer.pop(0)
+                self._buffered_samples -= int(oldest.shape[0])
+                dropped = True
+        if dropped:
+            log.warning("recorder: hold buffer over %.0f s, dropped the oldest audio",
+                        _MAX_HOLD_SAMPLES / SAMPLE_RATE)
 
     def stop(self) -> np.ndarray | None:
         """Finish a capture; None when it was too short to be speech."""
@@ -157,6 +200,7 @@ class Recorder:
             self._recording = False
             chunks = self._buffer
             self._buffer = []
+            self._buffered_samples = 0
         if not native.RECORDER_KEEP_OPEN:
             self._close_stream()
         if not chunks:
@@ -179,7 +223,12 @@ class Recorder:
             self._open_stream()
         with self._lock:
             self._sink = sink
+            # Continuous capture owns the stream, so a hold that is still marked
+            # active is stale: clear it or the next push-to-talk would skip
+            # opening a stream and silently record nothing.
             self._recording = False
+            self._buffer = []
+            self._buffered_samples = 0
 
     @property
     def capturing(self) -> bool:
@@ -196,6 +245,7 @@ class Recorder:
     def _on_audio(self, indata: np.ndarray, _frames: int, _time: object, status: int) -> None:
         if status:
             self._on_stream_error(f"audio stream status: {status}")
+        self._cap_buffer()
         sink = self._sink
         if sink is not None:
             self.blocks_delivered += 1
@@ -204,3 +254,4 @@ class Recorder:
         if self._recording:
             with self._lock:
                 self._buffer.append(indata.copy())
+                self._buffered_samples += int(indata.shape[0])
