@@ -146,34 +146,24 @@ def test_emit_text_snapshots_the_clipboard_before_staging(
     _stub_target(monkeypatch)
     monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: True)
     monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
-    events: list[tuple[str, object]] = []
-    monkeypatch.setattr(
-        native.io,
-        "snapshot_clipboard",
-        lambda: (events.append(("snapshot", None)), "OLD")[1],
-    )
-    monkeypatch.setattr(
-        native.io, "set_clipboard_text", lambda text: events.append(("stage", text))
-    )
-    monkeypatch.setattr(
-        native.io, "restore_clipboard", lambda snap: events.append(("restore", snap))
-    )
+    board = _stateful_clipboard(monkeypatch, "OLD")
 
-    def _record_paste(text: str, restore_clipboard: bool, delay_ms: int) -> None:
-        events.append(("paste", (text, restore_clipboard, delay_ms)))
+    def _paste(text: str, *_args: object, **_kwargs: object) -> None:
+        cast("list[str]", board["order"]).append("paste")
 
-    monkeypatch.setattr(native.io, "paste_text", _record_paste)
+    monkeypatch.setattr(native.io, "paste_text", _paste)
     indicator = _FakeIndicator()
 
     channel = emit_text("hello", EmitSettings(restore_clipboard=True, paste_delay_ms=0), indicator)
 
     assert channel is Channel.KEYS
-    assert events[0] == ("snapshot", None)  # before the stage
-    assert events[1] == ("stage", "hello")
-    # The paste must not restore on its own: after the stage it would read our
-    # text back. emit owns the restore, and it puts the *original* back.
-    assert events[2] == ("paste", ("hello", False, 0))
-    assert events[-1] == ("restore", "OLD")
+    assert board["order"][0] == "snapshot"  # before the stage
+    assert board["order"][1] == "stage:hello"
+    assert "paste" in cast("list[str]", board["order"])
+    # The user's original comes back; a restore right after the stage would have
+    # written "hello" back instead.
+    assert board["restored"] == ["OLD"]
+    assert board["content"] == "OLD"
     assert indicator.hidden == 1
 
 
@@ -203,16 +193,27 @@ def _stateful_clipboard(
     monkeypatch: pytest.MonkeyPatch, initial: object
 ) -> dict[str, object]:
     """Install a fake clipboard that actually holds its content."""
-    board: dict[str, object] = {"content": initial, "snapshots": 0, "restored": []}
+    board: dict[str, object] = {
+        "content": initial,
+        "snapshots": 0,
+        "restored": [],
+        "order": [],
+    }
+
+    def _order(event: str) -> None:
+        cast("list[str]", board["order"]).append(event)
 
     def _snapshot() -> object:
         board["snapshots"] = int(board["snapshots"]) + 1
+        _order("snapshot")
         return board["content"]
 
     def _stage(text: str) -> None:
+        _order(f"stage:{text}")
         board["content"] = text
 
     def _restore(snapshot: object) -> None:
+        _order(f"restore:{snapshot}")
         cast("list[object]", board["restored"]).append(snapshot)
         board["content"] = snapshot
 
@@ -300,6 +301,36 @@ def test_copy_during_the_restore_window_is_not_lost(
     assert board["restored"][-1] == "USER_NEW_COPY"
 
 
+def test_copy_inside_the_window_is_kept_when_no_new_sentence_arrives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user copies during the restore window and then says nothing.
+
+    The late restore must notice the clipboard is no longer our staged text and
+    leave the fresh copy alone.
+    """
+    _stub_target(monkeypatch)
+    monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: True)
+    monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
+    board = _stateful_clipboard(monkeypatch, "USER_ORIGINAL")
+    monkeypatch.setattr(native.io, "paste_text", lambda *_a, **_k: None)
+
+    emit_text("一句", EmitSettings(restore_clipboard=True, paste_delay_ms=150), _FakeIndicator())
+    board["content"] = "USER_NEW_COPY"  # the user copies something else
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if any(str(item).startswith("restore") for item in cast("list[str]", board["order"])):
+            break
+        if int(board["snapshots"]) > 2:  # restore ran and re-read the clipboard
+            break
+        time.sleep(0.02)
+    time.sleep(0.05)
+
+    assert board["restored"] == []  # nothing written back
+    assert board["content"] == "USER_NEW_COPY"
+
+
 def test_undelivered_text_stays_on_the_clipboard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -330,15 +361,14 @@ def test_uia_delivery_restores_the_clipboard_immediately(
 ) -> None:
     """Regression: only KEYS set ``delivered``, so UIA/WM_PASTE never restored."""
     _stub_target(monkeypatch)
-    monkeypatch.setattr(native.io, "focused_control_class", lambda: "Chrome_RenderWidgetHostHWND")
+    monkeypatch.setattr(
+        native.io, "focused_control_class", lambda: "Chrome_RenderWidgetHostHWND"
+    )
     monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: False)
     monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
-    monkeypatch.setattr(native.io, "snapshot_clipboard", lambda: "USER_ORIGINAL")
-    monkeypatch.setattr(native.io, "set_clipboard_text", lambda _text: None)
+    board = _stateful_clipboard(monkeypatch, "USER_ORIGINAL")
     monkeypatch.setattr(native.io, "probe_focused", lambda: SimpleNamespace(writable=True))
     monkeypatch.setattr(native.io, "append_text", lambda _text: None)
-    restored: list[object] = []
-    monkeypatch.setattr(native.io, "restore_clipboard", restored.append)
     monkeypatch.setattr(native.uia, "probe_focused", lambda: SimpleNamespace(writable=True))
     monkeypatch.setattr(native.uia, "append_text", lambda _text: None)
 
@@ -347,7 +377,10 @@ def test_uia_delivery_restores_the_clipboard_immediately(
     )
 
     assert channel is Channel.UIA
-    assert restored == ["USER_ORIGINAL"]  # immediately, not after 200 ms
+    # Immediately: nothing read the clipboard on this path, so waiting 200 ms
+    # would only delay putting the user's content back.
+    assert board["restored"] == ["USER_ORIGINAL"]
+    assert board["content"] == "USER_ORIGINAL"
 
 
 class _Clock:

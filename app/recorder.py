@@ -240,16 +240,17 @@ class Recorder:
         The sink owns its own drop policy (see :func:`_forward`), so the
         callback can never block; the hold buffer is left untouched.
         """
-        if not native.RECORDER_KEEP_OPEN and self._stream is None:
-            self._open_stream()
-        with self._lock:
-            self._sink = sink
-            # Continuous capture owns the stream, so a hold that is still marked
-            # active is stale: clear it or the next push-to-talk would skip
-            # opening a stream and silently record nothing.
-            self._recording = False
-            self._buffer = []
-            self._buffered_samples = 0
+        with self._lifecycle:
+            if not native.RECORDER_KEEP_OPEN and self._stream is None:
+                self._open_stream()
+            with self._lock:
+                self._sink = sink
+                # Continuous capture owns the stream, so a hold that is still
+                # marked active is stale: clear it or the next push-to-talk would
+                # skip opening a stream and silently record nothing.
+                self._recording = False
+                self._buffer = []
+                self._buffered_samples = 0
 
     @property
     def capturing(self) -> bool:
@@ -258,10 +259,11 @@ class Recorder:
 
     def stop_sink(self) -> None:
         """Stop forwarding blocks; push-to-talk state is left untouched."""
-        with self._lock:
-            self._sink = None
-        if not native.RECORDER_KEEP_OPEN:
-            self._close_stream()
+        with self._lifecycle:
+            with self._lock:
+                self._sink = None
+            if not native.RECORDER_KEEP_OPEN:
+                self._close_stream()
 
     def _on_audio(self, indata: np.ndarray, _frames: int, _time: object, status: int) -> None:
         if status:

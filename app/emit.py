@@ -164,7 +164,7 @@ class EmitSettings:
     paste_delay_ms: int
 
 
-def emit_text(  # noqa: C901 - one linear channel ladder beats five helpers
+def emit_text(  # noqa: C901, PLR0912 - one linear channel ladder beats five helpers
     text: str,
     settings: EmitSettings,
     indicator: _IndicatorLike,
@@ -201,7 +201,7 @@ def emit_text(  # noqa: C901 - one linear channel ladder beats five helpers
     # capture the first sentence's text and lose the user's original for good.
     if settings.restore_clipboard:
         _snapshot_original()
-    _stage_clipboard(text)  # always staged: manual paste also works
+    staged = _stage_clipboard(text)  # always staged: manual paste also works
     delivered = Channel.CLIPBOARD
     clipboard_read = False
     try:
@@ -244,7 +244,12 @@ def emit_text(  # noqa: C901 - one linear channel ladder beats five helpers
             control_class,
             focus_hwnd,
         )
-        indicator.flash(f"已复制到剪贴板，请手动 {native.io.PASTE_COMBO}", 2500)
+        if staged:
+            indicator.flash(f"已复制到剪贴板，请手动 {native.io.PASTE_COMBO}", 2500)
+        else:
+            # Staging failed too: there is nothing to paste, so promising a
+            # manual paste would send the user looking for text that is not there.
+            indicator.flash("上屏失败：剪贴板不可用", 2500)
         return Channel.CLIPBOARD
     finally:
         _settle_clipboard(delivered, clipboard_read=clipboard_read, settings=settings)
@@ -341,6 +346,16 @@ def _do_restore(generation: int) -> None:
             if generation == _STATE.generation:
                 _STATE.timer = None
         return
+    expected = _STATE.last_staged
+    # No try/except: both platform snapshotters already swallow their own errors
+    # and answer None/[] when the clipboard cannot be read.
+    current = native.io.snapshot_clipboard()
+    if expected is not None and current != expected:
+        # The user (or another app) replaced the clipboard inside the restore
+        # window; writing the old snapshot back would destroy that newer content.
+        log.info("emit: clipboard changed during the restore window; keeping it")
+        _forget_original()
+        return
     try:
         native.io.restore_clipboard(original)
     except Exception:
@@ -353,8 +368,8 @@ def _do_restore(generation: int) -> None:
             _STATE.timer = None
 
 
-def _stage_clipboard(text: str) -> None:
-    """Best-effort stage of the text for the paste channels."""
+def _stage_clipboard(text: str) -> bool:
+    """Stage the text for the paste channels; False when the clipboard refused."""
     # A restore queued by the previous sentence is stale now: this call is about
     # to overwrite the clipboard again. The *original* snapshot stays.
     _bump_generation()
@@ -364,6 +379,8 @@ def _stage_clipboard(text: str) -> None:
         native.io.set_clipboard_text(text)
     except (native.io.PasteError, OSError) as exc:
         log.warning("emit: clipboard staging failed (%s); channels may still deliver", exc)
+        return False
+    return True
 
 
 def _emit_clipboard_free(text: str, injection_alive: bool, indicator: _IndicatorLike) -> Channel:
