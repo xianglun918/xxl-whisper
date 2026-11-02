@@ -12,6 +12,8 @@ set PY=.venv\Scripts\python.exe
   --collect-all onnxruntime ^
   --hidden-import=sounddevice ^
   --hidden-import=soundcard ^
+  --hidden-import=pystray ^
+  --hidden-import=uiautomation ^
   run.py
 
 echo.

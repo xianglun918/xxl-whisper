@@ -6,6 +6,10 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
     "soundcard>=0.4.3 ; sys_platform == 'win32'",
+    # Shipped feature, not a dev tool: app/uia.py reaches it through
+    # importlib.import_module, so it must be a runtime dependency *and* a
+    # PyInstaller hidden import (see scripts/check_bundled_imports.py).
+    "uiautomation>=2.0.29 ; sys_platform == 'win32'",
     "sounddevice>=0.5",
     "sherpa-onnx>=1.13.6",
     "sherpa-onnx-core>=1.13.6",
@@ -27,7 +31,6 @@ dev = [
     "ruff>=0.7",
     "basedpyright>=1.18",
     "pyinstaller>=6.10",
-    "uiautomation>=2.0.29 ; sys_platform == 'win32'",
 ]
 
 [tool.ruff]

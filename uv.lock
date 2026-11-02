@@ -804,6 +804,7 @@ dependencies = [
     { name = "sherpa-onnx-core" },
     { name = "soundcard", marker = "sys_platform == 'win32'" },
     { name = "sounddevice" },
+    { name = "uiautomation", marker = "sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -812,7 +813,6 @@ dev = [
     { name = "pyinstaller" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "uiautomation", marker = "sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -830,6 +830,7 @@ requires-dist = [
     { name = "sherpa-onnx-core", specifier = ">=1.13.6" },
     { name = "soundcard", marker = "sys_platform == 'win32'", specifier = ">=0.4.3" },
     { name = "sounddevice", specifier = ">=0.5" },
+    { name = "uiautomation", marker = "sys_platform == 'win32'", specifier = ">=2.0.29" },
 ]
 
 [package.metadata.requires-dev]
@@ -838,5 +839,4 @@ dev = [
     { name = "pyinstaller", specifier = ">=6.10" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.7" },
-    { name = "uiautomation", marker = "sys_platform == 'win32'", specifier = ">=2.0.29" },
 ]

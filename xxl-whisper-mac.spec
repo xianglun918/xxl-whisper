@@ -23,7 +23,7 @@ CODESIGN_IDENTITY = os.environ.get("CODESIGN_IDENTITY") or None
 
 datas = []
 binaries = []
-hiddenimports = ["sounddevice"]
+hiddenimports = ["sounddevice", "pystray"]
 # The mac modules import pyobjc with importlib (dynamic) to keep the Windows
 # runner's type checker happy (M1 finding), so PyInstaller cannot see them —
 # list them explicitly or the bundled app dies with ModuleNotFoundError.

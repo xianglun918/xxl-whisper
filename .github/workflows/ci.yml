@@ -35,4 +35,8 @@ jobs:
       # The 117 ruff / 13 basedpyright findings that predate this branch are the
       # committed baseline; the numbers may only go down (.lint-baseline.json).
       - run: uv run python scripts/lint_ratchet.py
+      # Lazily imported modules (pystray, uiautomation, pyobjc) are invisible to
+      # PyInstaller; 0.8.0-beta.3 shipped an exe that died with "No module named
+      # 'pystray'" because build.bat never listed it. Fail the gate, not the user.
+      - run: uv run python scripts/check_bundled_imports.py
       - run: uv run pytest tests -m "not integration" -q

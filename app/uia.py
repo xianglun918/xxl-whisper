@@ -129,7 +129,11 @@ def _auto() -> ModuleType | None:
         try:
             auto = importlib.import_module("uiautomation")
             auto.UIAutomationInitializerInThread()
-        except ImportError as exc:
+        except Exception as exc:  # noqa: BLE001 - any COM/wheel failure must degrade, not crash
+            # Not just ImportError: a frozen build can carry uiautomation without a
+            # working comtypes, and COM initialisation can fail on a locked-down
+            # desktop. This is the 4th delivery channel — losing it must cost
+            # quality, never the dictation itself, so log and fall through.
             log.warning("uiautomation unavailable: %s", exc)
             return None
         module = auto
