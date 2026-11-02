@@ -13,7 +13,7 @@ Windows / macOS 双平台离线语音听写工具：**按住热键说话（Windo
 ## 快速开始
 
 1. **下载** — [Windows `xxl-whisper.exe`](https://github.com/xianglun918/xxl-whisper/releases/latest) 或 [macOS `xxl-whisper-arm64.zip`](https://github.com/xianglun918/xxl-whisper/releases/latest)（macOS：Apple 芯片 + 15 及以上，首次打开右键 → 打开）
-2. **运行** — 首次会自动下载语音模型（约 230MB，底部有进度提示）
+2. **运行** — 首次会自动下载语音模型（约 230MB，底部有进度提示）。**国内直连**：识别/VAD 模型走 `hf-mirror.com`（主源）+ GitHub Release 兜底，离线翻译模型走 ModelScope，不需要自备代理；下载支持断点续传，识别/VAD 模型带 SHA256 校验（翻译模型目前只校验文件大小）
 3. **使用** — 按住热键说话，松开出字；单击 CapsLock 仍是大小写切换
 
 ## 特性
