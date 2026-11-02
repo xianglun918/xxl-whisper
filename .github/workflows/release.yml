@@ -72,6 +72,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # 需要仓库里的 docs/releases/<tag>.md 作为发版说明，所以这里也要检出。
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -83,14 +85,35 @@ jobs:
           sha256sum xxl-whisper.exe | cut -d' ' -f1 > xxl-whisper.exe.sha256
           sha256sum xxl-whisper-arm64.zip | cut -d' ' -f1 > xxl-whisper-arm64.zip.sha256
           ls -l ./*.sha256
+      - name: Resolve release metadata (prerelease flag + notes source)
+        id: meta
+        run: |
+          set -eu
+          tag="$GITHUB_REF_NAME"
+          # 带 "-" 的 tag 一律发成预发布（预发布不会被 /releases/latest 返回，
+          # 所以 App 内的更新检查不会把它推给稳定版用户）。
+          case "$tag" in
+            *-*) echo "flags=--prerelease" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "flags=" >> "$GITHUB_OUTPUT" ;;
+          esac
+          # 手写说明优先：docs/releases/<tag>.md；没有就让 GitHub 按 commit 生成。
+          if [ -f "docs/releases/$tag.md" ]; then
+            echo "notes=--notes-file docs/releases/$tag.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes=--generate-notes" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$tag flags=$(grep -o 'flags=.*' "$GITHUB_OUTPUT" || true)"
       - name: Create or update the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          # 故意不加引号：这里要按空格拆成多个参数。
+          FLAGS: ${{ steps.meta.outputs.flags }}
+          NOTES: ${{ steps.meta.outputs.notes }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             dist/xxl-whisper.exe dist/xxl-whisper.exe.sha256 \
             dist/xxl-whisper-arm64.zip dist/xxl-whisper-arm64.zip.sha256 \
-            --title "$GITHUB_REF_NAME" --generate-notes --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" $NOTES $FLAGS --repo "$GITHUB_REPOSITORY" \
           || gh release upload "$GITHUB_REF_NAME" \
             dist/xxl-whisper.exe dist/xxl-whisper.exe.sha256 \
             dist/xxl-whisper-arm64.zip dist/xxl-whisper-arm64.zip.sha256 \
