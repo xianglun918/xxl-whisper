@@ -37,7 +37,8 @@ from app.updater import (
     fetch_checksum,
     fetch_latest_release,
     find_update_assets,
-    is_newer,
+    is_prerelease,
+    is_upgrade,
     parse_version,
 )
 
@@ -63,10 +64,25 @@ class UpdateFlow:
 
     def __init__(self, deps: UpdateFlowDeps) -> None:
         self._deps = deps
-        self._current = parse_version(deps.current_version)
+        # ``__version__`` carries the build's own pre-release suffix (0.8.0b4), and
+        # parsing it used to raise UpdateCheckError inside this constructor — i.e.
+        # the app refused to start with "invalid version: '0.8.0b4'". Keep the raw
+        # text for dialogs and the parsed triple for comparisons.
+        self._current_text = deps.current_version.strip().lstrip("vV")
+        self._current_is_prerelease = is_prerelease(deps.current_version)
+        try:
+            self._current: tuple[int, int, int] | None = parse_version(deps.current_version)
+        except UpdateCheckError as exc:
+            # Never fatal: this runs during startup, and a version string we cannot
+            # read costs the update check — not the dictation.
+            log.warning("update checks disabled, unparsable version: %s", exc)
+            self._current = None
         self._stop_event = threading.Event()
 
     def start_watcher(self, enabled: bool) -> None:
+        if self._current is None:
+            log.info("update watcher not started: unknown current version")
+            return
         if not enabled:
             log.info("update checks disabled by config")
             return
@@ -77,12 +93,14 @@ class UpdateFlow:
 
     def manual_check(self) -> None:
         """Tray-menu entry point; safe to run on any thread (shows a dialog)."""
+        if self._current is None:
+            native.util.show_info("当前版本号无法识别，已跳过更新检查（不影响听写）。")
+            return
         release = self._fetch_or_report()
         if release is None:
             return
-        if not is_newer(release.version, self._current):
-            current_text = ".".join(map(str, self._current))
-            native.util.show_info(f"已是最新版本 {current_text}。")
+        if not self._is_upgrade(release):
+            native.util.show_info(f"已是最新版本 {self._current_text}。")
             return
         if supports_self_update() and find_update_assets(release) is not None:
             if self._confirm_install(release):
@@ -98,7 +116,7 @@ class UpdateFlow:
         self._stop_event.wait(_INITIAL_DELAY_S)
         while not self._stop_event.is_set():
             release = self._fetch_or_report()
-            if release is not None and is_newer(release.version, self._current):
+            if release is not None and self._is_upgrade(release):
                 log.info("update available: %s", release.tag)
                 self._deps.tray.notify(
                     f"发现新版本 {release.tag}：右键托盘 → 检查更新",
@@ -113,10 +131,16 @@ class UpdateFlow:
             log.info("update check skipped: %s", exc)
             return None
 
+    def _is_upgrade(self, release: ReleaseInfo) -> bool:
+        if self._current is None:  # unparsable own version: never offer anything
+            return False
+        return is_upgrade(
+            release, self._current, current_is_prerelease=self._current_is_prerelease
+        )
+
     def _confirm_install(self, release: ReleaseInfo) -> bool:
-        current_text = ".".join(map(str, self._current))
         message = (
-            f"发现新版本 {release.tag}（当前 v{current_text}）。\n\n"
+            f"发现新版本 {release.tag}（当前 v{self._current_text}）。\n\n"
             "现在「下载并更新」？更新时程序会短暂退出并自动重启。"
         )
         return native.util.ask_yes_no(message, title="xxl-whisper 更新")
@@ -155,8 +179,8 @@ class UpdateFlow:
 
     def _offer(self, release: ReleaseInfo) -> bool:
         notes = f"\n\n{release.notes}" if release.notes else ""
-        current_text = ".".join(map(str, self._current))
         message = (
-            f"发现新版本 {release.tag}（当前 v{current_text}）。{notes}\n\n现在打开下载页？"
+            f"发现新版本 {release.tag}（当前 v{self._current_text}）。{notes}\n\n"
+            "现在打开下载页？"
         )
         return native.util.ask_yes_no(message, title="xxl-whisper 更新")

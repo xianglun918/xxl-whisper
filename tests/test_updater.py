@@ -13,6 +13,8 @@ from app.updater import (
     fetch_latest_release,
     find_update_assets,
     is_newer,
+    is_prerelease,
+    is_upgrade,
     parse_checksum,
     parse_version,
 )
@@ -24,6 +26,40 @@ def test_parse_version_accepts_v_prefix() -> None:
 
 
 def test_parse_version_rejects_garbage() -> None:
+    for text in ("", "0.8", "v1.2.3.4", "not-a-version", "mt-ja-zh-v1"):
+        with pytest.raises(UpdateCheckError):
+            parse_version(text)
+
+
+def test_parse_version_accepts_prerelease_suffixes() -> None:
+    """构建自己的版本号带预发布后缀（0.8.0b4），解析不了会让整个 App 起不来。"""
+    assert parse_version("0.8.0b4") == (0, 8, 0)
+    assert parse_version("v0.8.0-beta.4") == (0, 8, 0)
+    assert parse_version("0.9.0rc1") == (0, 9, 0)
+    assert parse_version("1.0.0-preview.2") == (1, 0, 0)
+
+
+def test_is_prerelease_flags_suffixes_only() -> None:
+    assert is_prerelease("0.8.0b4") is True
+    assert is_prerelease("v0.9.0-rc1") is True
+    assert is_prerelease("v0.8.0") is False
+    assert is_prerelease("not-a-version") is False
+
+
+def test_is_upgrade_offers_the_stable_release_to_a_beta_build() -> None:
+    """跑 beta 的人必须还能收到同号正式版的通知，否则会永远卡在 beta 上。"""
+    beta = ReleaseInfo(tag="v0.8.0-beta.4", version=(0, 8, 0), url="u", notes="", assets=())
+    stable = ReleaseInfo(tag="v0.8.0", version=(0, 8, 0), url="u", notes="", assets=())
+    older = ReleaseInfo(tag="v0.7.0", version=(0, 7, 0), url="u", notes="", assets=())
+
+    assert is_upgrade(beta, (0, 8, 0), current_is_prerelease=False) is False
+    assert is_upgrade(stable, (0, 8, 0), current_is_prerelease=False) is False
+    assert is_upgrade(stable, (0, 8, 0), current_is_prerelease=True) is True
+    assert is_upgrade(older, (0, 8, 0), current_is_prerelease=True) is False
+    assert is_upgrade(beta, (0, 7, 0), current_is_prerelease=False) is True
+
+
+def test_parse_version_rejects_garbage_legacy() -> None:
     for bad in ("", "v1", "1.2.x", "v1.2.3.4"):
         with pytest.raises(UpdateCheckError):
             parse_version(bad)

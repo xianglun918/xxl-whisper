@@ -1,6 +1,7 @@
 """GitHub Release based update detection (pure fetch + parse, no UI)."""
 
 import json
+import re
 import urllib.request
 from dataclasses import dataclass
 
@@ -55,16 +56,49 @@ class UpdateAssets:
     checksum: AssetInfo
 
 
-_VERSION_PARTS: int = 3
+#: ``X.Y.Z`` with an optional PEP 440 pre-release suffix (``0.8.0b4``,
+#: ``v0.8.0-beta.4``, ``0.9.0rc1``). The suffix is *parsed* (so a beta build can
+#: talk about its own version at all — 0.8.0-beta.4 died at start-up with
+#: ``invalid version: '0.8.0b4'``) but the triple is what gets compared.
+_VERSION_RE: re.Pattern[str] = re.compile(
+    r"^[vV]?(\d+)\.(\d+)\.(\d+)((?:[-_.]?(?:a|alpha|b|beta|rc|pre|preview)[-_.]?\d*)?)$",
+    re.IGNORECASE,
+)
 
 
 def parse_version(text: str) -> tuple[int, int, int]:
-    """Parse 'vX.Y.Z' / 'X.Y.Z' into a comparable triple."""
-    cleaned = text.strip().lstrip("vV")
-    parts = cleaned.split(".")
-    if len(parts) != _VERSION_PARTS or not all(part.isdigit() for part in parts):
+    """Parse 'vX.Y.Z' (optionally with a pre-release suffix) into a comparable triple."""
+    match = _VERSION_RE.fullmatch(text.strip())
+    if match is None:
         raise UpdateCheckError(reason=f"invalid version: {text!r}")
-    return (int(parts[0]), int(parts[1]), int(parts[2]))
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def is_prerelease(text: str) -> bool:
+    """Return whether *text* carries a pre-release suffix (``0.8.0b4``, ``v0.9.0-rc1``)."""
+    match = _VERSION_RE.fullmatch(text.strip())
+    return bool(match and match.group(4))
+
+
+def is_upgrade(
+    candidate: ReleaseInfo,
+    current: tuple[int, int, int],
+    *,
+    current_is_prerelease: bool,
+) -> bool:
+    """Return whether a build reporting *current* should offer *candidate*.
+
+    A higher triple always wins. Equal triples only count when we are running a
+    pre-release and the candidate is a full release — otherwise a beta install
+    would sit on 0.8.0b4 for ever and never be told that 0.8.0 shipped.
+    """
+    if is_newer(candidate.version, current):
+        return True
+    return (
+        current_is_prerelease
+        and candidate.version == current
+        and not is_prerelease(candidate.tag)
+    )
 
 
 def is_newer(candidate: tuple[int, int, int], current: tuple[int, int, int]) -> bool:

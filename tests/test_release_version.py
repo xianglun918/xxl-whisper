@@ -13,6 +13,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from app.updater import is_prerelease, parse_version
 
 from app import __version__
 
@@ -81,3 +82,17 @@ def test_current_version_normalises_like_its_beta_tag() -> None:
     beta_number = __version__.split("b")[1]
     assert _normalise(__version__) == _normalise(stable)
     assert _normalise(f"v{stable}-beta.{beta_number}") == _normalise(__version__)
+
+
+def test_updater_can_parse_the_version_this_build_reports() -> None:
+    """Regression: 0.8.0-beta.4 refused to start with `invalid version: '0.8.0b4'`.
+
+    ``UpdateFlow`` parses ``__version__`` in its constructor, so a pre-release
+    suffix that the parser rejects takes the whole app down — not just the update
+    check. Any version this repo can ship must be parseable here.
+    """
+    triple = parse_version(__version__)
+    numeric = tuple(int(part) for part in _normalise(__version__).split("."))
+
+    assert triple == numeric  # 0.8.0b4 -> (0, 8, 0)
+    assert is_prerelease(__version__) is ("b" in __version__)
