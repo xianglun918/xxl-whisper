@@ -17,6 +17,7 @@ import types
 from pathlib import Path
 from typing import Any, get_args
 
+from app.keycodes import DEFAULT_HOTKEY
 from app.options import (
     DISFLUENCY_OPTIONS,
     HOTKEY_OPTIONS,
@@ -110,7 +111,10 @@ def test_labels_are_unique_and_non_empty() -> None:
 def test_custom_hotkey_renders_readably() -> None:
     """A recorded key is a raw VK integer and must not print as a bare number."""
     assert label_of(HOTKEY_OPTIONS, 0x71) == "自定义按键（VK 0x71）"
-    assert label_of(HOTKEY_OPTIONS, "caps_lock") == "CapsLock"
+    # 用平台默认键而不是写死 "caps_lock"：mac 的预设表里没有 CapsLock。
+    default_label = next(option.label for option in HOTKEY_OPTIONS if option.key == DEFAULT_HOTKEY)
+    assert label_of(HOTKEY_OPTIONS, DEFAULT_HOTKEY) == default_label
+    assert default_label != str(DEFAULT_HOTKEY), "预设热键必须渲染成可读标签，不能回退成键名"
 
 
 def test_every_route_has_a_label_and_a_model(tmp_path: Path) -> None:

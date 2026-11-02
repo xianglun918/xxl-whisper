@@ -11,6 +11,7 @@ Two things are pinned here:
 
 from dataclasses import replace
 
+from app.keycodes import DEFAULT_HOTKEY
 from app.menu_spec import (
     Entry,
     MenuInputs,
@@ -54,7 +55,9 @@ BASE_STATE = TrayState(
     paused=False,
     autostart=False,
     current_mic="",
-    current_hotkey="caps_lock",
+    # 平台默认键，不是写死的 Windows CapsLock：mac 默认是右 Command，
+    # 写死会让热键那一组的勾选断言在 mac 上必然是 0 个 tick。
+    current_hotkey=DEFAULT_HOTKEY,
     current_model="sensevoice",
     disfluency="verbatim",
     continuous=True,

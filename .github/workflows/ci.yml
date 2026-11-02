@@ -24,6 +24,13 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync
+      # sounddevice imports PortAudio's shared library at import time; the
+      # ubuntu runner does not ship it, which turned the whole suite into
+      # 5 collection errors and exit code 2 (invisible on Windows/macOS where
+      # the wheel bundles it).
+      - name: Install PortAudio (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2
       # Ratchet gate: fails only when a change ADDS lint/type findings.
       # The 117 ruff / 13 basedpyright findings that predate this branch are the
       # committed baseline; the numbers may only go down (.lint-baseline.json).
