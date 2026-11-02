@@ -153,6 +153,13 @@ def check(
 
 
 def main() -> int:
+    # Windows runners default stdout to cp1252: printing the Chinese gap text
+    # raised UnicodeEncodeError and failed the gate (not the check). Force UTF-8,
+    # and never let an encoding problem turn a real finding into a crash.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
     problems = check()
     if problems:
         print("打包缺口（冻结后的程序会缺模块）：")
