@@ -54,11 +54,13 @@ def test_fetch_latest_release_parses_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = json.dumps(
-        {
-            "tag_name": "v0.2.0",
-            "html_url": "https://github.com/xianglun918/xxl-whisper/releases/tag/v0.2.0",
-            "body": "支持更新检测与自动提示。\n第二行被截断。",
-        }
+        [
+            {
+                "tag_name": "v0.2.0",
+                "html_url": "https://github.com/xianglun918/xxl-whisper/releases/tag/v0.2.0",
+                "body": "支持更新检测与自动提示。\n第二行被截断。",
+            }
+        ]
     ).encode("utf-8")
 
     captured: list[object] = []
@@ -94,7 +96,7 @@ def test_fetch_latest_release_rejects_bad_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
-        return _FakeResponse(b'{"tag_name": "not-a-version"}')
+        return _FakeResponse(b'[{"tag_name": "not-a-version"}]')
 
     monkeypatch.setattr(upd.urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(UpdateCheckError):
@@ -103,24 +105,26 @@ def test_fetch_latest_release_rejects_bad_payload(
 
 def test_fetch_latest_release_parses_assets(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = json.dumps(
-        {
-            "tag_name": "v0.3.0",
-            "html_url": "https://example.invalid/v0.3.0",
-            "body": "",
-            "assets": [
-                {
-                    "name": "xxl-whisper.exe",
-                    "browser_download_url": "https://example.invalid/x.exe",
-                    "size": 1234,
-                },
-                {
-                    "name": "xxl-whisper.exe.sha256",
-                    "browser_download_url": "https://example.invalid/x.sha256",
-                },
-                42,
-                "not-a-dict",
-            ],
-        }
+        [
+            {
+                "tag_name": "v0.3.0",
+                "html_url": "https://example.invalid/v0.3.0",
+                "body": "",
+                "assets": [
+                    {
+                        "name": "xxl-whisper.exe",
+                        "browser_download_url": "https://example.invalid/x.exe",
+                        "size": 1234,
+                    },
+                    {
+                        "name": "xxl-whisper.exe.sha256",
+                        "browser_download_url": "https://example.invalid/x.sha256",
+                    },
+                    42,
+                    "not-a-dict",
+                ],
+            }
+        ]
     ).encode("utf-8")
 
     def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
@@ -135,6 +139,37 @@ def test_fetch_latest_release_parses_assets(monkeypatch: pytest.MonkeyPatch) -> 
     ]
     assert release.assets[0].size == 1234
     assert release.assets[1].size is None
+
+
+def test_fetch_latest_release_skips_model_bundles_and_prereleases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """模型包与预发布都不能阻止真·新版本的发现。
+
+    线上真实情况：`/releases/latest` 返回的是模型包 `mt-ja-zh-v1`，解析版本时抛错，
+    于是所有人都收不到更新提示（静默）。列表 + 过滤才是稳的形状。
+    """
+    payload = json.dumps(
+        [
+            {"tag_name": "mt-ja-zh-v1", "html_url": "https://example.invalid/model"},
+            {
+                "tag_name": "v0.9.0-beta.1",
+                "html_url": "https://example.invalid/beta",
+                "prerelease": True,
+            },
+            {"tag_name": "v0.8.3", "html_url": "https://example.invalid/083"},
+            {"tag_name": "v0.8.0", "html_url": "https://example.invalid/080"},
+            {"tag_name": "v0.9.0", "html_url": "https://example.invalid/draft", "draft": True},
+        ]
+    ).encode("utf-8")
+
+    monkeypatch.setattr(
+        upd.urllib.request, "urlopen", lambda *_args, **_kwargs: _FakeResponse(payload)
+    )
+    release = fetch_latest_release()
+
+    assert release.tag == "v0.8.3"
+    assert release.version == (0, 8, 3)
 
 
 def _release_with(assets: list[AssetInfo]) -> ReleaseInfo:

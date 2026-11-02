@@ -4,7 +4,14 @@ import json
 import urllib.request
 from dataclasses import dataclass
 
-_API_URL: str = "https://api.github.com/repos/xianglun918/xxl-whisper/releases/latest"
+#: The *list* endpoint, not ``/releases/latest``. The repo also publishes model
+#: bundles (``mt-ja-zh-v1`` …) as GitHub Releases, and GitHub's "latest" is just
+#: the most recent non-prerelease release — so it returned a model bundle, whose
+#: tag is not ``X.Y.Z``, and every update check died in ``parse_version``
+#: (silently, by design). Listing releases and picking the newest tag that
+#: *parses* as a version keeps model bundles out of the comparison.
+_API_URL: str = "https://api.github.com/repos/xianglun918/xxl-whisper/releases?per_page=30"
+_RELEASES_PAGE_LIMIT: int = 30
 _NOTES_LIMIT: int = 200
 
 #: The Windows onefile asset and the checksum companion published beside it.
@@ -66,7 +73,7 @@ def is_newer(candidate: tuple[int, int, int], current: tuple[int, int, int]) -> 
 
 
 def fetch_latest_release(timeout_s: float = 10.0) -> ReleaseInfo:
-    """Query the GitHub API for the latest published release.
+    """Query the GitHub API for the newest release whose tag is a version.
 
     Network/JSON/shape failures all surface as UpdateCheckError so callers
     can degrade silently on unstable connections.
@@ -77,11 +84,10 @@ def fetch_latest_release(timeout_s: float = 10.0) -> ReleaseInfo:
             raw: object = json.load(response)
     except (OSError, ValueError) as exc:
         raise UpdateCheckError(reason=f"fetch failed: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise UpdateCheckError(reason="payload is not an object")
-    tag = raw.get("tag_name")
-    url = raw.get("html_url")
-    body = raw.get("body")
+    chosen = _newest_versioned_release(raw)
+    tag = chosen.get("tag_name")
+    url = chosen.get("html_url")
+    body = chosen.get("body")
     if not isinstance(tag, str) or not isinstance(url, str):
         raise UpdateCheckError(reason="payload missing tag_name/html_url")
     notes = body if isinstance(body, str) else ""
@@ -90,8 +96,38 @@ def fetch_latest_release(timeout_s: float = 10.0) -> ReleaseInfo:
         version=parse_version(tag),
         url=url,
         notes=notes.strip()[:_NOTES_LIMIT],
-        assets=_parse_assets(raw.get("assets")),
+        assets=_parse_assets(chosen.get("assets")),
     )
+
+
+def _newest_versioned_release(raw: object) -> dict[str, object]:
+    """Pick the highest-versioned, published, non-prerelease entry of the list.
+
+    Drafts, prereleases and non-version tags (model bundles such as
+    ``mt-ja-zh-v1``) are skipped rather than raising: one unrelated release
+    must not disable update checks for everybody.
+    """
+    if not isinstance(raw, list):
+        raise UpdateCheckError(reason="payload is not a list of releases")
+    best: dict[str, object] | None = None
+    best_version: tuple[int, int, int] | None = None
+    for item in raw[:_RELEASES_PAGE_LIMIT]:
+        if not isinstance(item, dict):
+            continue
+        if item.get("draft") is True or item.get("prerelease") is True:
+            continue
+        tag = item.get("tag_name")
+        if not isinstance(tag, str):
+            continue
+        try:
+            version = parse_version(tag)
+        except UpdateCheckError:
+            continue
+        if best_version is None or version > best_version:
+            best, best_version = item, version
+    if best is None:
+        raise UpdateCheckError(reason="no versioned release found")
+    return best
 
 
 def _parse_assets(raw: object) -> tuple[AssetInfo, ...]:
