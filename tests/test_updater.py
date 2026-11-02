@@ -51,12 +51,15 @@ def test_is_upgrade_offers_the_stable_release_to_a_beta_build() -> None:
     beta = ReleaseInfo(tag="v0.8.0-beta.4", version=(0, 8, 0), url="u", notes="", assets=())
     stable = ReleaseInfo(tag="v0.8.0", version=(0, 8, 0), url="u", notes="", assets=())
     older = ReleaseInfo(tag="v0.7.0", version=(0, 7, 0), url="u", notes="", assets=())
+    newer_stable = ReleaseInfo(tag="v0.9.0", version=(0, 9, 0), url="u", notes="", assets=())
 
     assert is_upgrade(beta, (0, 8, 0), current_is_prerelease=False) is False
     assert is_upgrade(stable, (0, 8, 0), current_is_prerelease=False) is False
     assert is_upgrade(stable, (0, 8, 0), current_is_prerelease=True) is True
     assert is_upgrade(older, (0, 8, 0), current_is_prerelease=True) is False
-    assert is_upgrade(beta, (0, 7, 0), current_is_prerelease=False) is True
+    # beta 本身永远不推：要试新 beta 得自己下载
+    assert is_upgrade(beta, (0, 7, 0), current_is_prerelease=False) is False
+    assert is_upgrade(newer_stable, (0, 8, 0), current_is_prerelease=False) is True
 
 
 def test_parse_version_rejects_garbage_legacy() -> None:
@@ -206,6 +209,28 @@ def test_fetch_latest_release_skips_model_bundles_and_prereleases(
 
     assert release.tag == "v0.8.3"
     assert release.version == (0, 8, 3)
+
+
+def test_a_prerelease_tag_is_skipped_even_without_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """手发 Release 时忘勾 prerelease 也不能把 beta 当正式版推给稳定用户。
+
+    Review 2026-11-02 指出的回归：旧代码里 beta tag 会因解析失败被跳过，
+    parse_version 放宽之后它反而能被选中，再由 is_upgrade 推给所有人。
+    """
+    payload = json.dumps(
+        [
+            {"tag_name": "v0.9.0-beta.1", "html_url": "https://example.invalid/beta-noflag"},
+            {"tag_name": "v0.8.3", "html_url": "https://example.invalid/083"},
+        ]
+    ).encode("utf-8")
+
+    monkeypatch.setattr(
+        upd.urllib.request, "urlopen", lambda *_args, **_kwargs: _FakeResponse(payload)
+    )
+
+    assert fetch_latest_release().tag == "v0.8.3"
 
 
 def _release_with(assets: list[AssetInfo]) -> ReleaseInfo:

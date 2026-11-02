@@ -26,7 +26,10 @@ APP_DIR = ROOT / "app"
 WIN_BUILD = ROOT / "build.bat"
 MAC_SPEC = ROOT / "xxl-whisper-mac.spec"
 
-_CALLS: frozenset[str] = frozenset({"import_module", "importlib.import_module", "__import__"})
+#: Names that mean "dynamic import" without further analysis of the receiver.
+_CALLS: frozenset[str] = frozenset(
+    {"import_module", "importlib.import_module", "__import__", "builtins.__import__"}
+)
 #: Spec helpers that pull a whole package (and its submodules) into the bundle.
 _COLLECTORS: frozenset[str] = frozenset({"collect_all", "collect_submodules"})
 
@@ -54,28 +57,76 @@ def _call_name(node: ast.expr) -> str | None:
     return None
 
 
+def _dynamic_aliases(tree: ast.AST) -> set[str]:
+    """Names in *tree* that mean "dynamic import", including ``import_module`` aliases."""
+    aliases = set(_CALLS)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "importlib":
+            for name in node.names:
+                if name.name == "import_module":
+                    aliases.add(name.asname or name.name)
+    return aliases
+
+
+def _literal_module(node: ast.expr) -> str | None:
+    """Top-level module named by a string literal argument, else None."""
+    if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+        return None
+    return node.value.strip().split(".")[0]
+
+
+def _scan_file(path: Path) -> tuple[dict[str, list[str]], list[str]]:
+    """Dynamic imports declared by one file: (modules, unresolvable call sites)."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError:  # pragma: no cover - a broken file is another test's job
+        return {}, []
+    aliases = _dynamic_aliases(tree)
+    where = str(path.relative_to(ROOT.parent)) if ROOT in path.parents else path.name
+    found: dict[str, list[str]] = {}
+    unresolved: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        if _call_name(node.func) not in aliases:
+            continue
+        module = _literal_module(node.args[0])
+        if module is None:
+            unresolved.append(
+                f"{where}:{node.lineno}: 动态导入的参数不是字符串字面量，"
+                "静态检查无法确认它有没有被打包"
+            )
+            continue
+        if module and module not in sys.stdlib_module_names:
+            found.setdefault(module, []).append(where)
+    return found, unresolved
+
+
+def scan(app_dir: Path = APP_DIR) -> tuple[dict[str, list[str]], list[str]]:
+    """Return (modules found, imports that could not be resolved statically).
+
+    A dynamic import whose argument is not a string literal is *reported*, not
+    ignored: this checker exists to stop a build from shipping without a module,
+    so "I cannot tell" has to fail rather than pass.
+    """
+    found: dict[str, list[str]] = {}
+    unresolved: list[str] = []
+    for path in sorted(app_dir.rglob("*.py")):
+        file_found, file_unresolved = _scan_file(path)
+        for module, places in file_found.items():
+            found.setdefault(module, []).extend(places)
+        unresolved.extend(file_unresolved)
+    return found, unresolved
+
+
 def dynamic_imports(app_dir: Path = APP_DIR) -> dict[str, list[str]]:
     """Top-level modules imported only through ``import_module``/``__import__``."""
-    found: dict[str, list[str]] = {}
-    for path in sorted(app_dir.rglob("*.py")):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except SyntaxError:  # pragma: no cover - a broken file is another test's job
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not node.args:
-                continue
-            if _call_name(node.func) not in _CALLS:
-                continue
-            argument = node.args[0]
-            if not (isinstance(argument, ast.Constant) and isinstance(argument.value, str)):
-                continue
-            module = argument.value.strip().split(".")[0]
-            if not module or module in sys.stdlib_module_names:
-                continue
-            where = str(path.relative_to(ROOT.parent)) if ROOT in path.parents else path.name
-            found.setdefault(module, []).append(where)
-    return found
+    return scan(app_dir)[0]
+
+
+def unresolved_imports(app_dir: Path = APP_DIR) -> list[str]:
+    """Dynamic imports the checker could not evaluate (each one fails the check)."""
+    return scan(app_dir)[1]
 
 
 def windows_bundle(build_file: Path = WIN_BUILD) -> set[str]:
@@ -118,6 +169,23 @@ def _spec_strings(node: ast.AST) -> set[str]:
     targets = getattr(node, "targets", []) if isinstance(node, ast.Assign) else []
     if any(isinstance(target, ast.Name) and target.id == "hiddenimports" for target in targets):
         found |= _literal_strings(node.value)  # type: ignore[attr-defined]
+    # `hiddenimports += [...]` — an AugAssign, not an Assign, so it needs its own branch.
+    if (
+        isinstance(node, ast.AugAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "hiddenimports"
+    ):
+        found |= _literal_strings(node.value)
+    # `hiddenimports.append("x")`
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "append"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "hiddenimports"
+    ):
+        for argument in node.args:
+            found |= _literal_strings(argument)
     if isinstance(node, ast.For):
         found |= _literal_strings(node.iter)
     if isinstance(node, ast.Call) and _call_name(node.func) in _COLLECTORS:
@@ -135,8 +203,9 @@ def check(
     """Return one human-readable line per module a frozen build would be missing."""
     windows = windows_bundle(build_file)
     macos = macos_bundle(spec_file)
-    problems: list[str] = []
-    for module, places in sorted(dynamic_imports(app_dir).items()):
+    found, unresolved = scan(app_dir)
+    problems: list[str] = list(unresolved)
+    for module, places in sorted(found.items()):
         platform = PLATFORM_SPECIFIC.get(module)
         targets = ("win32", "darwin") if platform is None else (platform,)
         for target in targets:

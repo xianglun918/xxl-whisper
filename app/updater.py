@@ -11,8 +11,8 @@ from dataclasses import dataclass
 #: tag is not ``X.Y.Z``, and every update check died in ``parse_version``
 #: (silently, by design). Listing releases and picking the newest tag that
 #: *parses* as a version keeps model bundles out of the comparison.
-_API_URL: str = "https://api.github.com/repos/xianglun918/xxl-whisper/releases?per_page=30"
-_RELEASES_PAGE_LIMIT: int = 30
+_API_URL: str = "https://api.github.com/repos/xianglun918/xxl-whisper/releases?per_page=100"
+_RELEASES_PAGE_LIMIT: int = 100
 _NOTES_LIMIT: int = 200
 
 #: The Windows onefile asset and the checksum companion published beside it.
@@ -93,7 +93,9 @@ def is_upgrade(
     would sit on 0.8.0b4 for ever and never be told that 0.8.0 shipped.
     """
     if is_newer(candidate.version, current):
-        return True
+        # A pre-release is never an "upgrade" anybody gets told about: betas are
+        # opt-in by downloading them, never pushed by the update check.
+        return not is_prerelease(candidate.tag)
     return (
         current_is_prerelease
         and candidate.version == current
@@ -152,6 +154,12 @@ def _newest_versioned_release(raw: object) -> dict[str, object]:
             continue
         tag = item.get("tag_name")
         if not isinstance(tag, str):
+            continue
+        # Both checks are needed. `prerelease` is a flag a human can forget to
+        # tick when publishing by hand; the tag itself never lies. Without this,
+        # a "v0.9.0-beta.1" release published without the flag would parse as
+        # (0, 9, 0) and be offered to every stable 0.8.x user as "the new version".
+        if is_prerelease(tag):
             continue
         try:
             version = parse_version(tag)

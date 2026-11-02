@@ -14,7 +14,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from scripts.check_bundled_imports import check, dynamic_imports, macos_bundle, windows_bundle
+from scripts.check_bundled_imports import (
+    check,
+    dynamic_imports,
+    macos_bundle,
+    unresolved_imports,
+    windows_bundle,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -120,3 +126,68 @@ def test_stdlib_dynamic_imports_are_ignored(tmp_path: Path) -> None:
         )
         == []
     )
+
+
+def test_an_alias_import_is_still_checked(tmp_path: Path) -> None:
+    """`from importlib import import_module as im` must not slip past the checker."""
+    root = _fixture(
+        tmp_path,
+        build="pyinstaller run.py\n",
+        spec="hiddenimports = []\n",
+        app_source=(
+            "from importlib import import_module as im\n"
+            'm = im("pystray")\n'
+        ),
+    )
+
+    problems = check(
+        app_dir=root / "app",
+        build_file=root / "build.bat",
+        spec_file=root / "xxl-whisper-mac.spec",
+    )
+
+    assert any("pystray" in problem for problem in problems), problems
+
+
+def test_a_non_literal_import_fails_instead_of_being_ignored(tmp_path: Path) -> None:
+    """看不懂的动态导入必须失败（fail-closed），否则检查器就是个安慰剂。"""
+    root = _fixture(
+        tmp_path,
+        build="pyinstaller --hidden-import=pystray run.py\n",
+        spec='hiddenimports = ["pystray"]\n',
+        app_source=(
+            "import importlib\n"
+            "NAMES = ('pystray',)\n"
+            "for name in NAMES:\n"
+            "    importlib.import_module(name)\n"
+        ),
+    )
+
+    unresolved = unresolved_imports(root / "app")
+
+    assert len(unresolved) == 1
+    assert "不是字符串字面量" in unresolved[0]
+    assert check(
+        app_dir=root / "app",
+        build_file=root / "build.bat",
+        spec_file=root / "xxl-whisper-mac.spec",
+    ) == unresolved
+
+
+def test_spec_augassign_and_append_are_collected(tmp_path: Path) -> None:
+    """`hiddenimports += [...]` / `.append("x")` 也是 spec 里常见写法。"""
+    spec_text = (
+        'hiddenimports = ["sounddevice"]\n'
+        'hiddenimports += ["AppKit"]\n'
+        'hiddenimports.append("Quartz")\n'
+    )
+    root = _fixture(
+        tmp_path,
+        build="pyinstaller run.py\n",
+        spec=spec_text,
+        app_source="import importlib\n",
+    )
+
+    modules = macos_bundle(root / "xxl-whisper-mac.spec")
+
+    assert {"sounddevice", "AppKit", "Quartz"} <= modules
