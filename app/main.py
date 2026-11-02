@@ -11,7 +11,7 @@ from typing import Any, cast
 
 from app import native
 from app.app import DictationApp
-from app.config import ConfigError, config_dir, config_path, load_config
+from app.config import ConfigError, config_dir, config_path, load_config, migrate_config_file
 from app.selfupdate import parse_update_args, run_helper
 
 
@@ -42,8 +42,17 @@ def entry() -> None:
     if not native.util.acquire_single_instance():
         native.util.show_error("xxl-whisper 已在运行（请查看托盘图标）。")
         sys.exit(1)
+    config_file = config_path()
+    # Upgrade an old config file *before* anything reads it: the file the app
+    # saves next must be current-schema, and the user deserves a copy of what
+    # they had. Never fatal — a failed migration just leaves the old file, and
+    # load_config keeps tolerating it the way it always did.
     try:
-        config = load_config(config_path())
+        migrate_config_file(config_file)
+    except Exception:
+        logging.getLogger(__name__).exception("config migration failed; using the file as-is")
+    try:
+        config = load_config(config_file)
     except ConfigError as exc:
         logging.getLogger(__name__).exception("config error")
         native.util.show_error(f"配置文件错误：\n{exc}")

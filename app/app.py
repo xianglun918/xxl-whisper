@@ -32,6 +32,7 @@ from app.config import (
     route_of,
     save_config,
     segmenter_limits,
+    take_pending_migration,
     with_overlay_mode,
 )
 from app.controls import Controls, ControlsDeps
@@ -720,6 +721,12 @@ class DictationApp:
             self._indicator.hide()  # the subtitle bar owns the screen from here
         else:
             self._indicator.flash("就绪：可以开始说话了", 2000)
+        # An upgraded config file is news the user needs once: which version it
+        # came from, which keys were renamed, and where the old copy lives.
+        migration = take_pending_migration()
+        if migration is not None:
+            self._indicator.flash(migration.describe(), 6000)
+            self._tray.notify(migration.describe(), title="配置已升级")
         if self._config.continuous:  # honour the persisted mode from last run
             # Deferred: launching while Windows is still bringing up the audio
             # endpoint made the stream fail to open, leaving the mode "on" but

@@ -20,6 +20,21 @@ APP_DIR_NAME: str = "xxl-whisper"
 
 log = logging.getLogger(__name__)
 
+#: On-disk config schema version. Bump it whenever a *stored* key changes
+#: meaning, and add the step to :func:`_migrate`. Absent in files written by
+#: builds that predate the stamp, which therefore read as version 1.
+CONFIG_VERSION: int = 2
+
+#: Keys older builds wrote that this build no longer writes, with what they map
+#: to. Their *values* were already honoured at load time (``legacy_default``);
+#: the rewrite is what finally removes the stale lines.
+RENAMED_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "vad_min_silence_ms": "live_min_silence_ms",
+        "vad_max_speech_ms": "live_max_speech_ms",
+    }
+)
+
 type ModelKind = Literal["sensevoice", "funasr_nano", "whisper_turbo"]
 
 #: Disfluency handling for the LLM-decoder model (Fun-ASR-Nano). verbatim keeps
@@ -389,6 +404,7 @@ def save_config(path: Path, config: Config) -> None:
     """Persist a Config as simple key = value TOML."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
+        f"config_version = {CONFIG_VERSION}",
         f"hotkey = {config.hotkey if isinstance(config.hotkey, int) else _quote(config.hotkey)}",
         f"hold_threshold_ms = {config.hold_threshold_ms}",
         f"mic = {_quote(config.mic)}",
@@ -428,6 +444,105 @@ def save_config(path: Path, config: Config) -> None:
         f"overlay_click_through = {str(config.overlay_click_through).lower()}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationReport:
+    """What :func:`migrate_config_file` did, for the log line and the startup notice."""
+
+    path: Path
+    from_version: int
+    to_version: int
+    backup_path: Path | None
+    renamed: tuple[tuple[str, str], ...]
+
+    def describe(self) -> str:
+        """One short Chinese sentence, safe to show in a tray/indicator flash."""
+        changed = "、".join(f"{old}→{new}" for old, new in self.renamed) or "无键名变更"
+        backup = f"，旧文件备份为 {self.backup_path.name}" if self.backup_path else ""
+        return f"配置已从 v{self.from_version} 升级到 v{self.to_version}（{changed}{backup}）"
+
+
+#: Zero or one report — a start migrates at most one file, and a stale report
+#: from an earlier migration in the same process must not be shown twice. A
+#: one-item list rather than a module global, so the writers below can mutate it
+#: without ``global`` (which both ruff and basedpyright flag as a smell).
+_pending_migration: list[MigrationReport] = []
+
+
+def take_pending_migration() -> MigrationReport | None:
+    """Pop the migration performed during this start, if any (read-once)."""
+    return _pending_migration.pop() if _pending_migration else None
+
+
+def migrate_config_file(path: Path) -> MigrationReport | None:
+    """Bring an old config file up to :data:`CONFIG_VERSION`, backing it up first.
+
+    Returns ``None`` when there is nothing to do — no file, already current, or
+    the file does not parse. An *invalid* file is deliberately left untouched:
+    rewriting it would either lose the user's mistake or silently paper over it,
+    and the normal ``ConfigError`` path is what tells them what is wrong.
+
+    The rewrite runs the parsed file through :func:`load_config` first, so every
+    legacy inference (``vad_*`` → ``live_*``, translate source, overlay/output
+    convergence) is applied by the same code that runs on every start, exactly
+    once, and the resulting file is a plain current-schema config.
+    """
+    if not path.exists():
+        return None
+    try:
+        original = path.read_text(encoding="utf-8")
+        raw = tomllib.loads(original)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        log.info("config migration: skipped, cannot read %s (%s)", path, exc)
+        return None
+    from_version = _declared_version(raw)
+    if from_version >= CONFIG_VERSION:
+        return None
+    try:
+        config = load_config(path)
+    except ConfigError as exc:
+        log.warning("config migration: skipped, %s is not valid (%s)", path, exc.reason)
+        return None
+    renamed = tuple((old, new) for old, new in RENAMED_KEYS.items() if old in raw)
+    try:
+        backup = _backup_config(path, from_version, original)
+        save_config(path, config)
+    except OSError as exc:
+        log.warning(
+            "config migration: could not rewrite %s (%s); left the old file in place", path, exc
+        )
+        return None
+    report = MigrationReport(
+        path=path,
+        from_version=from_version,
+        to_version=CONFIG_VERSION,
+        backup_path=backup,
+        renamed=renamed,
+    )
+    _pending_migration.clear()
+    _pending_migration.append(report)
+    log.info("config: %s", report.describe())
+    return report
+
+
+def _declared_version(raw: Mapping[str, object]) -> int:
+    """Return the schema version recorded in *raw*; 1 when absent (pre-stamp builds)."""
+    value = raw.get("config_version", 1)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return 1
+    return value
+
+
+def _backup_config(path: Path, from_version: int, original: str) -> Path:
+    """Write *original* beside the config as ``<name>.v<n>.bak``; never overwrite one."""
+    candidate = path.with_name(f"{path.name}.v{from_version}.bak")
+    suffix = 2
+    while candidate.exists():
+        candidate = path.with_name(f"{path.name}.v{from_version}.{suffix}.bak")
+        suffix += 1
+    candidate.write_text(original, encoding="utf-8")
+    return candidate
 
 
 class _Parser:
