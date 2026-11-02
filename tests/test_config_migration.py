@@ -22,6 +22,7 @@ from app.config import (
     ConfigError,
     load_config,
     migrate_config_file,
+    save_config,
     take_pending_migration,
 )
 
@@ -156,3 +157,15 @@ def test_report_describes_what_happened(tmp_path: Path) -> None:
     assert "vad_max_speech_ms→live_max_speech_ms" in text
     assert report.backup_path is not None
     assert report.backup_path.name in text
+
+
+def test_save_config_leaves_no_partial_file(tmp_path: Path) -> None:
+    """写配置必须"先写临时文件再改名"：迁移在启动时改用户的文件，写一半就退出会留坏 TOML。"""
+    path = tmp_path / "config.toml"
+
+    save_config(path, load_config(_legacy(tmp_path, LEGACY_V1)))
+
+    assert path.exists()
+    assert not list(tmp_path.glob("*.tmp")), "临时文件必须在改名后消失"
+    reparsed = load_config(path)
+    assert reparsed.live_max_speech_ms == 4000

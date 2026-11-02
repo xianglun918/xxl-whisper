@@ -443,7 +443,13 @@ def save_config(path: Path, config: Config) -> None:
         f"partial_subtitle_ms = {config.partial_subtitle_ms}",
         f"overlay_click_through = {str(config.overlay_click_through).lower()}",
     ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    payload = "\n".join(lines) + "\n"
+    # Write-then-rename: `migrate_config_file` rewrites a user's config during
+    # startup, and a crash between truncate and write used to leave a half-written
+    # file — i.e. the next launch would refuse to start with a TOML error.
+    staging = path.with_name(path.name + ".tmp")
+    staging.write_text(payload, encoding="utf-8")
+    staging.replace(path)
 
 
 @dataclass(frozen=True, slots=True)
