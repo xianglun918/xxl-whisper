@@ -366,7 +366,6 @@ def test_uia_delivery_restores_the_clipboard_immediately(
     monkeypatch.setattr(native.io, "keyboard_injection_alive", lambda: False)
     monkeypatch.setattr(native.io, "clipboard_has_non_text", lambda: False)
     board = _stateful_clipboard(monkeypatch, "USER_ORIGINAL")
-    monkeypatch.setattr(native.io, "append_text", lambda _text: None)
     monkeypatch.setattr(native.uia, "probe_focused", lambda: SimpleNamespace(writable=True))
     monkeypatch.setattr(native.uia, "append_text", lambda _text: None)
 

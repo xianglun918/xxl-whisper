@@ -26,8 +26,10 @@ from app.config import (
 )
 
 #: What a 0.7-era build wrote: retired ``vad_*`` keys, no ``config_version``.
+#: ``hotkey`` 用原始 VK 整数而不是预设名：预设表是分平台的（macOS 默认右 Command，
+#: 根本没有 CapsLock 这个键），写预设名会让这组用例在 macOS 上以 ConfigError 失败。
 LEGACY_V1 = """\
-hotkey = "caps_lock"
+hotkey = 113
 hold_threshold_ms = 400
 mic = ""
 num_threads = 2
@@ -94,7 +96,7 @@ def test_a_tuned_legacy_value_survives_the_rename(tmp_path: Path) -> None:
 
 def test_current_file_is_left_untouched(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    original = f'config_version = {CONFIG_VERSION}\nhotkey = "caps_lock"\n'
+    original = f"config_version = {CONFIG_VERSION}\nhotkey = 113\n"
     path.write_text(original, encoding="utf-8")
 
     assert migrate_config_file(path) is None
@@ -111,7 +113,7 @@ def test_missing_file_is_not_created(tmp_path: Path) -> None:
 
 def test_invalid_file_is_left_alone(tmp_path: Path) -> None:
     """坏文件不能被我改写——让正常的 ConfigError 路径去告诉用户哪里错了。"""
-    broken = 'hotkey = "caps_lock"\nnum_threads = "many"\n'
+    broken = 'hotkey = 113\nnum_threads = "many"\n'
     path = _legacy(tmp_path, broken)
 
     assert migrate_config_file(path) is None
