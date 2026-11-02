@@ -38,6 +38,12 @@ jobs:
 
   build:
     needs: gates
+    # 预发布允许门禁红也出包（仅给维护者真机验证用），说明里会强制带上红色告警；
+    # 稳定版仍然必须 gates 全绿。
+    if: >-
+      always() &&
+      (needs.gates.result == 'success' ||
+       (github.event_name == 'push' && contains(github.ref_name, '-')))
     strategy:
       fail-fast: false
       matrix:
@@ -68,7 +74,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [gates, build]
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -87,6 +94,9 @@ jobs:
           ls -l ./*.sha256
       - name: Resolve release metadata (prerelease flag + notes source)
         id: meta
+        env:
+          GATE_RESULT: ${{ needs.gates.result }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           set -eu
           tag="$GITHUB_REF_NAME"
@@ -97,8 +107,19 @@ jobs:
             *)   echo "flags=" >> "$GITHUB_OUTPUT" ;;
           esac
           # 手写说明优先：docs/releases/<tag>.md；没有就让 GitHub 按 commit 生成。
-          if [ -f "docs/releases/$tag.md" ]; then
-            echo "notes=--notes-file docs/releases/$tag.md" >> "$GITHUB_OUTPUT"
+          notes_src=""
+          if [ -f "docs/releases/$tag.md" ]; then notes_src="docs/releases/$tag.md"; fi
+          # 门禁红了还敢发包的唯一情况：预发布。必须把这件事写进正文，不能悄悄发。
+          if [ "$GATE_RESULT" != "success" ]; then
+            {
+              echo "> ⚠️ **本次门禁未通过**：\`pytest -m \"not integration\"\` 在 CI 上是红的。"
+              echo "> 这个包只是给维护者真机验证用的预览，**不要当稳定版使用**。"
+              echo
+              if [ -n "$notes_src" ]; then cat "$notes_src"; else echo "（无手写发版说明）"; fi
+            } > /tmp/release-notes.md
+            echo "notes=--notes-file /tmp/release-notes.md" >> "$GITHUB_OUTPUT"
+          elif [ -n "$notes_src" ]; then
+            echo "notes=--notes-file $notes_src" >> "$GITHUB_OUTPUT"
           else
             echo "notes=--generate-notes" >> "$GITHUB_OUTPUT"
           fi
