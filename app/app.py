@@ -8,12 +8,11 @@ around them. Tray-driven control actions live in app.controls.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import queue
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, assert_never
 
@@ -21,7 +20,6 @@ import numpy as np
 
 from app import __version__, logsafe, native
 from app.asr import Recognizer
-from app.audio_flow import plan_recovery
 from app.config import (
     MOUSE_VKS,
     Config,
@@ -35,13 +33,15 @@ from app.config import (
     take_pending_migration,
     with_overlay_mode,
 )
-from app.controls import Controls, ControlsDeps
-from app.decode_scheduler import (
-    FinishedBatch,
-    LatestSlot,
-    PartialCadence,
-    within_partial_ceiling,
+from app.continuous import (
+    COMMIT_FLASH_MS,
+    COMMIT_TEXT,
+    LISTEN_TEXT,
+    ContinuousSession,
+    SessionLimits,
+    SessionPorts,
 )
+from app.controls import Controls, ControlsDeps
 from app.downloader import (
     DownloadError,
     ensure_model,
@@ -62,7 +62,7 @@ from app.hotkey_logic import (
     push_to_talk_active,
 )
 from app.menu_spec import TrayCallbacks, TrayState
-from app.partial import SubtitleGate, level_from_block, new_text_or_none, truncate_partial
+from app.partial import SubtitleGate
 from app.recorder import Recorder
 from app.translator import (
     TranslationError,
@@ -74,35 +74,14 @@ from app.translator import (
 from app.tray import Tray
 from app.type_batcher import TypeBatcher
 from app.update_flow import UpdateFlow, UpdateFlowDeps
-from app.vad import SAMPLE_RATE, Segmenter, VadSettings
 
 log = logging.getLogger(__name__)
 
 _VK_DISABLED: int = 0
 
-#: Bounded continuous-capture queue: the audio callback drops the oldest block
-#: when this fills, so a slow decode can never stall the microphone stream.
-_CONTINUOUS_QUEUE_MAX: int = 128
-
-#: Bounded finished-sentence queue: the VAD thread drops the oldest batch when
-#: the decoder lags, so a slow model can never make memory grow without limit.
-_DECODE_QUEUE_MAX: int = 16
-
-#: How long the decode thread blocks for a finished batch before it considers a
-#: live partial; small so an endpoint is picked up promptly.
-_DECODE_POLL_S: float = 0.05
-
 #: Bounded finished-sentence queue between ASR and translation. Deep enough to
 #: absorb a burst, shallow enough that stale subtitles are dropped, not queued.
 _EMIT_QUEUE_MAX: int = 64
-
-#: Sticky pill shown while continuous mode is listening.
-_LISTEN_TEXT: str = "● 聆听中"
-#: Confirmation flashed at each endpoint before returning to listening.
-_COMMIT_TEXT: str = "✓ 已上屏"
-_COMMIT_FLASH_MS: int = 900
-#: Minimum gap between live partial decodes; a slower decode simply slips.
-_PARTIAL_INTERVAL_S: float = 0.35
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,28 +167,18 @@ type WorkerMsg = (
 )
 
 
-def _offer_finished(sink: queue.Queue[FinishedBatch], batch: FinishedBatch) -> None:
-    """Enqueue a finished batch, dropping the oldest when the decoder lags.
-
-    The decode queue is bounded so a slow decoder can never make memory grow
-    without limit; the newest sentence is the one the user most wants, so the
-    oldest pending batch is sacrificed and the drop is logged.
-    """
-    try:
-        sink.put_nowait(batch)
-    except queue.Full:
-        with contextlib.suppress(queue.Empty):
-            dropped = sink.get_nowait()
-            log.warning(
-                "continuous: decode queue full; dropped %d finished segment(s)",
-                len(dropped.segments),
-            )
-        with contextlib.suppress(queue.Full):
-            sink.put_nowait(batch)
-
-
 class DictationApp:
     """Owns every component; ``run()`` blocks until the user exits the tray."""
+
+    @property
+    def _continuous(self) -> bool:
+        """True while a live transcript session owns the microphone.
+
+        The session is the single source of truth: there is no second boolean to
+        fall out of sync with the threads it describes.
+        """
+        session = self._session
+        return session is not None and session.running
 
     def __init__(self, config: Config) -> None:
         self._config = config
@@ -234,24 +203,18 @@ class DictationApp:
         self._hold_confirm_timer: threading.Timer | None = None
         self._model_downloaded = False
         self._model_ready = False
-        self._continuous = False
-        self._continuous_thread: threading.Thread | None = None
-        self._decode_thread: threading.Thread | None = None
+
         #: Finished sentences waiting for translation/typing. Keeps the decode
         #: thread free: ASR must never queue behind a slow translation.
         self._emit_queue = EmitQueue(maxsize=_EMIT_QUEUE_MAX)
         self._emit_thread: threading.Thread | None = None
         self._worker_thread: threading.Thread | None = None
         self._started_at: float = time.monotonic()
-        self._segment_max_speech_s: float = 4.0
         #: Glues force-cut ASR pieces back into whole sentences for typing.
         self._batcher = TypeBatcher()
-        self._partial_thread: threading.Thread | None = None
-        self._continuous_queue: queue.Queue[np.ndarray] | None = None
-        self._decode_queue: queue.Queue[FinishedBatch] | None = None
-        self._partial_slot: LatestSlot[np.ndarray] | None = None
-        self._partial_cadence: PartialCadence | None = None
-        self._vad_done: threading.Event | None = None
+        #: The live transcript, when 持续听写 is on. Threads, queues and their
+        #: join order live inside it; the app only ever sees start/stop/running.
+        self._session: ContinuousSession | None = None
         self._stop_event = threading.Event()
         self._tray = Tray(
             callbacks=TrayCallbacks(
@@ -441,8 +404,9 @@ class DictationApp:
             on_stream_error=lambda msg: log.warning("%s", msg),
             source=self._config.audio_source,
         )
-        if self._continuous and self._continuous_queue is not None:
-            self._recorder.start_sink(self._continuous_queue)  # keep the mode alive
+        session = self._session
+        if session is not None:
+            session.reconnect()  # keep the live transcript on the new device
         return self._recorder
 
     def _show_diagnostics(self) -> None:
@@ -527,7 +491,7 @@ class DictationApp:
             if paused:
                 self._indicator.hide()
             else:
-                self._indicator.listen(_LISTEN_TEXT)
+                self._indicator.listen(LISTEN_TEXT)
         log.info("paused=%s", paused)
 
     def _handle(self, action: Action) -> None:
@@ -961,7 +925,7 @@ class DictationApp:
         translated, attempted = self._translate(text)
         self._present(text, translated)
         if self._overlay_only():
-            self._indicator.flash(_COMMIT_TEXT, _COMMIT_FLASH_MS)
+            self._indicator.flash(COMMIT_TEXT, COMMIT_FLASH_MS)
             return None
         return emit_text(
             self._payload(text, translated, attempted=attempted),
@@ -1025,11 +989,12 @@ class DictationApp:
             self._stop_continuous()
         else:
             self._start_continuous()
-            self._watch_audio_flow()  # a busy endpoint looks identical to a working one
+            # The session owns its own audio watchdog: it reports "confirmed" or
+            # "never started" through the ports, so nothing is left to verify here.
         self._tray.refresh_menu()  # pystray caches the menu; re-render the check
 
     def _start_continuous(self) -> None:
-        """Lazily fetch the VAD model and start the always-on segment loop.
+        """Fetch the VAD model, then hand the session its limits and ports.
 
         Runs on the worker thread. A download failure is reported like a model
         download (manual guide) and re-raised so the worker's generic handler
@@ -1041,7 +1006,13 @@ class DictationApp:
         # Subtitle mode force-cuts every few seconds; typing-only keeps long,
         # complete utterances (a cut mid-word corrupts the typed sentence).
         min_silence_ms, max_speech_ms = segmenter_limits(self._config)
-        self._segment_max_speech_s = max_speech_ms / 1000
+        limits = SessionLimits(
+            min_silence_ms=min_silence_ms,
+            max_speech_ms=max_speech_ms,
+            threshold=self._config.vad_threshold,
+            min_speech_ms=self._config.vad_min_speech_ms,
+            num_threads=self._config.num_threads,
+        )
         self._batcher = TypeBatcher(
             window_s=self._config.typing_merge_ms / 1000,
             max_chars=self._config.typing_merge_chars,
@@ -1067,90 +1038,33 @@ class DictationApp:
             guide = manual_download_guide("vad", models_root())
             native.util.show_info(f"VAD 模型自动下载失败：{exc.reason}\n\n{guide}")
             raise
-        segmenter = Segmenter(
-            VadSettings(
-                model_path=vad_path,
-                threshold=self._config.vad_threshold,
-                min_speech_s=self._config.vad_min_speech_ms / 1000,
-                min_silence_s=min_silence_ms / 1000,
-                max_speech_s=max_speech_ms / 1000,
-                num_threads=self._config.num_threads,
-            )
+        session = ContinuousSession(
+            vad_path=vad_path, limits=limits, ports=self._session_ports()
         )
-        blocks: queue.Queue[np.ndarray] = queue.Queue(maxsize=_CONTINUOUS_QUEUE_MAX)
-        self._continuous_queue = blocks
-        self._decode_queue = queue.Queue(maxsize=_DECODE_QUEUE_MAX)
-        self._partial_slot = LatestSlot()
-        self._partial_cadence = PartialCadence(_PARTIAL_INTERVAL_S)
-        self._vad_done = threading.Event()
-        if self._recorder is not None:
-            self._recorder.start_sink(blocks)
-        self._continuous = True
-        self._set_hooks_armed()  # disarmed: the key stays native, presses ignored
-        # Three threads, so no role can stall another: the VAD consumer stays
-        # real-time (never decodes), the finished-sentence decoder always wins,
-        # and the live partial runs on its own thread so an in-flight partial
-        # (up to ~1 s on Fun-ASR-Nano) can never delay an endpoint's text.
-        self._continuous_thread = threading.Thread(
-            target=self._continuous_loop,
-            args=(segmenter, blocks),
-            daemon=True,
-            name="continuous-vad",
-        )
-        self._decode_thread = threading.Thread(
-            target=self._decode_loop,
-            args=(self._decode_queue, self._vad_done),
-            daemon=True,
-            name="continuous-decode",
-        )
-        self._partial_thread = threading.Thread(
-            target=self._partial_loop,
-            args=(self._partial_slot, self._partial_cadence),
-            daemon=True,
-            name="continuous-partial",
-        )
-        self._continuous_thread.start()
-        self._decode_thread.start()
-        self._partial_thread.start()
+        session.start()
+        self._session = session
         self._persist_continuous(enabled=True)
+        self._set_hooks_armed()  # disarmed: the key stays native, presses ignored
         if self._subtitles():
             self._indicator.hide()  # the subtitle bar carries the state instead
         else:
-            self._indicator.flash_listen("持续听写已开启", _LISTEN_TEXT, 1500)
+            self._indicator.flash_listen("持续听写已开启", LISTEN_TEXT, 1500)
         log.info("continuous: on")
 
     def _stop_continuous(self) -> None:
+        """Stop the session, then hand the microphone back to push-to-talk."""
         self._flush_typing()
-        """Stop the segment loop, release the microphone, restore push-to-talk."""
-        self._continuous = False
-        if self._recorder is not None:
-            self._recorder.stop_sink()
-        # Join the VAD thread first: its final flush queues the last utterance
-        # for the decoder, which then drains it before exiting.
-        vad_thread = self._continuous_thread
-        if vad_thread is not None:
-            vad_thread.join(timeout=2)
-        decode_thread = self._decode_thread
-        if decode_thread is not None:
-            decode_thread.join(timeout=2)
-        partial_thread = self._partial_thread
-        if partial_thread is not None:
-            partial_thread.join(timeout=2)
-        self._continuous_thread = None
-        self._decode_thread = None
-        self._partial_thread = None
-        self._continuous_queue = None
-        self._decode_queue = None
-        self._partial_slot = None
-        self._partial_cadence = None
-        self._vad_done = None
+        session = self._session
+        self._session = None
+        if session is not None:
+            session.stop()
         self._persist_continuous(enabled=False)
         self._set_hooks_armed()
         self._indicator.hide()  # leave live mode; the pulse loop is cancelled
         log.info("continuous: off")
 
     def _resume_continuous(self) -> None:
-        """Auto-start continuous dictation from the persisted mode, then verify it."""
+        """Auto-start continuous dictation from the persisted mode."""
         if self._continuous or self._stop_event.is_set():
             return
         log.info("startup: resuming continuous dictation")
@@ -1161,306 +1075,47 @@ class DictationApp:
             self._persist_continuous(enabled=False)
             self._tray.refresh_menu()
             self._indicator.flash("持续听写启动失败（详见日志）", 4000)
-            return
-        self._watch_audio_flow()
 
-    def _watch_audio_flow(self) -> None:
-        """Prove audio is actually arriving; recover once, then fail loudly.
+    def _session_ports(self) -> SessionPorts:
+        """Wire the session to the app without handing it the app itself."""
+        return SessionPorts(
+            stop_event=self._stop_event,
+            recognizer=lambda: self._recognizer,
+            indicator=self._indicator,
+            emit_queue=self._emit_queue,
+            subtitles=self._subtitles,
+            paused=lambda: self._paused,
+            on_partial_text=self._offer_partial_subtitle,
+            on_audio_confirmed=self._tray.refresh_menu,
+            on_audio_never_started=self._on_audio_never_started,
+            start_sink=self._start_capture_sink,
+            stop_sink=self._stop_capture_sink,
+            blocks_delivered=self._blocks_delivered,
+        )
 
-        Symptom this fixes: the switch showed ON after a restart but nothing was
-        transcribed until it was toggled off and on. The stream can fail to open
-        while the audio endpoint is still initialising, and a silent stream looks
-        exactly like a healthy one from the outside.
-        """
+    def _start_capture_sink(self, blocks: queue.Queue[np.ndarray]) -> None:
+        if self._recorder is not None:
+            self._recorder.start_sink(blocks)
+
+    def _stop_capture_sink(self) -> None:
+        if self._recorder is not None:
+            self._recorder.stop_sink()
+
+    def _blocks_delivered(self) -> int:
         recorder = self._recorder
-        sink = self._continuous_queue
-        if recorder is None or sink is None:
-            return
-        baseline = recorder.blocks_delivered
+        return 0 if recorder is None else recorder.blocks_delivered
 
-        def watch() -> None:
-            reopens = 0
-            while not self._stop_event.is_set():
-                deadline = time.monotonic() + 5.0
-                while time.monotonic() < deadline:
-                    if not self._continuous:
-                        return
-                    verdict = plan_recovery(
-                        blocks=recorder.blocks_delivered,
-                        baseline=baseline,
-                        reopens_done=reopens,
-                    )
-                    if verdict == "ok":
-                        log.info(
-                            "continuous: audio confirmed (%d blocks)",
-                            recorder.blocks_delivered - baseline,
-                        )
-                        self._tray.refresh_menu()
-                        return
-                    time.sleep(0.25)
-                verdict = plan_recovery(
-                    blocks=recorder.blocks_delivered,
-                    baseline=baseline,
-                    reopens_done=reopens,
-                )
-                if verdict == "ok":
-                    continue
-                if verdict == "give-up":
-                    break
-                reopens += 1
-                log.warning("continuous: no audio after 5s — reopening the stream")
-                with contextlib.suppress(Exception):
-                    recorder.stop_sink()
-                    recorder.start_sink(sink)
-            # Still silent: do not leave a switch that lies about working.
-            log.error("continuous: audio never started; turning the mode off")
-            with contextlib.suppress(Exception):
-                self._stop_continuous()
-            self._persist_continuous(enabled=False)
-            self._tray.refresh_menu()
-            self._tray.notify("持续听写没能启动（麦克风/系统声音未就绪），已自动关闭")
-            self._indicator.flash("音频没起来，已关闭持续听写；可再点一次开启", 5000)
-
-        threading.Thread(target=watch, daemon=True, name="audio-watchdog").start()
+    def _on_audio_never_started(self) -> None:
+        """Close the switch so it never lies about working."""
+        self._stop_continuous()
+        self._tray.refresh_menu()
+        self._tray.notify("持续听写没能启动（麦克风/系统声音未就绪），已自动关闭")
+        self._indicator.flash("音频没起来，已关闭持续听写；可再点一次开启", 5000)
 
     def _persist_continuous(self, *, enabled: bool) -> None:
         """Remember the mode so a restart resumes it (mirrors 语义顺滑)."""
         if self._config.continuous != enabled:
             self._set_config(replace(self._config, continuous=enabled))
-
-    def _continuous_loop(
-        self, segmenter: Segmenter, blocks: queue.Queue[np.ndarray]
-    ) -> None:
-        """Daemon thread: feed the VAD and publish partials; never decode.
-
-        This is the responsiveness-critical path. It consumes audio blocks, runs
-        the VAD, hands finished segments to the decode queue, and — only when a
-        partial is actually due — snapshots the VAD's own in-progress segment
-        (the exact audio that will become the finished sentence, onset
-        included) into the single-slot holder. It performs no decoding at all,
-        so a slow model (Fun-ASR-Nano) can neither stall the VAD feed nor delay
-        endpointing: the pause is detected on time and the sentence is emitted
-        by the decode thread the moment it is decoded.
-        """
-        decode_queue = self._decode_queue
-        slot = self._partial_slot
-        cadence = self._partial_cadence
-        vad_done = self._vad_done
-        skipped_partials = 0
-        while self._continuous and not self._stop_event.is_set():
-            try:
-                block = blocks.get(timeout=0.2)
-            except queue.Empty:
-                continue
-            # A transient failure (clipboard contention, a UIA element that went
-            # away mid-focus-change, a decode hiccup) must never kill this
-            # long-lived thread: continuous dictation has no restart path, so an
-            # escaped exception would silently wedge the mode until the user
-            # toggles it off and on again.
-            try:
-                self._indicator.level(level_from_block(block))
-                segmenter.accept(block)
-                samples = self._due_partial(segmenter, slot, cadence)
-                if samples is not None:
-                    self._publish_partial(slot, samples)
-                elif slot is not None and slot.has_value():
-                    skipped_partials += 1  # a snapshot was already pending
-                segments = segmenter.drain()
-                if segments:  # endpoint: the utterance is complete
-                    self._finish_utterance(slot, decode_queue, segments)
-            except Exception:
-                log.exception("continuous: block processing failed; loop continues")
-        self._flush_segments(segmenter, decode_queue)
-        if vad_done is not None:
-            vad_done.set()  # tells the decoder to drain the tail and exit
-        log.info(
-            "continuous: vad loop exited (deferred %d pending partials)", skipped_partials
-        )
-
-    def _due_partial(
-        self,
-        segmenter: Segmenter,
-        slot: LatestSlot[np.ndarray] | None,
-        cadence: PartialCadence | None,
-    ) -> np.ndarray | None:
-        """Snapshot the in-progress utterance only when a partial is due.
-
-        The VAD loop used to copy the whole growing utterance on every speech
-        block (O(N²) memcpy). Here the cheap O(1) length gate, the single-slot
-        emptiness check, and the shared adaptive cadence all run *before* the
-        O(N) copy, so the copy is paid only when the pill is about to refresh.
-        Decodes the VAD's own in-progress segment, never an ad-hoc buffer: the
-        VAD flips "speech detected" only after buffering the onset, so
-        accumulating raw blocks would drop the start of the utterance and the
-        partial would not match the insert. Returns ``None`` when no partial is
-        due (paused, already pending, in flight, or past the preview ceiling).
-        """
-        if slot is None or cadence is None or self._paused:
-            return None
-        if slot.has_value():  # a snapshot is already pending; do not re-copy
-            return None
-        duration_s = segmenter.current_sample_count() / SAMPLE_RATE
-        if not within_partial_ceiling(duration_s):
-            return None
-        if not cadence.should_publish(time.monotonic(), paused=self._paused):
-            return None
-        return segmenter.current_samples()
-
-    def _publish_partial(
-        self, slot: LatestSlot[np.ndarray] | None, samples: np.ndarray
-    ) -> bool:
-        """Publish the newest in-progress samples; True when one was superseded."""
-        if slot is None or self._paused:
-            return False
-        return slot.publish(samples)
-
-    def _finish_utterance(
-        self,
-        slot: LatestSlot[np.ndarray] | None,
-        decode_queue: queue.Queue[FinishedBatch] | None,
-        segments: Sequence[np.ndarray],
-    ) -> None:
-        """Endpoint: drop the stale snapshot and queue the sentence for decoding.
-
-        Resets the partial cadence too, so the next utterance starts from a
-        fresh caption and cadence (the partial thread clears its last caption on
-        the generation bump).
-        """
-        if slot is not None:
-            slot.clear()
-        cadence = self._partial_cadence
-        if cadence is not None:
-            cadence.reset(time.monotonic())
-        if decode_queue is not None and not self._paused:
-            _offer_finished(
-                decode_queue,
-                FinishedBatch(endpoint_ts=time.monotonic(), segments=tuple(segments)),
-            )
-
-    def _flush_segments(
-        self,
-        segmenter: Segmenter,
-        decode_queue: queue.Queue[FinishedBatch] | None,
-    ) -> None:
-        """End the VAD stream and queue whatever tail it releases for decoding."""
-        try:
-            segmenter.flush()
-            final = segmenter.drain()
-        except Exception:
-            log.exception("continuous: final flush failed")
-            return
-        if final:
-            self._finish_utterance(None, decode_queue, final)
-
-    def _decode_loop(
-        self,
-        decode_queue: queue.Queue[FinishedBatch],
-        vad_done: threading.Event,
-    ) -> None:
-        """Daemon thread: decode finished sentences, and only finished sentences.
-
-        This thread never touches the live partial — the partial runs on
-        ``continuous-partial`` — so an endpoint's sentence is decoded the moment
-        the VAD queues it, never waiting behind a partial decode already in
-        flight (up to ~1 s on Fun-ASR-Nano). The recognizer is re-read per
-        decode (it may be swapped, or briefly ``None`` mid-swap, when the path
-        simply skips).
-        """
-        finished_segments = 0
-        while True:
-            try:
-                batch = decode_queue.get(timeout=_DECODE_POLL_S)
-            except queue.Empty:
-                batch = None
-            if batch is not None:
-                emitted = self._insert_segments(
-                    batch.segments, endpoint_ts=batch.endpoint_ts
-                )
-                finished_segments += len(batch.segments)
-                if emitted and not self._subtitles():
-                    self._indicator.flash_listen(
-                        _COMMIT_TEXT, _LISTEN_TEXT, _COMMIT_FLASH_MS
-                    )
-                continue
-            if vad_done.is_set():
-                break
-        log.info(
-            "continuous: decode loop exited (finished segments=%d)", finished_segments
-        )
-
-    def _partial_loop(
-        self,
-        slot: LatestSlot[np.ndarray],
-        cadence: PartialCadence,
-    ) -> None:
-        """Daemon thread: refresh the live pill at the adaptive cadence.
-
-        Separate from the finished-sentence decoder so a slow partial decode can
-        never delay an endpoint's text. It decodes exactly what the VAD
-        published — the full in-progress utterance from
-        :meth:`~app.vad.Segmenter.current_samples`, never a slice — so the pill
-        stays a faithful preview of the sentence that will be inserted. Each
-        decode's duration feeds the shared cadence, which the VAD loop reads
-        before paying for the next O(N) snapshot.
-        """
-        last_partial_text = ""
-        seen_generation = cadence.generation()
-        partials = 0
-        while self._continuous and not self._stop_event.is_set():
-            if self._paused:
-                time.sleep(_DECODE_POLL_S)
-                continue
-            generation = cadence.generation()
-            if generation != seen_generation:
-                seen_generation = generation
-                last_partial_text = ""  # endpoint boundary: next utterance is fresh
-            snapshot = slot.take()
-            if snapshot is None:
-                time.sleep(_DECODE_POLL_S)
-                continue
-            started = time.monotonic()
-            cadence.mark_start(started)
-            try:
-                shown = self._show_partial(snapshot, last_partial_text)
-            except Exception:
-                # A transient native decode failure must not wedge the cadence
-                # (mark_end must still run) nor kill this long-lived thread.
-                log.exception("continuous: partial decode failed; continuing")
-                shown = None
-            finally:
-                duration = time.monotonic() - started
-                cadence.mark_end(duration)
-            log.info("continuous: partial decode %.3f s", duration)
-            if shown is not None:
-                last_partial_text = shown
-                partials += 1
-        log.info("continuous: partial loop exited (partials decoded=%d)", partials)
-
-    def _show_partial(self, samples: np.ndarray, previous: str) -> str | None:
-        """Decode the in-progress samples and refresh the pill; return the caption.
-
-        Runs on the decode thread only, so a slow partial decode never blocks the
-        VAD. *samples* is the VAD's own current segment — the audio that will
-        become the finished sentence — so the caption is a faithful preview of
-        the text that will be inserted. Returns the caption now shown, or
-        ``None`` when there was nothing new to show (empty decode, or the same
-        caption as the last frame — so the pill cannot flicker).
-        """
-        recognizer = self._recognizer
-        if recognizer is None:
-            return None
-        text = recognizer.transcribe(samples)
-        if not text:
-            return None
-        shown = new_text_or_none(previous, truncate_partial(text))
-        if shown is None:
-            return None
-        # With the subtitle bar on, the pill would just duplicate the caption
-        # one line higher — keep it quiet and let the bar do the talking.
-        if not self._subtitles():
-            self._indicator.update(f"● {shown}")
-        self._offer_partial_subtitle(text)
-        return shown
 
     def _offer_partial_subtitle(self, text: str) -> None:
         """Translate the still-being-spoken sentence and show it as a preview.
@@ -1484,48 +1139,6 @@ class DictationApp:
         log.info(
             "partial subtitle: %d chars translated=%s", len(offered), bool(translated)
         )
-
-    def _insert_segments(
-        self,
-        segments: Sequence[np.ndarray],
-        *,
-        endpoint_ts: float | None = None,
-    ) -> int:
-        """Decode and emit each finished segment; returns how many were emitted.
-
-        Runs on the decode thread, which prioritises these finished sentences
-        over live partials. Each segment is isolated: a single failed decode or
-        emit is logged and skipped so the remaining sentences still land and the
-        loop survives. ``endpoint_ts`` (when the VAD saw the pause) turns each
-        successful emit into an endpoint→emit latency line in ``app.log``.
-        """
-        emitted = 0
-        for samples in segments:
-            if self._stop_event.is_set() or self._paused:
-                return emitted
-            try:
-                recognizer = self._recognizer
-                if recognizer is None:
-                    continue
-                log.info("continuous: segment %.2f s", samples.shape[0] / 16_000)
-                started = time.monotonic()
-                text = recognizer.transcribe(samples)
-                log.info("continuous: decode %.3f s", time.monotonic() - started)
-                if not text:
-                    continue
-                log.info("continuous asr: %s", logsafe.describe_text(text))
-                asr_done = time.monotonic()
-                if endpoint_ts is not None:
-                    log.info("continuous: endpoint→asr %.3f s", asr_done - endpoint_ts)
-                seconds = samples.shape[0] / SAMPLE_RATE
-                forced = seconds >= self._segment_max_speech_s - 0.15
-                if not self._emit_queue.submit(text, endpoint_ts=endpoint_ts, forced=forced):
-                    log.info("continuous: emit queue full, dropped an older sentence")
-            except Exception:
-                log.exception("continuous: segment decode failed; continuing")
-                continue
-            emitted += 1
-        return emitted
 
     def _emit_loop(self) -> None:
         """Daemon thread: subtitles per piece, typing per whole sentence.
@@ -1666,15 +1279,10 @@ class DictationApp:
         self._stop_event.set()
         self._cancel_hold_confirm()
         self._updates.stop()
-        self._continuous = False
-        if self._recorder is not None:
-            self._recorder.stop_sink()
-        if self._continuous_thread is not None:
-            self._continuous_thread.join(timeout=2)
-        if self._decode_thread is not None:
-            self._decode_thread.join(timeout=2)
-        if self._partial_thread is not None:
-            self._partial_thread.join(timeout=2)
+        session = self._session
+        self._session = None
+        if session is not None:
+            session.stop()  # detaches the sink and joins the workers, in order
         if self._hook is not None:
             self._hook.set_armed(False)
             self._hook.stop()
