@@ -12,6 +12,7 @@ Two things are pinned here:
 from dataclasses import fields, replace
 from types import SimpleNamespace
 
+import pytest
 from app.keycodes import DEFAULT_HOTKEY
 from app.menu_spec import (
     Entry,
@@ -63,6 +64,22 @@ _CONFIG_ALIASES = {
     "overlay": "overlay_enabled",
 }
 
+#: Every keyword the helper may route into the config object.
+_CONFIG_FIELDS = frozenset(
+    {
+        "mic",
+        "audio_source",
+        "translate",
+        "translate_source",
+        "translate_target",
+        "disfluency",
+        "model",
+        "hotkey",
+        "overlay_enabled",
+        "overlay_output",
+    }
+)
+
 
 def _make_config(**overrides: object) -> SimpleNamespace:
     """Stand-in for the config: only the attributes the menu actually reads."""
@@ -108,13 +125,26 @@ def _state(**overrides: object) -> TrayState:
         elif key == "current_system_audio":
             config["mic"] = value
         else:
-            config[_CONFIG_ALIASES.get(key, key)] = value
+            name = _CONFIG_ALIASES.get(key, key)
+            if name not in _CONFIG_FIELDS:
+                # A misspelled keyword used to land silently on the config object,
+                # so the test kept passing while asserting nothing (a `replace()`
+                # call raised TypeError; this helper must not be weaker).
+                reason = f"unknown state/config field {key!r}"
+                raise TypeError(reason)
+            config[name] = value
     base = (
         SimpleNamespace(**{**vars(BASE_STATE.config), **config})
         if config
         else BASE_STATE.config
     )
     return replace(BASE_STATE, config=base, **state)  # type: ignore[arg-type]
+
+
+def test_a_misspelled_override_fails_loudly() -> None:
+    """The helper must not quietly swallow a typo into the config object."""
+    with pytest.raises(TypeError):
+        _state(transalte=False)
 
 
 class Live:
