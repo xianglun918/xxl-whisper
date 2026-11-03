@@ -9,7 +9,8 @@ Two things are pinned here:
   menu kept showing the old state after a switch was flipped.
 """
 
-from dataclasses import replace
+from dataclasses import fields, replace
+from types import SimpleNamespace
 
 from app.keycodes import DEFAULT_HOTKEY
 from app.menu_spec import (
@@ -18,6 +19,7 @@ from app.menu_spec import (
     TrayCallbacks,
     TrayState,
     build_menu,
+    current_route,
     input_label,
     output_hint,
     output_label,
@@ -50,29 +52,69 @@ def _callbacks() -> TrayCallbacks:
     )
 
 
+#: Runtime-only fields now: everything else lives in the config object below.
+_STATE_FIELDS = frozenset({"ready", "paused", "continuous", "autostart", "translator_ready"})
+
+#: Old flat names, kept so the tests below read the same way.
+_CONFIG_ALIASES = {
+    "current_mic": "mic",
+    "current_hotkey": "hotkey",
+    "current_model": "model",
+    "overlay": "overlay_enabled",
+}
+
+
+def _make_config(**overrides: object) -> SimpleNamespace:
+    """Stand-in for the config: only the attributes the menu actually reads."""
+    base: dict[str, object] = {
+        "mic": "",
+        "audio_source": "system",
+        "translate": True,
+        "translate_source": "ja",
+        "translate_target": "zh",
+        "disfluency": "verbatim",
+        "model": "sensevoice",
+        # 平台默认键，不是写死的 Windows CapsLock：mac 默认是右 Command，
+        # 写死会让热键那一组的勾选断言在 mac 上必然是 0 个 tick。
+        "hotkey": DEFAULT_HOTKEY,
+        "overlay_enabled": True,
+        "overlay_output": "both",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
 BASE_STATE = TrayState(
+    config=_make_config(mic="Speakers (Realtek)"),
     ready=True,
     paused=False,
-    autostart=False,
-    current_mic="",
-    # 平台默认键，不是写死的 Windows CapsLock：mac 默认是右 Command，
-    # 写死会让热键那一组的勾选断言在 mac 上必然是 0 个 tick。
-    current_hotkey=DEFAULT_HOTKEY,
-    current_model="sensevoice",
-    disfluency="verbatim",
     continuous=True,
-    translate=True,
-    translate_route="ja-zh",
+    autostart=False,
     translator_ready=True,
-    overlay=True,
-    overlay_output="both",
-    audio_source="system",
-    current_system_audio="Speakers (Realtek)",
 )
 
 
 def _state(**overrides: object) -> TrayState:
-    return replace(BASE_STATE, **overrides)  # type: ignore[arg-type]
+    """Build a state; old flat keyword names are routed to their new home."""
+    state: dict[str, object] = {}
+    config: dict[str, object] = {}
+    for key, value in overrides.items():
+        if key in _STATE_FIELDS:
+            state[key] = value
+        elif key == "translate_route":
+            source, _, target = str(value).partition("-")
+            config["translate_source"] = source
+            config["translate_target"] = target
+        elif key == "current_system_audio":
+            config["mic"] = value
+        else:
+            config[_CONFIG_ALIASES.get(key, key)] = value
+    base = (
+        SimpleNamespace(**{**vars(BASE_STATE.config), **config})
+        if config
+        else BASE_STATE.config
+    )
+    return replace(BASE_STATE, config=base, **state)  # type: ignore[arg-type]
 
 
 class Live:
@@ -347,3 +389,27 @@ def test_custom_hotkey_is_shown_as_a_vk_value() -> None:
     menu, _live = _menu(_state(current_hotkey=0x71))
     top = {_label(entry) for entry in _visible(_row(menu, "更多设置").children)}
     assert "热键：自定义按键（VK 0x71）" in top
+
+
+def test_the_state_carries_no_copy_of_a_config_field() -> None:
+    """Nine of the old fifteen fields were config copies; they must not come back.
+
+    A copied field is a second truth: add a setting and the menu can keep showing
+    the old value until someone remembers to extend the projection too.
+    """
+    names = {field.name for field in fields(TrayState)}
+    assert names == {"config", "ready", "paused", "continuous", "autostart", "translator_ready"}
+
+
+def test_a_new_setting_reaches_the_menu_without_touching_the_state() -> None:
+    """The menu reads the config directly, so nothing has to be projected first."""
+    menu, _live = _menu(_state(overlay_output="screen", translate=False))
+    assert _label(_row(menu, "输出方式：只上屏")) is not None
+
+
+def test_an_unsupported_direction_falls_back_instead_of_raising() -> None:
+    """A hand-edited pair must not make the tray explode while rendering."""
+    state = _state()
+    broken = replace(state, config=_make_config(translate_source="en", translate_target="en"))
+    assert current_route(broken) == "en-en"
+    assert translate_label(broken) == "离线翻译：中→英"  # the documented default

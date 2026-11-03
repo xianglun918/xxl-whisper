@@ -24,6 +24,7 @@ import functools
 import inspect
 import sys
 import types
+from types import SimpleNamespace
 
 import pytest
 from app.keycodes import DEFAULT_HOTKEY
@@ -252,25 +253,44 @@ def _callbacks(tray, calls: list[str]):
 
 
 def _state(tray, **overrides: object):
-    base = {
+    """Build the adapter's state; old flat names are routed to their new home."""
+    state: dict[str, object] = {
         "ready": True,
         "paused": False,
         "autostart": False,
-        "current_mic": "",
-        "current_hotkey": DEFAULT_HOTKEY,
-        "current_model": "sensevoice",
-        "disfluency": "verbatim",
         "continuous": False,
-        "translate": False,
-        "translate_route": "en-zh",
         "translator_ready": False,
-        "overlay": False,
-        "overlay_output": "both",
-        "audio_source": "mic",
-        "current_system_audio": "",
     }
-    base.update(overrides)
-    return tray.TrayState(**base)  # type: ignore[arg-type]
+    config: dict[str, object] = {
+        "mic": "",
+        "audio_source": "mic",
+        "translate": False,
+        "translate_source": "en",
+        "translate_target": "zh",
+        "disfluency": "verbatim",
+        "model": "sensevoice",
+        "hotkey": DEFAULT_HOTKEY,
+        "overlay_enabled": False,
+        "overlay_output": "both",
+    }
+    aliases = {
+        "current_mic": "mic",
+        "current_hotkey": "hotkey",
+        "current_model": "model",
+        "overlay": "overlay_enabled",
+    }
+    for key, value in overrides.items():
+        if key in state:
+            state[key] = value
+        elif key == "translate_route":
+            source, _, target = str(value).partition("-")
+            config["translate_source"] = source
+            config["translate_target"] = target
+        elif key == "current_system_audio":
+            config["mic"] = value
+        else:
+            config[aliases.get(key, key)] = value
+    return tray.TrayState(config=SimpleNamespace(**config), **state)  # type: ignore[arg-type]
 
 
 def _build(tray, calls: list[str], **overrides: object):

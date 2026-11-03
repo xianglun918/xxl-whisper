@@ -365,22 +365,16 @@ class DictationApp:
         self._tray.stop()
 
     def _tray_state(self) -> TrayState:
+        # The config goes in whole: the menu reads what it needs from it, so a new
+        # setting cannot be forgotten here (the old flat state copied nine values
+        # and quietly disagreed when one was missed).
         return TrayState(
+            config=self._config,
             ready=self._ready,
             paused=self._paused,
-            autostart=native.util.autostart_enabled(),
-            current_mic=self._config.mic,
-            current_hotkey=self._config.hotkey,
-            current_model=self._config.model,
-            disfluency=self._config.disfluency,
             continuous=self._continuous,
-            translate=self._config.translate,
-            translate_route=route_of(self._config) or "",
+            autostart=native.util.autostart_enabled(),
             translator_ready=self._translator is not None,
-            audio_source=self._config.audio_source,
-            current_system_audio=self._config.mic if self._config.audio_source == "system" else "",
-            overlay=self._config.overlay_enabled,
-            overlay_output=self._config.overlay_output,
         )
 
     def _set_config(self, config: Config) -> None:

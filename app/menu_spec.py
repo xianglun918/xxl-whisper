@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from app.options import (
     DISFLUENCY_OPTIONS,
@@ -65,25 +66,70 @@ class TrayCallbacks:
     on_select_overlay_output: Callable[[str], None]
 
 
+class ConfigView(Protocol):
+    """The config values the menu reads.
+
+    A projection, not ``app.config.Config``: this module stays importable without
+    the platform layer (``app.config`` reaches ``app.native``), which is what keeps
+    the whole menu testable headlessly. Listing the attributes here is also the
+    honest statement of what the menu actually depends on.
+    """
+
+    # Read-only properties, not attributes: the real config is a frozen dataclass,
+    # and a mutable-attribute protocol would reject it.
+    @property
+    def mic(self) -> str: ...
+
+    @property
+    def audio_source(self) -> str: ...
+
+    @property
+    def translate(self) -> bool: ...
+
+    @property
+    def translate_source(self) -> str: ...
+
+    @property
+    def translate_target(self) -> str: ...
+
+    @property
+    def disfluency(self) -> str: ...
+
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def hotkey(self) -> str | int: ...
+
+    @property
+    def overlay_enabled(self) -> bool: ...
+
+    @property
+    def overlay_output(self) -> str: ...
+
+
 @dataclass(frozen=True, slots=True)
 class TrayState:
-    """Everything the menu needs to render itself."""
+    """What the menu must know that the config cannot tell it: the live facts.
 
+    Nine of the old fifteen fields were byte-for-byte copies of config values, so
+    adding a setting meant editing five places (config, this dataclass, the
+    projection, the row, the label) and the menu could disagree with the running
+    app. What is genuinely runtime-only stays: whether we are ready, paused,
+    listening, autostarting, and whether the translation model is loaded.
+    """
+
+    config: ConfigView
     ready: bool
     paused: bool
-    autostart: bool
-    current_mic: str
-    current_hotkey: str | int
-    current_model: str
-    disfluency: str
     continuous: bool
-    translate: bool
-    translate_route: str
+    autostart: bool
     translator_ready: bool
-    overlay: bool
-    overlay_output: str
-    audio_source: str
-    current_system_audio: str
+
+
+def current_route(state: TrayState) -> str:
+    """Return the direction as a catalogue key (``"ja-zh"``) from the config."""
+    return f"{state.config.translate_source}-{state.config.translate_target}"
 
 
 type StateProvider = Callable[[], TrayState]
@@ -219,7 +265,7 @@ def _input_entries(
             action=_pick(callbacks.on_select_mic, ""),
             checked=_tick(
                 provider,
-                lambda state: state.audio_source == "mic" and state.current_mic == "",
+                lambda state: state.config.audio_source == "mic" and state.config.mic == "",
             ),
         )
     ]
@@ -229,8 +275,8 @@ def _input_entries(
             action=_pick(callbacks.on_select_mic, name),
             checked=_tick(
                 provider,
-                lambda state, name=name: state.audio_source == "mic"
-                and state.current_mic == name,
+                lambda state, name=name: state.config.audio_source == "mic"
+                and state.config.mic == name,
             ),
         )
         for name in inputs.microphones
@@ -243,8 +289,8 @@ def _input_entries(
                 action=_pick(callbacks.on_select_system_audio, device_id),
                 checked=_tick(
                     provider,
-                    lambda state, device_id=device_id: state.audio_source == "system"
-                    and state.current_system_audio == device_id,
+                    lambda state, device_id=device_id: state.config.audio_source == "system"
+                    and state.config.mic == device_id,
                 ),
             )
             for label, device_id in inputs.system_audio
@@ -258,14 +304,14 @@ def _translate_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tup
         Entry(
             label="开启离线翻译",
             action=callbacks.on_toggle_translate,
-            checked=_tick(provider, lambda state: state.translate),
+            checked=_tick(provider, lambda state: state.config.translate),
         ),
         separator(),
     ]
     entries.extend(
         _option_entries(
             provider, ROUTE_OPTIONS, callbacks.on_select_translate_route,
-            lambda state: state.translate_route,
+            current_route,
         )
     )
     entries.append(separator())
@@ -284,7 +330,7 @@ def _output_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tuple[
     entries: list[Entry] = list(
         _option_entries(
             provider, OUTPUT_OPTIONS, callbacks.on_select_overlay_output,
-            lambda state: state.overlay_output,
+            lambda state: state.config.overlay_output,
         )
     )
     entries.append(separator())
@@ -298,30 +344,30 @@ def _settings_entries(
     """Everything configured once. Every choice is a radio over the config value."""
     hotkeys = _option_entries(
         provider, HOTKEY_OPTIONS, callbacks.on_select_hotkey,
-        lambda state: state.current_hotkey,
+        lambda state: state.config.hotkey,
     )
     hotkeys.append(separator())
     hotkeys.append(Entry(label="自定义按键…", action=callbacks.on_capture_hotkey))
     return (
         Entry(
-            text=lambda: f"热键：{label_of(HOTKEY_OPTIONS, provider().current_hotkey)}",
+            text=lambda: f"热键：{label_of(HOTKEY_OPTIONS, provider().config.hotkey)}",
             children=tuple(hotkeys),
         ),
         Entry(
-            text=lambda: f"识别模型：{label_of(MODEL_OPTIONS, provider().current_model)}",
+            text=lambda: f"识别模型：{label_of(MODEL_OPTIONS, provider().config.model)}",
             children=tuple(
                 _option_entries(
                     provider, MODEL_OPTIONS, callbacks.on_select_model,
-                    lambda state: state.current_model,
+                    lambda state: state.config.model,
                 )
             ),
         ),
         Entry(
-            text=lambda: f"语义顺滑：{label_of(DISFLUENCY_OPTIONS, provider().disfluency)}",
+            text=lambda: f"语义顺滑：{label_of(DISFLUENCY_OPTIONS, provider().config.disfluency)}",
             children=tuple(
                 _option_entries(
                     provider, DISFLUENCY_OPTIONS, callbacks.on_select_disfluency,
-                    lambda state: state.disfluency,
+                    lambda state: state.config.disfluency,
                 )
             ),
         ),
@@ -343,7 +389,7 @@ def state_text(state: TrayState) -> str:
     """Status line: what the app is doing and which source it listens to."""
     if not state.ready:
         return "状态：启动中…"
-    source = "系统声音" if state.audio_source == "system" else "麦克风"
+    source = "系统声音" if state.config.audio_source == "system" else "麦克风"
     if state.continuous:
         return f"状态：持续听写中（{source}）{translate_suffix(state)}"
     if state.paused:
@@ -353,49 +399,49 @@ def state_text(state: TrayState) -> str:
 
 def translate_suffix(state: TrayState) -> str:
     """Say what the subtitles actually show — translated, or source only."""
-    if not state.translate:
-        return " · 字幕显示原文（翻译未开）" if state.overlay else ""
+    if not state.config.translate:
+        return " · 字幕显示原文（翻译未开）" if state.config.overlay_enabled else ""
     if not state.translator_ready:
         return " · 翻译开但模型未就绪"
-    arrow = ROUTE_SHORT.get(state.translate_route, "中→英")
+    arrow = ROUTE_SHORT.get(current_route(state), "中→英")
     return f" · 翻译开（{arrow}）"
 
 
 def input_label(state: TrayState) -> str:
     """Parent row for the input submenu, carrying the current source."""
-    if state.audio_source == "system":
-        return f"输入源：系统声音 · {state.current_system_audio}"
-    if state.current_mic:
-        return f"输入源：{state.current_mic}"
+    if state.config.audio_source == "system":
+        return f"输入源：系统声音 · {state.config.mic}"
+    if state.config.mic:
+        return f"输入源：{state.config.mic}"
     return "输入源：系统默认麦克风"
 
 
 def translate_label(state: TrayState) -> str:
     """Parent row for translation, carrying the current direction."""
-    if not state.translate:
+    if not state.config.translate:
         return "离线翻译：关"
-    arrow = ROUTE_SHORT.get(state.translate_route, "中→英")
+    arrow = ROUTE_SHORT.get(current_route(state), "中→英")
     return f"离线翻译：{arrow}"
 
 
 def output_label(state: TrayState) -> str:
     """Parent row for the output choice, carrying the current mode."""
-    mode = OUTPUT_SHORT.get(state.overlay_output, "上屏+打字")
+    mode = OUTPUT_SHORT.get(state.config.overlay_output, "上屏+打字")
     return f"输出方式：{mode}"
 
 
 def output_hint(state: TrayState) -> str:
     """Explain what the current output mode does (disabled row)."""
-    if state.overlay_output == "type":
+    if state.config.overlay_output == "type":
         return "提示：只打字，屏幕上不显示字幕条"
-    if state.overlay and not state.translate:
+    if state.config.overlay_enabled and not state.config.translate:
         return "提示：字幕当前显示原文（翻译未开）"
     return "提示：字幕边说边出，打字按整句输出"
 
 
 def translate_hint(state: TrayState) -> str:
     """Explain the translation state (disabled row)."""
-    if not state.translate:
+    if not state.config.translate:
         return "提示：翻译未开启，字幕显示原文"
     if not state.translator_ready:
         return "提示：翻译模型未就绪（首次需下载约 240MB）"
