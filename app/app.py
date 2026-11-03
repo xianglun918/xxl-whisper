@@ -1041,8 +1041,17 @@ class DictationApp:
         session = ContinuousSession(
             vad_path=vad_path, limits=limits, ports=self._session_ports()
         )
-        session.start()
+        # Publish the session *before* its threads exist: ``_continuous`` is
+        # derived from it, and the audio watchdog (started inside ``start()``)
+        # may give up and call back into ``_stop_continuous``. Assigning after
+        # ``start()`` would leave a window where the workers run while the app
+        # still reports "off" and owns no session to stop.
         self._session = session
+        try:
+            session.start()
+        except Exception:
+            self._session = None
+            raise
         self._persist_continuous(enabled=True)
         self._set_hooks_armed()  # disarmed: the key stays native, presses ignored
         if self._subtitles():

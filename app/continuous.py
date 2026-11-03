@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from app import logsafe
 from app.audio_flow import plan_recovery
 from app.decode_scheduler import (
     FinishedBatch,
@@ -407,6 +408,7 @@ class ContinuousSession:
                 log.info("continuous: decode %.3f s", time.monotonic() - started)
                 if not text:
                     continue
+                log.info("continuous asr: %s", logsafe.describe_text(text))
                 asr_done = time.monotonic()
                 if endpoint_ts is not None:
                     log.info("continuous: endpoint→asr %.3f s", asr_done - endpoint_ts)

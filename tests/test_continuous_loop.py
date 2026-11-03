@@ -207,10 +207,15 @@ def test_start_opens_the_sink_and_stop_joins_the_workers(monkeypatch) -> None:
 
     assert session.running
     assert len(host.sinks) == 1  # the capture sink was attached
+    # Hold the Thread objects: stop() clears the attribute, so asserting on it
+    # afterwards would be true whether or not anything was joined.
+    workers = list(session._threads)
+    assert len(workers) == 3
     session.stop()
     assert not session.running
     assert host.stopped == 1  # ... and detached on the way out
-    assert session._threads == []  # every worker was joined
+    assert not any(worker.is_alive() for worker in workers)  # every worker was joined
+    assert session._threads == []
 
 
 def test_stop_is_idempotent(monkeypatch) -> None:
