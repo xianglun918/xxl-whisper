@@ -408,7 +408,11 @@ def ensure_translate_model(
             source="all",
             reason=f"{len(failures)} 个文件下载失败（{failures[0]}）",
         )
-    return ModelFiles.resolve(name, model_dir)
+    # Translation models have no logical-name layout (their file list is
+    # ``_TRANSLATE_MODELS`` above), so this is directory-only. Calling
+    # ``ModelFiles.resolve`` here crashed every translate route with KeyError —
+    # after the 245 MB download had already finished.
+    return ModelFiles.for_directory(name, model_dir)
 
 
 def manual_download_guide(kind: str, models_root: Path) -> str:

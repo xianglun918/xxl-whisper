@@ -16,11 +16,11 @@ instead of knowing any filename.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
-__all__ = ["MODEL_LAYOUT", "ModelFiles"]
+__all__ = ["ASR_KINDS", "MODEL_LAYOUT", "ModelFiles"]
 
 #: Logical artifact name → path relative to the kind's model directory. A value
 #: that names a directory (the Fun-ASR tokenizer) is a directory on disk; every
@@ -53,6 +53,11 @@ MODEL_LAYOUT: Mapping[str, Mapping[str, str]] = MappingProxyType(
     }
 )
 
+#: The kinds this layout describes. Translation models are *not* here: their
+#: artifacts are enumerated per route in ``downloader._TRANSLATE_MODELS``, and a
+#: route name passed to :meth:`ModelFiles.resolve` is a bug, not a new model.
+ASR_KINDS: frozenset[str] = frozenset(MODEL_LAYOUT)
+
 
 @dataclass(frozen=True, slots=True)
 class ModelFiles:
@@ -61,7 +66,8 @@ class ModelFiles:
     kind: str
     directory: Path
     #: Logical name → absolute path, as declared by :data:`MODEL_LAYOUT`.
-    paths: Mapping[str, Path]
+    #: Empty for models whose artifacts are not enumerated here (translation).
+    paths: Mapping[str, Path] = field(default_factory=dict)
 
     def path(self, name: str) -> Path:
         """Return the resolved path for one logical artifact.
@@ -73,10 +79,26 @@ class ModelFiles:
 
     @classmethod
     def resolve(cls, kind: str, directory: Path) -> ModelFiles:
-        """Build the resolved view of *kind* living under *directory*."""
+        """Build the resolved view of ASR *kind* living under *directory*.
+
+        Raises ``KeyError`` for anything outside :data:`ASR_KINDS`: a translate
+        route reaching this method means the caller wanted
+        :meth:`for_directory`, and failing here is better than handing the
+        recogniser a directory it will misread.
+        """
         layout = MODEL_LAYOUT[kind]
         return cls(
             kind=kind,
             directory=directory,
             paths=MappingProxyType({name: directory / rel for name, rel in layout.items()}),
         )
+
+    @classmethod
+    def for_directory(cls, kind: str, directory: Path) -> ModelFiles:
+        """Directory-only view, for models whose file list lives elsewhere.
+
+        Translation models are the case: each route's files and exact sizes are
+        in ``downloader._TRANSLATE_MODELS``, so there is no logical-name layout
+        to resolve — callers only need ``directory``.
+        """
+        return cls(kind=kind, directory=directory)

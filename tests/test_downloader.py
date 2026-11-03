@@ -9,7 +9,14 @@ from typing import Self
 import app.download_io as dio
 import app.downloader as dl
 import pytest
-from app.downloader import DownloadError, ModelFiles, ensure_model, manual_download_guide
+from app.downloader import (
+    DownloadError,
+    ModelFiles,
+    ensure_model,
+    ensure_translate_model,
+    manual_download_guide,
+)
+from app.model_files import ASR_KINDS
 
 
 def _fake_progress(_name: str, _done: int, _total: int) -> None:
@@ -437,3 +444,32 @@ def test_vad_artifact_accepts_both_known_hashes() -> None:
     assert dl._VAD_GH_SHA256 in dl._VAD_SHA256
     assert len(dl._VAD_SHA256) == 2
     assert frozenset({1_807_522, 643_854}) == dl._VAD_SIZES
+
+
+def test_ensure_translate_model_never_goes_through_the_asr_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: translation must not be resolved via MODEL_LAYOUT.
+
+    513b7b2 routed ``ensure_translate_model`` through ``ModelFiles.resolve``,
+    whose layout only knows the three recognisers — so every translate route
+    raised KeyError *after* downloading 245 MB, and the whole test suite stayed
+    green because nothing called this function with complete files.
+    """
+    assert set(dl._TRANSLATE_MODELS) & ASR_KINDS == set()
+
+    monkeypatch.setitem(dl._TRANSLATE_MODELS, "test-pair", ("test_model", (("a.onnx", 4),)))
+    model_dir = tmp_path / "test_model"
+    model_dir.mkdir()
+    (model_dir / "a.onnx").write_bytes(b"abcd")
+
+    got = ensure_translate_model("test-pair", tmp_path, progress=_fake_progress)
+
+    assert got.kind == "test_model"
+    assert got.directory == model_dir
+    assert got.paths == {}  # translation has no logical-name contract
+
+
+def test_an_unknown_translate_pair_is_reported_not_crashed(tmp_path: Path) -> None:
+    with pytest.raises(DownloadError):
+        ensure_translate_model("xx-yy", tmp_path, progress=_fake_progress)
