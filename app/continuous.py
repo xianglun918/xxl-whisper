@@ -24,7 +24,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
@@ -43,7 +43,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from app.asr import Recognizer
-    from app.emit_queue import EmitQueue
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +71,16 @@ COMMIT_TEXT: str = "✓ 已上屏"
 COMMIT_FLASH_MS: int = 900
 
 
+class EmitSink(Protocol):
+    """What the session needs from the delivery side: queue one sentence."""
+
+    def submit(
+        self, text: str, *, endpoint_ts: float | None = None, forced: bool = False
+    ) -> bool:
+        """Queue one finished sentence; False when an older one had to go."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class SessionLimits:
     """What one session needs to build its VAD, decided by the config layer."""
@@ -98,8 +107,8 @@ class SessionPorts:
     recognizer: Callable[[], Recognizer | None]
     #: The platform pill facade (``level`` / ``update`` / ``flash_listen``).
     indicator: Any
-    #: Bounded ASR→translation queue; the session never translates or types.
-    emit_queue: EmitQueue
+    #: Bounded ASR→translation sink; the session never translates or types.
+    emit_queue: EmitSink
     #: True when the subtitle bar is the visible surface (suppresses pill noise).
     subtitles: Callable[[], bool]
     #: True while playback is paused: no decode, no emit.
