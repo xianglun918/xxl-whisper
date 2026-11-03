@@ -24,11 +24,9 @@ from app.config import (
     ModelKind,
     TranslateSource,
     TranslateTarget,
-    config_path,
     hotkey_vk,
     language_for_route,
     route_of,
-    save_config,
     translate_route,
 )
 from app.downloader import (
@@ -104,7 +102,6 @@ class Controls:
         if mouse_hook is not None:
             mouse_hook.retarget(vk if vk in MOUSE_VKS else _VK_DISABLED)
         self._deps.set_config(dataclasses.replace(config, hotkey=key))
-        save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
         label = native.io.key_name(vk) if isinstance(key, int) else key
         log.info("hotkey switched to %r (vk=0x%02X)", label, vk)
@@ -130,7 +127,6 @@ class Controls:
         config = self._deps.get_config()
         # Picking a real microphone also leaves system-audio mode.
         self._deps.set_config(dataclasses.replace(config, mic=name, audio_source="mic"))
-        save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
         log.info("mic switched to %r", name)
 
@@ -145,7 +141,6 @@ class Controls:
                 config, mic=device_id, audio_source=cast("AudioSource", "system")
             )
         )
-        save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
         self._deps.indicator.flash("音频来源：系统声音（回环）", 2500)
         log.info("audio source -> system (%r)", device_id)
@@ -206,7 +201,6 @@ class Controls:
         self._deps.set_config(
             dataclasses.replace(config, model=kind, disfluency=new_disfluency)
         )
-        save_config(config_path(), self._deps.get_config())
         # Release the outgoing model *before* allocating the new one so the two
         # never overlap in memory (peak ~1.25 GB -> one model). The decode
         # threads re-read the recognizer and skip while it is None.
@@ -228,7 +222,6 @@ class Controls:
         if new == config.disfluency:
             return None
         self._deps.set_config(dataclasses.replace(config, disfluency=new))
-        save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
         if config.model == "funasr_nano":
             log.info("disfluency -> %s: rebuilding funasr_nano recognizer", new)
@@ -248,7 +241,6 @@ class Controls:
         config = self._deps.get_config()
         enabled = not config.translate
         self._deps.set_config(dataclasses.replace(config, translate=enabled))
-        save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
         log.info(
             "translate -> %s (target=%s mode=%s)",
@@ -292,7 +284,6 @@ class Controls:
                 language=language,
             )
         )
-        save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
         log.info(
             "translate route -> %s (language=%s%s)",
@@ -418,7 +409,6 @@ class Controls:
         if not config.translate:
             return
         self._deps.set_config(dataclasses.replace(config, translate=False))
-        save_config(config_path(), self._deps.get_config())
         self._deps.tray.refresh_menu()
 
     def _build_recognizer(self, kind: ModelKind) -> Recognizer:

@@ -4,14 +4,16 @@ The file crosses the trust boundary (user-editable), so parsing is total:
 either a valid frozen :class:`Config` or a typed :class:`ConfigError`.
 """
 
+from __future__ import annotations
+
 import dataclasses
 import logging
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, NoReturn, cast
+from typing import Any, Literal, NoReturn, cast
 
 from app import native
 from app.keycodes import DEFAULT_HOTKEY, MOUSE_KEYCODES, PRESET_KEYCODES
@@ -121,6 +123,130 @@ _LANGUAGES: Mapping[str, None] = MappingProxyType(
 )
 
 
+#: How a field's value is rendered back into the file (parsing is per row).
+type _Kind = Literal["str", "int", "float", "bool", "hotkey"]
+
+
+@dataclass(frozen=True, slots=True)
+class _Field:
+    """One row of the config schema.
+
+    Before this table existed, adding a setting meant editing four places and
+    keeping their defaults in step by hand — the dataclass, ``default_config()``,
+    the ``Config(...)`` literal inside ``load_config()`` and the line list in
+    ``save_config()`` — and two of them had already drifted. A field is now one
+    row: name, default, how it is parsed, and how it is written back.
+    """
+
+    name: str
+    default: object
+    kind: _Kind
+    parse: Callable[[_Parser], object]
+
+
+def _parse(method: str, name: str, *args: object) -> Callable[[_Parser], object]:
+    """Bind one :class:`_Parser` validator by name (the table predates a parser)."""
+    return lambda p: cast("Callable[..., object]", getattr(p, method))(name, *args)
+
+
+def _text(name: str, default: str) -> _Field:
+    return _Field(name, default, "str", _parse("text", name, default))
+
+
+def _flag(name: str, default: bool) -> _Field:
+    return _Field(name, default, "bool", _parse("bool_flag", name, default))
+
+
+def _int(name: str, default: int, lo: int, hi: int) -> _Field:
+    return _Field(name, default, "int", _parse("int_in", name, default, lo, hi))
+
+
+def _float(name: str, default: float, lo: float, hi: float) -> _Field:
+    return _Field(name, default, "float", _parse("float_in", name, default, lo, hi))
+
+
+def _enum(
+    name: str, default: str, method: str, choices: Mapping[str, object] | None = None
+) -> _Field:
+    """Build a string field validated by a named ``*_kind`` parser method."""
+    if choices is None:
+        return _Field(name, default, "str", _parse(method, name, default))
+    return _Field(name, default, "str", _parse(method, name, default, choices))
+
+
+def _legacy_int(  # noqa: PLR0913, PLR0917 - a schema row is a row
+    name: str, default: int, legacy_name: str, legacy_default: int, lo: int, hi: int
+) -> _Field:
+    """Build an int whose pre-rename key counts only when the user changed it."""
+
+    def parse(p: _Parser) -> object:
+        inherited = p.legacy_default(legacy_name, legacy_default, lo, hi, default)
+        return p.int_in(name, inherited, lo, hi)
+
+    return _Field(name, default, "int", parse)
+
+
+def _translate_source_field() -> _Field:
+    """``translate_source`` defaults to whatever the stored target implies.
+
+    Configs written before the key existed recorded only the target, and 中→英 /
+    英→中 were the only routes, so the old behaviour is exactly this inference.
+    """
+
+    def parse(p: _Parser) -> object:
+        target = p.translate_target("translate_target", "en")
+        inferred: TranslateSource = "en" if target == "zh" else "zh"
+        return p.translate_source("translate_source", inferred)
+
+    return _Field("translate_source", "zh", "str", parse)
+
+
+#: The config schema, in file order. This is the only place a field's default and
+#: its file representation are decided; ``Config`` stays hand-written because it
+#: is the type surface, and ``tests/test_config.py`` pins the two together.
+_SCHEMA: tuple[_Field, ...] = (
+    _Field("hotkey", DEFAULT_HOTKEY, "hotkey", _parse("hotkey", "hotkey", DEFAULT_HOTKEY)),
+    _int("hold_threshold_ms", 400, 10, 2_000),
+    _text("mic", ""),
+    _enum("audio_source", "mic", "audio_source"),
+    _int("num_threads", 2, 1, 16),
+    _enum("language", "zh", "choice", _LANGUAGES),
+    _flag("restore_clipboard", True),
+    _int("paste_delay_ms", 200, 50, 2_000),
+    _flag("check_updates", True),
+    _enum("model", "sensevoice", "model_kind"),
+    _text("proxy", ""),
+    _enum("disfluency", "verbatim", "disfluency_kind"),
+    _flag("continuous", False),
+    _float("vad_threshold", 0.5, 0.0, 1.0),
+    _int("vad_min_speech_ms", 250, 50, 5_000),
+    _legacy_int("live_min_silence_ms", 350, "vad_min_silence_ms", 500, 50, 10_000),
+    _legacy_int("live_max_speech_ms", 4_000, "vad_max_speech_ms", 20_000, 1_000, 60_000),
+    _int("typing_min_silence_ms", 500, 50, 10_000),
+    _int("typing_max_speech_ms", 20_000, 1_000, 60_000),
+    _int("typing_merge_ms", 12_000, 0, 60_000),
+    _int("typing_merge_chars", 80, 10, 500),
+    _flag("translate", False),
+    _enum("translate_target", "en", "translate_target"),
+    _translate_source_field(),
+    _enum("translate_mode", "bilingual", "translate_mode"),
+    _flag("overlay_enabled", False),
+    _enum("overlay_output", "both", "overlay_output"),
+    _enum("overlay_mode", "target", "overlay_mode"),
+    _int("overlay_font_size", 15, 10, 72),
+    _float("overlay_opacity", 0.85, 0.2, 1.0),
+    _float("overlay_width_ratio", 0.72, 0.2, 1.0),
+    _int("overlay_bottom_margin", 80, 0, 600),
+    _float("overlay_hold_seconds", 8.0, 0.5, 60.0),
+    _int("overlay_max_lines", 6, 1, 12),
+    _flag("partial_subtitle", True),
+    _int("partial_subtitle_ms", 800, 200, 5_000),
+    _flag("overlay_click_through", True),
+)
+
+_FIELD_NAMES: frozenset[str] = frozenset(field.name for field in _SCHEMA)
+
+
 class ConfigError(Exception):
     """Raised when the config file cannot be parsed into a valid Config."""
 
@@ -172,53 +298,8 @@ class Config:
 
 
 def default_config() -> Config:
-    """First-run defaults: platform push-to-talk key, Chinese, 400 ms cutoff."""
-    return Config(
-        hotkey=DEFAULT_HOTKEY,
-        hold_threshold_ms=400,
-        mic="",
-        audio_source="mic",
-        num_threads=2,
-        language="zh",
-        restore_clipboard=True,
-        paste_delay_ms=200,
-        check_updates=True,
-        model="sensevoice",
-        proxy="",
-        disfluency="verbatim",
-        continuous=False,
-        vad_threshold=0.5,
-        vad_min_speech_ms=250,
-        # Continuous dictation ("live"): the subtitle bar needs the line while
-        # it is still being talked about, so sentences are cut briskly. Typing
-        # does not suffer from this — app.type_batcher glues the cut pieces back
-        # together and pastes one whole sentence. Push-to-talk never uses these
-        # (a held key is one utterance).
-        live_min_silence_ms=350,
-        live_max_speech_ms=4_000,
-        typing_min_silence_ms=500,
-        typing_max_speech_ms=20_000,
-        #: How long a force-cut batch may stay open before it is typed anyway.
-        typing_merge_ms=12_000,
-        #: Character budget that closes a force-cut batch early.
-        typing_merge_chars=80,
-        translate=False,
-        translate_target="en",
-        translate_source="zh",
-        translate_mode="bilingual",
-        overlay_enabled=False,
-        overlay_output="both",
-        overlay_mode="target",
-        overlay_font_size=15,
-        overlay_opacity=0.85,
-        overlay_width_ratio=0.72,
-        overlay_bottom_margin=80,
-        overlay_hold_seconds=8.0,
-        overlay_max_lines=6,
-        partial_subtitle=True,
-        partial_subtitle_ms=800,
-        overlay_click_through=True,
-    )
+    """First-run defaults, straight from :data:`_SCHEMA`."""
+    return Config(**cast("Any", {field.name: field.default for field in _SCHEMA}))
 
 
 def config_dir() -> Path:
@@ -328,15 +409,14 @@ def load_config(path: Path) -> Config:
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(reason=f"malformed TOML ({exc})", path=path) from exc
     p = _Parser(raw=raw, path=path)
-    target = p.translate_target("translate_target", "en")
-    # Configs written before translate_source existed recorded only the target,
-    # and 中→英 / 英→中 were the only routes, so infer the source from it.
-    inferred: TranslateSource = "en" if target == "zh" else "zh"
-    source = p.translate_source("translate_source", inferred)
-    if translate_route(source, target) is None:
+    values = {field.name: field.parse(p) for field in _SCHEMA}
+    target = values["translate_target"]
+    source = values["translate_source"]
+    if translate_route(str(source), str(target)) is None:
         # Forgiving on purpose: a hand-edited pair we have no models for must
         # not stop dictation from starting. Fall back to the route the target
         # implies and say so in the log.
+        inferred = "en" if target == "zh" else "zh"
         log.warning(
             "unsupported translate direction %s->%s; using %s->%s",
             source,
@@ -344,105 +424,32 @@ def load_config(path: Path) -> Config:
             inferred,
             target,
         )
-        source = inferred
-    return Config(
-        hotkey=p.hotkey("hotkey", DEFAULT_HOTKEY),
-        hold_threshold_ms=p.int_in("hold_threshold_ms", 400, 10, 2_000),
-        mic=p.text("mic", ""),
-        audio_source=p.audio_source("audio_source", "mic"),
-        num_threads=p.int_in("num_threads", 2, 1, 16),
-        language=p.choice("language", "zh", _LANGUAGES),
-        restore_clipboard=p.bool_flag("restore_clipboard", True),
-        paste_delay_ms=p.int_in("paste_delay_ms", 200, 50, 2_000),
-        check_updates=p.bool_flag("check_updates", True),
-        model=p.model_kind("model", "sensevoice"),
-        proxy=p.text("proxy", ""),
-        disfluency=p.disfluency_kind("disfluency", "verbatim"),
-        continuous=p.bool_flag("continuous", False),
-        vad_threshold=p.float_in("vad_threshold", 0.5, 0.0, 1.0),
-        vad_min_speech_ms=p.int_in("vad_min_speech_ms", 250, 50, 5_000),
-        live_min_silence_ms=p.int_in(
-            "live_min_silence_ms",
-            p.legacy_default("vad_min_silence_ms", 500, 50, 10_000, 350),
-            50,
-            10_000,
-        ),
-        live_max_speech_ms=p.int_in(
-            "live_max_speech_ms",
-            p.legacy_default("vad_max_speech_ms", 20_000, 1_000, 60_000, 4_000),
-            1_000,
-            60_000,
-        ),
-        typing_min_silence_ms=p.int_in("typing_min_silence_ms", 500, 50, 10_000),
-        typing_max_speech_ms=p.int_in("typing_max_speech_ms", 20_000, 1_000, 60_000),
-        typing_merge_ms=p.int_in("typing_merge_ms", 12_000, 0, 60_000),
-        typing_merge_chars=p.int_in("typing_merge_chars", 80, 10, 500),
-        translate=p.bool_flag("translate", False),
-        translate_target=target,
-        translate_source=source,
-        translate_mode=p.translate_mode("translate_mode", "bilingual"),
-        # The bar exists iff text is not typing-only: one decision, not two.
-        overlay_enabled=(
-            p.bool_flag("overlay_enabled", False)
-            and p.overlay_output("overlay_output", "both") != "type"
-        ),
-        overlay_output=p.overlay_output("overlay_output", "both"),
-        overlay_mode=p.overlay_mode("overlay_mode", "target"),
-        overlay_font_size=p.int_in("overlay_font_size", 15, 10, 72),
-        overlay_opacity=p.float_in("overlay_opacity", 0.85, 0.2, 1.0),
-        overlay_width_ratio=p.float_in("overlay_width_ratio", 0.72, 0.2, 1.0),
-        overlay_bottom_margin=p.int_in("overlay_bottom_margin", 80, 0, 600),
-        overlay_hold_seconds=p.float_in("overlay_hold_seconds", 8.0, 0.5, 60.0),
-        overlay_max_lines=p.int_in("overlay_max_lines", 6, 1, 12),
-        partial_subtitle=p.bool_flag("partial_subtitle", True),
-        partial_subtitle_ms=p.int_in("partial_subtitle_ms", 800, 200, 5_000),
-        overlay_click_through=p.bool_flag("overlay_click_through", True),
+        values["translate_source"] = inferred
+    # The bar exists iff text is not typing-only: one decision, not two. A file
+    # written by an older build may disagree, and convergence here is what stops
+    # the contradiction from being resurrected on upgrade.
+    values["overlay_enabled"] = (
+        bool(values["overlay_enabled"]) and values["overlay_output"] != "type"
     )
+    return Config(**cast("Any", values))
 
 
 def save_config(path: Path, config: Config) -> None:
-    """Persist a Config as simple key = value TOML."""
+    """Persist a Config as simple key = value TOML.
+
+    Keys this build does not know are kept verbatim: a user's own note, or a
+    setting written by a newer build, used to disappear the next time anything
+    was saved (and ``migrate_config_file`` rewrites the file on the first start).
+    Renamed legacy keys are the one exception — they have been folded into their
+    replacement, so keeping them would resurrect a value we just migrated.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        f"config_version = {CONFIG_VERSION}",
-        f"hotkey = {config.hotkey if isinstance(config.hotkey, int) else _quote(config.hotkey)}",
-        f"hold_threshold_ms = {config.hold_threshold_ms}",
-        f"mic = {_quote(config.mic)}",
-        f"audio_source = {_quote(config.audio_source)}",
-        f"num_threads = {config.num_threads}",
-        f"language = {_quote(config.language)}",
-        f"restore_clipboard = {str(config.restore_clipboard).lower()}",
-        f"paste_delay_ms = {config.paste_delay_ms}",
-        f"check_updates = {str(config.check_updates).lower()}",
-        f"model = {_quote(config.model)}",
-        f"proxy = {_quote(config.proxy)}",
-        f"disfluency = {_quote(config.disfluency)}",
-        f"continuous = {str(config.continuous).lower()}",
-        f"vad_threshold = {config.vad_threshold}",
-        f"vad_min_speech_ms = {config.vad_min_speech_ms}",
-        f"live_min_silence_ms = {config.live_min_silence_ms}",
-        f"live_max_speech_ms = {config.live_max_speech_ms}",
-        f"typing_min_silence_ms = {config.typing_min_silence_ms}",
-        f"typing_max_speech_ms = {config.typing_max_speech_ms}",
-        f"typing_merge_ms = {config.typing_merge_ms}",
-        f"typing_merge_chars = {config.typing_merge_chars}",
-        f"translate = {str(config.translate).lower()}",
-        f"translate_target = {_quote(config.translate_target)}",
-        f"translate_source = {_quote(config.translate_source)}",
-        f"translate_mode = {_quote(config.translate_mode)}",
-        f"overlay_enabled = {str(config.overlay_enabled).lower()}",
-        f"overlay_output = {_quote(config.overlay_output)}",
-        f"overlay_mode = {_quote(config.overlay_mode)}",
-        f"overlay_font_size = {config.overlay_font_size}",
-        f"overlay_opacity = {config.overlay_opacity}",
-        f"overlay_width_ratio = {config.overlay_width_ratio}",
-        f"overlay_bottom_margin = {config.overlay_bottom_margin}",
-        f"overlay_hold_seconds = {config.overlay_hold_seconds}",
-        f"overlay_max_lines = {config.overlay_max_lines}",
-        f"partial_subtitle = {str(config.partial_subtitle).lower()}",
-        f"partial_subtitle_ms = {config.partial_subtitle_ms}",
-        f"overlay_click_through = {str(config.overlay_click_through).lower()}",
+    fields = [
+        f"{field.name} = {_render(field, getattr(config, field.name))}"
+        for field in _SCHEMA
     ]
+    lines = [f"config_version = {CONFIG_VERSION}", *fields]
+    lines.extend(_foreign_lines(path))
     payload = "\n".join(lines) + "\n"
     # Write-then-rename: `migrate_config_file` rewrites a user's config during
     # startup, and a crash between truncate and write used to leave a half-written
@@ -450,6 +457,47 @@ def save_config(path: Path, config: Config) -> None:
     staging = path.with_name(path.name + ".tmp")
     staging.write_text(payload, encoding="utf-8")
     staging.replace(path)
+
+
+def _render(field: _Field, value: object) -> str:
+    """Render one value the way the file has always spelled it."""
+    if field.kind == "bool":
+        return str(bool(value)).lower()
+    if field.kind == "hotkey" and isinstance(value, int):
+        return str(value)
+    if field.kind in {"int", "float"}:
+        return str(value)
+    return _quote(str(value))
+
+
+def _foreign_lines(path: Path) -> list[str]:
+    """Re-emit keys that are not part of the schema, so a save never eats them."""
+    try:
+        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    skip = _FIELD_NAMES | {"config_version"} | set(RENAMED_KEYS)
+    kept: list[tuple[str, str]] = []
+    for key, value in raw.items():
+        if key in skip:
+            continue
+        rendered = _render_foreign(value)
+        if rendered is None:
+            log.warning("config: %r has an unsupported value type; not rewriting it", key)
+            continue
+        kept.append((key, rendered))
+    return [f"{key} = {rendered}" for key, rendered in kept]
+
+
+def _render_foreign(value: object) -> str | None:
+    """Render a non-schema TOML scalar, or None when it is not one."""
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return _quote(value)
+    return None
 
 
 @dataclass(frozen=True, slots=True)

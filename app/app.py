@@ -844,7 +844,7 @@ class DictationApp:
             )
             if not overlay.available:
                 self._config = replace(self._config, overlay_enabled=False)
-                save_config(config_path(), self._config)
+                self._set_config(self._config)  # one writer, one write
                 self._tray.notify("上屏字幕不可用（缺少图形环境），已关闭")
                 self._tray.refresh_menu()
                 return None
@@ -864,7 +864,7 @@ class DictationApp:
         self._flush_typing()  # the sentence in flight belongs to the old mode
         wants_bar = mode != "type"
         self._config = with_overlay_mode(self._config, mode)
-        save_config(config_path(), self._config)
+        self._set_config(self._config)  # one writer, one write
         if wants_bar:
             self._ensure_overlay()
             if not self._config.translate:

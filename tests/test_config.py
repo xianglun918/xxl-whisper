@@ -1,22 +1,24 @@
 """Config file parsing, defaults, and round-trip."""
 
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 from typing import cast
 
 import pytest
 from app.asr import _FUNASR_NANO_PROMPTS
 from app.config import (
+    _SCHEMA,
     ConfigError,
     ModelKind,
     default_config,
     hotkey_vk,
     load_config,
+    migrate_config_file,
     save_config,
 )
 from app.controls import disfluency_for_model
 
-from app import keycodes
+from app import controls, keycodes
 
 
 def test_missing_file_returns_defaults(tmp_path: Path) -> None:
@@ -264,3 +266,68 @@ def test_invalid_translate_target_rejected(tmp_path: Path) -> None:
     path.write_text('translate_target = "fr"\n', encoding="utf-8")
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+# -- the schema table ---------------------------------------------------------
+
+
+def test_schema_matches_the_config_dataclass() -> None:
+    """One row per field, same order: the table is the file's layout."""
+    names = [field.name for field in fields(default_config())]
+    assert [row.name for row in _SCHEMA] == names
+
+
+def test_schema_defaults_are_the_first_run_defaults() -> None:
+    """A default lives in one place; default_config() must not disagree."""
+    config = default_config()
+    for row in _SCHEMA:
+        assert getattr(config, row.name) == row.default, row.name
+
+
+def test_every_field_survives_a_save_and_load(tmp_path: Path) -> None:
+    """The table drives parsing and rendering: a mismatch would lose a value."""
+    path = tmp_path / "config.toml"
+    original = default_config()
+    save_config(path, original)
+
+    assert load_config(path) == original
+
+
+def test_unknown_keys_survive_a_save(tmp_path: Path) -> None:
+    """A user's own note must not vanish because a switch was toggled."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'my_own_note = "keep me"\nhold_threshold_ms = 500\n', encoding="utf-8"
+    )
+    config = load_config(path)
+    save_config(path, replace(config, hold_threshold_ms=600))
+
+    text = path.read_text(encoding="utf-8")
+    assert 'my_own_note = "keep me"' in text
+    assert "hold_threshold_ms = 600" in text
+
+
+def test_unknown_keys_survive_a_migration(tmp_path: Path) -> None:
+    """The migration rewrites the whole file — it must carry foreign keys over."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'my_own_note = "keep me"\nvad_max_speech_ms = 20000\n', encoding="utf-8"
+    )
+    report = migrate_config_file(path)
+
+    assert report is not None
+    text = path.read_text(encoding="utf-8")
+    assert 'my_own_note = "keep me"' in text
+    # A renamed legacy key has been folded into live_max_speech_ms: keeping it
+    # would resurrect the value the migration just replaced.
+    assert "vad_max_speech_ms" not in text
+
+
+def test_controls_never_writes_the_config_itself() -> None:
+    """One write entry: the tray actions change the config, `_set_config` saves it.
+
+    Two writers wrote the same file twice per tray toggle, and the second write
+    could only ever agree with the first — or be the bug.
+    """
+    source = Path(controls.__file__).read_text(encoding="utf-8")
+    assert "save_config" not in source
