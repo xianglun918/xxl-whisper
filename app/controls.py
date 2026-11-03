@@ -38,6 +38,7 @@ from app.downloader import (
     translate_manual_guide,
 )
 from app.emit import is_classic_control
+from app.model_files import ModelFiles
 from app.recorder import Recorder
 from app.routes import fallback_of, route_short
 from app.translator import (
@@ -423,8 +424,7 @@ class Controls:
 
     def _build_recognizer(self, kind: ModelKind) -> Recognizer:
         return Recognizer(
-            kind=kind,
-            model_dir=self._deps.models_root / kind,
+            files=ModelFiles.resolve(kind, self._deps.models_root / kind),
             num_threads=self._deps.num_threads(),
             language=self._deps.language(),
             disfluency=self._deps.get_config().disfluency,

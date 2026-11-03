@@ -639,8 +639,7 @@ class DictationApp:
                 proxy=self._config.proxy,
             )
             self._recognizer = Recognizer(
-                kind=self._config.model,
-                model_dir=files.directory,
+                files=files,
                 num_threads=self._config.num_threads,
                 language=self._config.language,
                 disfluency=self._config.disfluency,

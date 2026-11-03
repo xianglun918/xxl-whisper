@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from app.asr import Recognizer
 from app.config import model_dir, models_root
+from app.model_files import ModelFiles
 from app.vad import SAMPLE_RATE, Segmenter, VadSettings
 
 pytestmark = pytest.mark.integration
@@ -127,7 +128,7 @@ def test_current_samples_decode_previews_the_finished_segment() -> None:
     speech = _load_samples(Path(__file__).parent / "assets" / "zh_test.wav")
     segmenter = Segmenter(settings)
     recognizer = Recognizer(
-        kind="sensevoice", model_dir=asr_dir, num_threads=2, language="zh"
+        files=ModelFiles.resolve("sensevoice", asr_dir), num_threads=2, language="zh"
     )
 
     last_partial: np.ndarray | None = None

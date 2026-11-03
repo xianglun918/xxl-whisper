@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from app.asr import SAMPLE_RATE, Recognizer
 from app.config import model_dir
+from app.model_files import ModelFiles
 
 pytestmark = pytest.mark.integration
 
@@ -31,7 +32,9 @@ def test_transcribe_known_utterance() -> None:
     if not (sense_dir / "model.onnx").exists() or not (sense_dir / "tokens.txt").exists():
         pytest.skip("model not downloaded")
 
-    recognizer = Recognizer(kind="sensevoice", model_dir=sense_dir, num_threads=2, language="zh")
+    recognizer = Recognizer(
+        files=ModelFiles.resolve("sensevoice", sense_dir), num_threads=2, language="zh"
+    )
     samples = _load_samples(Path(__file__).parent / "assets" / "zh_test.wav")
 
     text = recognizer.transcribe(samples)

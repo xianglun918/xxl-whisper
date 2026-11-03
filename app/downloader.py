@@ -12,11 +12,11 @@ retrying, hash-verified byte transfer lives in :mod:`app.download_io`.
 import logging
 import tarfile
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 
 from app.download_io import DownloadError, FileSpec, ProgressFn, verify_sha256
 from app.download_io import download as _download
+from app.model_files import ModelFiles
 from app.routes import ROUTES
 
 log = logging.getLogger(__name__)
@@ -179,14 +179,6 @@ _TRANSLATE_BASE_URLS: tuple[str, ...] = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class ModelFiles:
-    """Resolved local artifacts for one model kind."""
-
-    kind: str
-    directory: Path
-
-
 #: Exact artifact sizes and SHA256 values, recorded from the official upstream
 #: files. A truncated or tampered download must never look complete: the size
 #: check catches truncation, the hash check catches a poisoned mirror. The
@@ -308,7 +300,7 @@ def ensure_model(
     for spec in specs:  # both sources failed for something still missing
         if not _is_complete(spec):
             raise DownloadError(source="all", reason=f"{spec.dest.name} missing")
-    return ModelFiles(kind=kind, directory=model_dir)
+    return ModelFiles.resolve(kind, model_dir)
 
 
 def ensure_vad_model(
@@ -416,7 +408,7 @@ def ensure_translate_model(
             source="all",
             reason=f"{len(failures)} 个文件下载失败（{failures[0]}）",
         )
-    return ModelFiles(kind=name, directory=model_dir)
+    return ModelFiles.resolve(name, model_dir)
 
 
 def manual_download_guide(kind: str, models_root: Path) -> str:

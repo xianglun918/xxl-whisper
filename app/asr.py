@@ -2,13 +2,13 @@
 
 import logging
 import re
-from pathlib import Path
-from typing import assert_never
+from typing import assert_never, cast
 
 import numpy as np
 import sherpa_onnx
 
 from app.config import Disfluency, ModelKind
+from app.model_files import ModelFiles
 
 log = logging.getLogger(__name__)
 
@@ -67,18 +67,20 @@ class Recognizer:
 
     def __init__(
         self,
-        kind: ModelKind,
-        model_dir: Path,
+        files: ModelFiles,
         num_threads: int = 2,
         language: str = "zh",
         disfluency: Disfluency = "verbatim",
     ) -> None:
+        # The downloader owns the on-disk layout; this class only asks for
+        # logical names ("model", "tokens"), so a renamed artifact is one edit.
+        kind = cast("ModelKind", files.kind)
         self.kind = kind
         match kind:
             case "sensevoice":
                 self._recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
-                    model=str(model_dir / "model.onnx"),
-                    tokens=str(model_dir / "tokens.txt"),
+                    model=str(files.path("model")),
+                    tokens=str(files.path("tokens")),
                     num_threads=num_threads,
                     language=language,
                     use_itn=True,
@@ -90,9 +92,9 @@ class Recognizer:
                 )
             case "whisper_turbo":
                 self._recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
-                    encoder=str(model_dir / "turbo-encoder.int8.onnx"),
-                    decoder=str(model_dir / "turbo-decoder.int8.onnx"),
-                    tokens=str(model_dir / "turbo-tokens.txt"),
+                    encoder=str(files.path("encoder")),
+                    decoder=str(files.path("decoder")),
+                    tokens=str(files.path("tokens")),
                     num_threads=num_threads,
                     language=whisper_language(language),
                     task="transcribe",
@@ -106,10 +108,10 @@ class Recognizer:
                 prompt = _FUNASR_NANO_PROMPTS[disfluency]
                 funasr_lang = funasr_language(language, has_prompt=bool(prompt))
                 self._recognizer = sherpa_onnx.OfflineRecognizer.from_funasr_nano(
-                    encoder_adaptor=str(model_dir / "encoder_adaptor.int8.onnx"),
-                    llm=str(model_dir / "llm.int8.onnx"),
-                    embedding=str(model_dir / "embedding.int8.onnx"),
-                    tokenizer=str(model_dir / "Qwen3-0.6B"),
+                    encoder_adaptor=str(files.path("encoder_adaptor")),
+                    llm=str(files.path("llm")),
+                    embedding=str(files.path("embedding")),
+                    tokenizer=str(files.path("tokenizer")),
                     num_threads=num_threads,
                     language=funasr_lang,
                     user_prompt=prompt,

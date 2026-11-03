@@ -75,7 +75,8 @@ def test_ensure_model_reuses_complete_files(
     monkeypatch.setattr(dl, "_fetch", _noop_fetch)
     monkeypatch.setattr(dl, "_fetch_tarball_fallback", _forbid_tarball)
     files = ensure_model("sensevoice", tmp_path, progress=_fake_progress)
-    assert files == ModelFiles(kind="sensevoice", directory=model_dir)
+    assert files == ModelFiles.resolve("sensevoice", model_dir)
+    assert files.path("model") == model_dir / "model.onnx"
 
 
 def test_tarball_fallback_extracts_missing_files(
