@@ -39,6 +39,7 @@ from app.downloader import (
 )
 from app.emit import is_classic_control
 from app.recorder import Recorder
+from app.routes import fallback_of
 from app.translator import (
     ChainedTranslator,
     NmtSettings,
@@ -318,11 +319,12 @@ class Controls:
         error — quality is worse, but silence is worse still.
         """
         direct = TRANSLATE_ROUTE_MODELS[route]
-        if route != "ja-zh":
+        fallback = fallback_of(route)
+        if not fallback:
             return direct
         try:
             ensure_translate_model(
-                "ja-zh",
+                route,
                 self._deps.models_root,
                 lambda *_args: None,
                 proxy=self._deps.get_config().proxy,
@@ -330,10 +332,12 @@ class Controls:
             return direct
         except DownloadError as exc:
             log.warning(
-                "direct ja→zh unavailable (%s); falling back to ja→en→zh",
+                "direct %s unavailable (%s); falling back to %s",
+                route,
                 getattr(exc, "reason", exc),
+                "→".join(fallback),
             )
-            return ("ja-en", "en-zh")
+            return fallback
 
     def build_translator(
         self, route: str | None = None, *, disable_on_failure: bool = True

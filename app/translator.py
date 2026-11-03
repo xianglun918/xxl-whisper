@@ -42,15 +42,15 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from app.routes import ROUTES
+from app.routes import route_text as route_label
 from app.translate_guard import looks_degenerate, looks_truncated
 
 log = logging.getLogger(__name__)
 
 __all__ = [
     "BILINGUAL_SEPARATOR",
-    "TRANSLATE_MODES",
     "TRANSLATE_ROUTES",
-    "TRANSLATE_TARGETS",
     "ChainedTranslator",
     "MarianTokenizer",
     "NmtSettings",
@@ -69,33 +69,14 @@ __all__ = [
 #: every editor; chat boxes that submit on Enter are why it is configurable.
 BILINGUAL_SEPARATOR: str = "\n"
 
-#: Human labels used by the tray menu and config docs.
-TRANSLATE_TARGETS: dict[str, str] = {"en": "英语", "zh": "中文"}
+#: Supported routes, in tray order, with the human label. Projected from
+#: :data:`app.routes.ROUTES`: the tray radio and the status flash read the same
+#: string, so they cannot drift apart (they had: "说中文出英文" in the menu vs
+#: "说中文，出英文" in the flash, because the same fact was written twice).
+TRANSLATE_ROUTES: dict[str, str] = {spec.key: spec.label for spec in ROUTES}
 
-#: Supported routes, in tray order, with the human label shown in the menu.
-#: "ja-zh" is chained through English (no official ja→zh Marian weight).
-TRANSLATE_ROUTES: dict[str, str] = {
-    "zh-en": "中 → 英（说中文，出英文）",
-    "en-zh": "英 → 中（说英文，出中文）",
-    "ja-zh": "日 → 中（说日语，出中文，经英文中转）",
-    "ja-en": "日 → 英（说日语，出英文，直出一段）",
-}
-
-def route_text(route: str) -> str:
-    """Return the human label for *route*, falling back to the raw key.
-
-    Never index ``TRANSLATE_ROUTES`` directly from the UI path: a route added to
-    the config vocabulary but missing a label would raise ``KeyError`` inside the
-    worker and make the menu look broken (it happened once, with ja-en).
-    """
-    return TRANSLATE_ROUTES.get(route, route)
-
-
-#: How the translated text reaches the cursor.
-TRANSLATE_MODES: dict[str, str] = {
-    "replace": "只上译文",
-    "bilingual": "原文 + 译文",
-}
+#: Re-exported so callers keep one import site; the catalogue owns the wording.
+route_text = route_label
 
 #: Anything shorter than this is not worth a model pass ("嗯", "ok", "1").
 _MIN_CHARS: int = 2

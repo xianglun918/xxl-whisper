@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app import keycodes
+from app.routes import ROUTES
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +67,9 @@ DISFLUENCY_OPTIONS: tuple[Option, ...] = (
     Option("smooth", "语义顺滑（去掉语气词与重复）"),
 )
 
-#: Translation direction, mirroring ``config.TranslateRoute``.
-ROUTE_OPTIONS: tuple[Option, ...] = (
-    Option("zh-en", "中 → 英（说中文出英文）"),
-    Option("en-zh", "英 → 中（说英文出中文）"),
-    Option("ja-zh", "日 → 中（经英文中转，两段）"),
-    Option("ja-en", "日 → 英（一段直出，最快最省内存）"),
+#: Translation direction, projected from :data:`app.routes.ROUTES`.
+ROUTE_OPTIONS: tuple[Option, ...] = tuple(
+    Option(spec.key, spec.label) for spec in ROUTES
 )
 
 #: Where the output goes, mirroring ``config.OverlayOutput``.
@@ -82,12 +80,7 @@ OUTPUT_OPTIONS: tuple[Option, ...] = (
 )
 
 #: Compact route name for parent-row labels ("翻译与字幕：日→中").
-ROUTE_SHORT: dict[str, str] = {
-    "zh-en": "中→英",
-    "en-zh": "英→中",
-    "ja-zh": "日→中",
-    "ja-en": "日→英",
-}
+ROUTE_SHORT: dict[str, str] = {spec.key: spec.short for spec in ROUTES}
 
 #: Compact output name for parent-row labels ("… · 上屏+打字").
 OUTPUT_SHORT: dict[str, str] = {

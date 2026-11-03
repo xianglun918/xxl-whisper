@@ -17,6 +17,7 @@ from typing import Any, Literal, NoReturn, cast
 
 from app import native
 from app.keycodes import DEFAULT_HOTKEY, MOUSE_KEYCODES, PRESET_KEYCODES
+from app.routes import pin_language, route_keys
 
 APP_DIR_NAME: str = "xxl-whisper"
 
@@ -96,10 +97,9 @@ _TRANSLATE_SOURCES: Mapping[str, None] = MappingProxyType(
 )
 
 #: Only these combinations have models behind them; anything else is a config
-#: error the user must fix rather than a silent no-op.
-_TRANSLATE_ROUTES: Mapping[str, None] = MappingProxyType(
-    {"zh-en": None, "en-zh": None, "ja-zh": None, "ja-en": None}
-)
+#: error the user must fix rather than a silent no-op. The list itself lives in
+#: :mod:`app.routes` — this is only the membership test.
+_TRANSLATE_ROUTES: Mapping[str, None] = MappingProxyType(dict.fromkeys(route_keys()))
 
 _AUDIO_SOURCES: Mapping[str, None] = MappingProxyType({"mic": None, "system": None})
 
@@ -379,9 +379,9 @@ def language_for_route(current_language: str, route: str) -> str:
     gibberish. Leaving a 日→… route restores a sensible default, but a user who
     deliberately chose ``auto`` keeps it.
     """
-    source = route.split("-", maxsplit=1)[0]
-    if source == "ja":
-        return "ja"
+    pinned = pin_language(route)
+    if pinned is not None:
+        return pinned
     if current_language == "ja":
         return "auto"
     return current_language

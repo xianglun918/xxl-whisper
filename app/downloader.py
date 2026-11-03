@@ -17,6 +17,7 @@ from pathlib import Path
 
 from app.download_io import DownloadError, FileSpec, ProgressFn, verify_sha256
 from app.download_io import download as _download
+from app.routes import ROUTES
 
 log = logging.getLogger(__name__)
 
@@ -163,11 +164,9 @@ TRANSLATE_OWN_BASE: dict[str, str] = {
     "ja-zh": "https://github.com/xianglun918/xxl-whisper/releases/download/mt-ja-zh-v1",
 }
 
+#: Model keys per route, in hop order, projected from :data:`app.routes.ROUTES`.
 TRANSLATE_ROUTE_MODELS: dict[str, tuple[str, ...]] = {
-    "zh-en": ("zh-en",),
-    "en-zh": ("en-zh",),
-    "ja-zh": ("ja-zh",),  # 官方无 ja→zh 权重，本仓库托管转换后的直译模型
-    "ja-en": ("ja-en",),  # 一段直出英文：质量最好、内存最省
+    spec.key: spec.models for spec in ROUTES
 }
 
 #: Mirrors in preference order. ModelScope first: it is domestic, unrestricted
