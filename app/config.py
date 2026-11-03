@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 #: On-disk config schema version. Bump it whenever a *stored* key changes
 #: meaning, and add the step to :func:`_migrate`. Absent in files written by
 #: builds that predate the stamp, which therefore read as version 1.
-CONFIG_VERSION: int = 2
+CONFIG_VERSION: int = 3
 
 #: Keys older builds wrote that this build no longer writes, with what they map
 #: to. Their *values* were already honoured at load time (``legacy_default``);
@@ -66,7 +66,7 @@ type TranslateMode = Literal["replace", "bilingual"]
 #: What the subtitle overlay shows: only the translation, only what was said,
 #: or both. Mirrors ``app.overlay.OverlayMode`` (kept local so this parser never
 #: imports the window module).
-type OverlayMode = Literal["target", "source", "bilingual"]
+type OverlayMode = Literal["target", "source", "stacked"]
 
 #: Where an utterance goes: only to the cursor, only to the subtitle overlay, or
 #: both. ``screen`` is the read-only "don't type into my meeting notes" mode.
@@ -113,7 +113,9 @@ _TRANSLATE_MODES: Mapping[str, None] = MappingProxyType(
 )
 
 _OVERLAY_MODES: Mapping[str, None] = MappingProxyType(
-    {"target": None, "source": None, "bilingual": None}
+    # "bilingual" is the pre-v3 name for the stacked layout: accepted on read so
+    # an old file still starts, rewritten as "stacked" by the v3 migration.
+    {"target": None, "source": None, "stacked": None, "bilingual": None}
 )
 
 _OVERLAY_OUTPUTS: Mapping[str, None] = MappingProxyType(
@@ -704,12 +706,13 @@ class _Parser:
         return "replace" if value == "replace" else "bilingual"
 
     def overlay_mode(self, name: str, default: OverlayMode) -> OverlayMode:
+        """Parse the subtitle layout; ``bilingual`` is the pre-v3 spelling."""
         value = self.choice(name, default, _OVERLAY_MODES)
         match value:
             case "source":
                 return "source"
-            case "bilingual":
-                return "bilingual"
+            case "stacked" | "bilingual":
+                return "stacked"
             case _:
                 return "target"
 

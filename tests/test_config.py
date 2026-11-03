@@ -2,7 +2,7 @@
 
 from dataclasses import fields, replace
 from pathlib import Path
-from typing import cast
+from typing import cast, get_args
 
 import pytest
 from app.asr import _FUNASR_NANO_PROMPTS
@@ -18,7 +18,9 @@ from app.config import (
 )
 from app.controls import disfluency_for_model
 
+from app import config as config_module
 from app import controls, keycodes
+from app import overlay as overlay_module
 
 
 def test_missing_file_returns_defaults(tmp_path: Path) -> None:
@@ -368,3 +370,17 @@ def test_error_precedence_reports_the_direction_first(tmp_path: Path) -> None:
         load_config(path)
 
     assert "translate_target" in caught.value.reason
+
+
+def test_the_two_overlay_mode_types_cannot_drift() -> None:
+    """``OverlayMode`` is declared in config and again in overlay (no import edge).
+
+    Two literals for one value is how ``bilingual`` ended up meaning two different
+    things; this keeps the copies identical even if they stay separate.
+    """
+    assert _aliases(config_module.OverlayMode) == _aliases(overlay_module.OverlayMode)
+    assert "stacked" in _aliases(config_module.OverlayMode)
+
+def _aliases(alias: object) -> tuple[object, ...]:
+    """Members of a PEP 695 ``type X = Literal[...]`` alias."""
+    return get_args(getattr(alias, "__value__", alias))

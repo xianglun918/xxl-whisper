@@ -169,3 +169,32 @@ def test_save_config_leaves_no_partial_file(tmp_path: Path) -> None:
     assert not list(tmp_path.glob("*.tmp")), "临时文件必须在改名后消失"
     reparsed = load_config(path)
     assert reparsed.live_max_speech_ms == 4000
+
+
+#: A v2 file whose subtitle layout still uses the pre-v3 spelling.
+LEGACY_V2_STACKED = """\
+config_version = 2
+hotkey = 113
+overlay_mode = "bilingual"
+"""
+
+
+def test_the_old_stacked_spelling_still_loads(tmp_path: Path) -> None:
+    """Renaming the value must not make an existing file fail validation."""
+    path = tmp_path / "config.toml"
+    path.write_text(LEGACY_V2_STACKED, encoding="utf-8")
+
+    assert load_config(path).overlay_mode == "stacked"
+
+
+def test_the_v3_migration_rewrites_the_old_spelling(tmp_path: Path) -> None:
+    """And once migrated the file stops carrying the ambiguous name."""
+    path = tmp_path / "config.toml"
+    path.write_text(LEGACY_V2_STACKED, encoding="utf-8")
+
+    report = migrate_config_file(path)
+
+    assert report is not None
+    assert path.read_text(encoding="utf-8").count('overlay_mode = "stacked"') == 1
+    assert "bilingual" not in path.read_text(encoding="utf-8").split("overlay_mode")[1]
+    assert CONFIG_VERSION == 3

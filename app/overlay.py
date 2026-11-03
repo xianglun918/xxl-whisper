@@ -70,7 +70,12 @@ _SOURCE_SIZE_DELTA: int = 3
 
 #: What the bar shows for one segment: only the translation, only what was
 #: said, or both (source in a smaller grey line above the translation).
-type OverlayMode = Literal["target", "source", "bilingual"]
+type OverlayMode = Literal["target", "source", "stacked"]
+
+#: Which rows a mode draws. ``stacked`` (the pre-v3 name was ``bilingual``) draws
+#: both: the source line above, the translation below.
+_SHOWS_SOURCE: frozenset[str] = frozenset({"source", "stacked"})
+_SHOWS_TARGET: frozenset[str] = frozenset({"target", "stacked"})
 
 #: Where the text goes: only to the bar, or to the bar *and* the cursor.
 type OverlayOutput = Literal["type", "screen", "both"]
@@ -195,17 +200,17 @@ class OverlayModel:
         """Rows to draw, newest last, already filtered by the style's mode."""
         rows: list[Line] = []
         for seg in self._segments:
-            if self._style.mode in ("source", "bilingual") and seg.source:
+            if self._style.mode in _SHOWS_SOURCE and seg.source:
                 rows.append(Line(kind="source", text=seg.source))
-            if self._style.mode in ("target", "bilingual"):
+            if self._style.mode in _SHOWS_TARGET:
                 text = seg.target or seg.source  # failed MT must not blank the bar
                 if text:
                     rows.append(Line(kind="target", text=text))
         if self._provisional is not None:
             said, became = self._provisional
-            if self._style.mode in ("source", "bilingual") and said:
+            if self._style.mode in _SHOWS_SOURCE and said:
                 rows.append(Line(kind="provisional", text=said))
-            if self._style.mode in ("target", "bilingual"):
+            if self._style.mode in _SHOWS_TARGET:
                 text = became or said
                 if text:
                     rows.append(Line(kind="provisional", text=text))

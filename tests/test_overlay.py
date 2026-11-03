@@ -82,8 +82,8 @@ def test_stack_is_trimmed_to_max_lines() -> None:
     ]
 
 
-def test_bilingual_renders_source_above_target() -> None:
-    model, _clock = _model(mode="bilingual")
+def test_stacked_renders_source_above_target() -> None:
+    model, _clock = _model(mode="stacked")
     model.push("你好", "hello")
     assert model.lines() == [
         Line(kind="source", text="你好"),
@@ -114,7 +114,7 @@ def test_clear_drops_everything() -> None:
 
 def test_style_comes_from_flat_config() -> None:
     class FakeConfig:
-        overlay_mode = "bilingual"
+        overlay_mode = "stacked"
         overlay_font_size = 40
         overlay_opacity = 0.7
         overlay_width_ratio = 0.5
@@ -125,7 +125,7 @@ def test_style_comes_from_flat_config() -> None:
 
     style = build_style(FakeConfig())
     assert style == OverlayStyle(
-        mode="bilingual",
+        mode="stacked",
         font_size=40,
         opacity=0.7,
         width_ratio=0.5,
