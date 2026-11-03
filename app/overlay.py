@@ -72,7 +72,7 @@ _SOURCE_SIZE_DELTA: int = 3
 #: said, or both (source in a smaller grey line above the translation).
 type OverlayMode = Literal["target", "source", "stacked"]
 
-#: Which rows a mode draws. ``stacked`` (the pre-v3 name was ``bilingual``) draws
+#: Which rows a mode draws. ``stacked`` (an older build called it ``bilingual``) draws
 #: both: the source line above, the translation below.
 _SHOWS_SOURCE: frozenset[str] = frozenset({"source", "stacked"})
 _SHOWS_TARGET: frozenset[str] = frozenset({"target", "stacked"})

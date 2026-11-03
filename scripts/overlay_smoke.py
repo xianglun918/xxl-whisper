@@ -52,7 +52,7 @@ def _probe(overlay: Overlay) -> tuple[int, int, int, int, bool]:
 
 def main() -> int:
     """Drive one overlay through show → stack → auto-hide → quit."""
-    style = OverlayStyle(mode="bilingual", hold_seconds=2.0, max_lines=3, font_size=28)
+    style = OverlayStyle(mode="stacked", hold_seconds=2.0, max_lines=3, font_size=28)
     overlay = Overlay(style, work_area=lambda: _WORK_AREA)
     if not overlay.available:
         print("FAIL: overlay unavailable (no Tk or no display)")

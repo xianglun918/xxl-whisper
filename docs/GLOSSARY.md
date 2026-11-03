@@ -47,4 +47,4 @@
 | 中文 | 代码 | 含义 |
 |---|---|---|
 | 发布标签 | tag `vX.Y.Z` / `-` 后缀为预发布 | CI 按 tag 出三平台产物 |
-| 恒定日志前缀 | `worker:` / `model:` / `tray:` / `continuous:` / `shutdown:` | 排障时按前缀 grep；措辞改动等于破坏排障资产 |
+| 恒定日志前缀 | `startup:` / `worker:` / `asr:` / `recorder:` / `hold:` / `press:` / `click:` / `loopback:` / `emit:` / `translate:` / `tray:` / `overlay:` / `config:` / `update:` / `continuous:` / 关闭时那条 `%d finished sentence(s) still queued` | 排障时按前缀 grep；措辞改动等于破坏排障资产（模型相关没有 `model:` 前缀，是 `model ready:`） |

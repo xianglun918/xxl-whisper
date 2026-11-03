@@ -139,7 +139,7 @@ def test_style_comes_from_flat_config() -> None:
 def test_style_is_immutable() -> None:
     """Style is shared with the Tk thread; nobody may mutate it in place."""
     style = OverlayStyle()
-    assert replace(style, mode="bilingual").mode == "bilingual"
+    assert replace(style, mode="stacked").mode == "stacked"
     assert style.mode == "target"
 
 

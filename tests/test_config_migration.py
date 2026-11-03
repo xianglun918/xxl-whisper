@@ -14,6 +14,7 @@ the migration contract:
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -171,7 +172,7 @@ def test_save_config_leaves_no_partial_file(tmp_path: Path) -> None:
     assert reparsed.live_max_speech_ms == 4000
 
 
-#: A v2 file whose subtitle layout still uses the pre-v3 spelling.
+#: A v2 file whose subtitle layout still uses the pre-rename spelling.
 LEGACY_V2_STACKED = """\
 config_version = 2
 hotkey = 113
@@ -187,14 +188,29 @@ def test_the_old_stacked_spelling_still_loads(tmp_path: Path) -> None:
     assert load_config(path).overlay_mode == "stacked"
 
 
-def test_the_v3_migration_rewrites_the_old_spelling(tmp_path: Path) -> None:
-    """And once migrated the file stops carrying the ambiguous name."""
+def test_a_pure_rename_does_not_force_a_rewrite(tmp_path: Path) -> None:
+    """No schema bump: renaming a spelling must not rewrite every user's file.
+
+    A bump would rewrite all v2 files on first launch (dropping comments and
+    non-scalar keys) and make downgrading fatal — an older build reading
+    ``stacked`` exits with a config error. The new spelling appears on the next
+    ordinary save instead.
+    """
     path = tmp_path / "config.toml"
     path.write_text(LEGACY_V2_STACKED, encoding="utf-8")
 
-    report = migrate_config_file(path)
+    assert migrate_config_file(path) is None
+    assert path.read_text(encoding="utf-8") == LEGACY_V2_STACKED
 
-    assert report is not None
-    assert path.read_text(encoding="utf-8").count('overlay_mode = "stacked"') == 1
-    assert "bilingual" not in path.read_text(encoding="utf-8").split("overlay_mode")[1]
-    assert CONFIG_VERSION == 3
+
+def test_the_next_save_writes_the_new_spelling(tmp_path: Path) -> None:
+    """And that save is where the ambiguous word finally leaves the file."""
+    path = tmp_path / "config.toml"
+    path.write_text(LEGACY_V2_STACKED + 'translate_mode = "bilingual"\n', encoding="utf-8")
+
+    save_config(path, load_config(path))
+
+    written = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert written["overlay_mode"] == "stacked"
+    # The *other* bilingual is a different dimension and must be left alone.
+    assert written["translate_mode"] == "bilingual"

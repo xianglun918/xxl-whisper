@@ -26,7 +26,14 @@ log = logging.getLogger(__name__)
 #: On-disk config schema version. Bump it whenever a *stored* key changes
 #: meaning, and add the step to :func:`_migrate`. Absent in files written by
 #: builds that predate the stamp, which therefore read as version 1.
-CONFIG_VERSION: int = 3
+#:
+#: Deliberately **not** bumped by the overlay_mode spelling rename
+#: (bilingual → stacked): the parser accepts both, so an old file keeps
+#: working, and a bump would rewrite every v2 file on first launch (losing
+#: comments and non-scalar keys) and make downgrading fatal — an older build
+#: reading "stacked" exits with a config error. The new spelling is written
+#: by the next ordinary save.
+CONFIG_VERSION: int = 2
 
 #: Keys older builds wrote that this build no longer writes, with what they map
 #: to. Their *values* were already honoured at load time (``legacy_default``);
@@ -49,8 +56,8 @@ type Disfluency = Literal["verbatim", "smooth"]
 #: (zh-en model); "zh" is the reverse (en-zh model).
 type TranslateTarget = Literal["en", "zh"]
 
-#: Spoken language fed into the translator. Japanese has no direct ja→zh
-#: weight, so "ja" is chained through English (see ``TRANSLATE_ROUTE_MODELS``).
+#: Spoken language fed into the translator. ja→zh ships one direct model; the
+#: ja→en→zh chain is only the fallback (see :data:`app.routes.ROUTES`).
 type TranslateSource = Literal["zh", "en", "ja"]
 
 #: The supported (source, target) combinations, as one canonical key.
@@ -113,10 +120,13 @@ _TRANSLATE_MODES: Mapping[str, None] = MappingProxyType(
 )
 
 _OVERLAY_MODES: Mapping[str, None] = MappingProxyType(
-    # "bilingual" is the pre-v3 name for the stacked layout: accepted on read so
-    # an old file still starts, rewritten as "stacked" by the v3 migration.
-    {"target": None, "source": None, "stacked": None, "bilingual": None}
+    {"target": None, "source": None, "stacked": None}
 )
+
+#: Spellings an older build wrote for a current value. Accepted on read (a stored
+#: file must keep starting) but never offered back: the error message and the
+#: saved file only ever mention :data:`_OVERLAY_MODES`.
+_OVERLAY_MODE_LEGACY: Mapping[str, str] = MappingProxyType({"bilingual": "stacked"})
 
 _OVERLAY_OUTPUTS: Mapping[str, None] = MappingProxyType(
     {"type": None, "screen": None, "both": None}
@@ -706,12 +716,17 @@ class _Parser:
         return "replace" if value == "replace" else "bilingual"
 
     def overlay_mode(self, name: str, default: OverlayMode) -> OverlayMode:
-        """Parse the subtitle layout; ``bilingual`` is the pre-v3 spelling."""
+        """Parse the subtitle layout, honouring the older ``bilingual`` spelling."""
+        raw = self._raw.get(name, default)
+        if isinstance(raw, str) and raw in _OVERLAY_MODE_LEGACY:
+            replacement = _OVERLAY_MODE_LEGACY[raw]
+            log.info("config: %s = %r is the old spelling of %r", name, raw, replacement)
+            return cast("OverlayMode", replacement)
         value = self.choice(name, default, _OVERLAY_MODES)
         match value:
             case "source":
                 return "source"
-            case "stacked" | "bilingual":
+            case "stacked":
                 return "stacked"
             case _:
                 return "target"
