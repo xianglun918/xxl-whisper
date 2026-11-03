@@ -409,14 +409,18 @@ def load_config(path: Path) -> Config:
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(reason=f"malformed TOML ({exc})", path=path) from exc
     p = _Parser(raw=raw, path=path)
+    # The direction is parsed before the rest on purpose: a hand-edited file with
+    # several bad values used to report a bad target/source first, and that is
+    # the message people search for. Parsing in file order changed which error
+    # they saw.
+    target = p.translate_target("translate_target", "en")
+    inferred = "en" if target == "zh" else "zh"
+    source = p.translate_source("translate_source", inferred)
     values = {field.name: field.parse(p) for field in _SCHEMA}
-    target = values["translate_target"]
-    source = values["translate_source"]
-    if translate_route(str(source), str(target)) is None:
+    if translate_route(source, target) is None:
         # Forgiving on purpose: a hand-edited pair we have no models for must
         # not stop dictation from starting. Fall back to the route the target
         # implies and say so in the log.
-        inferred = "en" if target == "zh" else "zh"
         log.warning(
             "unsupported translate direction %s->%s; using %s->%s",
             source,
@@ -424,7 +428,9 @@ def load_config(path: Path) -> Config:
             inferred,
             target,
         )
-        values["translate_source"] = inferred
+        source = inferred
+    values["translate_target"] = target
+    values["translate_source"] = source
     # The bar exists iff text is not typing-only: one decision, not two. A file
     # written by an older build may disagree, and convergence here is what stops
     # the contradiction from being resurrected on upgrade.
@@ -437,11 +443,13 @@ def load_config(path: Path) -> Config:
 def save_config(path: Path, config: Config) -> None:
     """Persist a Config as simple key = value TOML.
 
-    Keys this build does not know are kept verbatim: a user's own note, or a
+    Keys this build does not know are kept: a user's own scalar note, or a
     setting written by a newer build, used to disappear the next time anything
     was saved (and ``migrate_config_file`` rewrites the file on the first start).
-    Renamed legacy keys are the one exception — they have been folded into their
-    replacement, so keeping them would resurrect a value we just migrated.
+    Arrays, tables and datetimes have no writer here, so they are dropped with a
+    warning rather than re-serialised wrongly. Renamed legacy keys are the other
+    exception — they have been folded into their replacement, so keeping them
+    would resurrect a value we just migrated.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = [
@@ -733,6 +741,39 @@ class _Parser:
         raise ConfigError(reason=reason, path=self._path)
 
 
+#: Characters TOML basic strings cannot contain literally.
+_QUOTE_ESCAPES: Mapping[str, str] = MappingProxyType(
+    {
+        "\\": "\\\\",
+        '"': '\\"',
+        "\n": "\\n",
+        "\r": "\\r",
+        "\t": "\\t",
+        "\b": "\\b",
+        "\f": "\\f",
+    }
+)
+
+#: Control characters need a \u escape; everything printable is written as is.
+_FIRST_CONTROL: int = 0x20
+_DELETE: int = 0x7F
+
+
 def _quote(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    """Quote a string for the file, escaping what a basic string forbids.
+
+    A raw newline here used to be unreachable — no string we wrote could contain
+    one. Now that keys we do not own are re-emitted, a user's multi-line string
+    reaches this function, and one unescaped newline makes the whole file
+    unparseable: the next launch dies with ``ConfigError`` instead of starting.
+    """
+    out: list[str] = []
+    for char in value:
+        escape = _QUOTE_ESCAPES.get(char)
+        if escape is not None:
+            out.append(escape)
+        elif ord(char) < _FIRST_CONTROL or ord(char) == _DELETE:
+            out.append(f"\\u{ord(char):04X}")
+        else:
+            out.append(char)
+    return '"' + "".join(out) + '"'

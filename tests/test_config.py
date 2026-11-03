@@ -331,3 +331,40 @@ def test_controls_never_writes_the_config_itself() -> None:
     """
     source = Path(controls.__file__).read_text(encoding="utf-8")
     assert "save_config" not in source
+
+
+def test_foreign_multiline_string_survives_a_save(tmp_path: Path) -> None:
+    """A user's multi-line note must not turn the file into invalid TOML.
+
+    Re-emitting an unescaped newline inside a basic string made the next launch
+    die with ConfigError — worse than the old behaviour, which only lost the key.
+    """
+    path = tmp_path / "config.toml"
+    path.write_text('note = """line1\nline2"""\n', encoding="utf-8")
+    config = load_config(path)
+
+    save_config(path, config)
+
+    assert 'note = "line1\\nline2"' in path.read_text(encoding="utf-8")
+    assert load_config(path) == config
+
+
+def test_newline_in_a_schema_value_keeps_the_file_parseable(tmp_path: Path) -> None:
+    """The same escaping protects our own strings (a mic name, a proxy URL)."""
+    path = tmp_path / "config.toml"
+    config = replace(default_config(), proxy="a\tb\nc")
+
+    save_config(path, config)
+
+    assert load_config(path) == config
+
+
+def test_error_precedence_reports_the_direction_first(tmp_path: Path) -> None:
+    """Two bad values: the direction is what a hand-edited file hears about first."""
+    path = tmp_path / "config.toml"
+    path.write_text('hotkey = "nope"\ntranslate_target = "fr"\n', encoding="utf-8")
+
+    with pytest.raises(ConfigError) as caught:
+        load_config(path)
+
+    assert "translate_target" in caught.value.reason
