@@ -86,7 +86,7 @@ ROUTES: tuple[RouteSpec, ...] = (
     ),
     RouteSpec(
         key="ja-zh",
-        label="日 → 中（经英文中转，两段）",
+        label="日 → 中（直译单模型）",
         short="日→中",
         source="ja",
         target="zh",

@@ -9,6 +9,8 @@ carrying its own copy.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.config import language_for_route
 from app.downloader import TRANSLATE_ROUTE_MODELS
 from app.options import ROUTE_OPTIONS, ROUTE_SHORT
@@ -89,3 +91,66 @@ def test_unknown_routes_never_raise() -> None:
     assert models_for("nope") == ()
     assert fallback_of("nope") == ()
     assert pin_language("nope") is None
+
+
+#: User-visible wording, pinned on purpose: rewording a direction is a product
+#: decision, so it should require touching a test, not slip through as a diff.
+EXPECTED_LABELS: dict[str, str] = {
+    "zh-en": "中 → 英（说中文出英文）",
+    "en-zh": "英 → 中（说英文出中文）",
+    "ja-zh": "日 → 中（直译单模型）",
+    "ja-en": "日 → 英（一段直出，最快最省内存）",
+}
+
+EXPECTED_SHORT: dict[str, str] = {
+    "zh-en": "中→英",
+    "en-zh": "英→中",
+    "ja-zh": "日→中",
+    "ja-en": "日→英",
+}
+
+
+def test_user_visible_labels_are_pinned() -> None:
+    """The menu and the status flash both read these; a typo is a release note."""
+    assert {spec.key: spec.label for spec in ROUTES} == EXPECTED_LABELS
+    assert {spec.key: spec.short for spec in ROUTES} == EXPECTED_SHORT
+
+
+def test_the_japanese_route_is_described_as_the_direct_model() -> None:
+    """ja→zh ships one 145 MB direct model; the two-hop chain is only a fallback.
+
+    The menu used to say 「经英文中转，两段」, which described the fallback as if it
+    were the shipped path — and the status flash inherited that wording once the
+    two labels were unified.
+    """
+    label = spec_of("ja-zh").label if spec_of("ja-zh") else ""
+    assert "经英文中转" not in label
+    assert "直译" in label
+    assert models_for("ja-zh") == ("ja-zh",)
+    assert fallback_of("ja-zh") == ("ja-en", "en-zh")  # pinned: the rescue chain
+
+
+def test_config_accepts_every_catalogue_direction() -> None:
+    """A route in the catalogue must pass config validation without a second edit.
+
+    ``_TRANSLATE_TARGETS``/``_TRANSLATE_SOURCES`` are runtime whitelists: when they
+    were hand-written, a direction offered by the menu could be rejected on the
+    next load ("translate_target must be one of: en, zh").
+    """
+    from app import config as config_module  # noqa: PLC0415 - needs the module, not a name
+
+    assert {spec.target for spec in ROUTES} == set(config_module._TRANSLATE_TARGETS)
+    assert {spec.source for spec in ROUTES} == set(config_module._TRANSLATE_SOURCES)
+
+
+def test_config_whitelists_are_projected_not_copied() -> None:
+    """Values alone cannot prove it: today's targets happen to be ``en``/``zh``.
+
+    A hand-written set would pass an equality check and still reject the next
+    direction the catalogue gains, so the mechanism is pinned too.
+    """
+    from app import config as config_module  # noqa: PLC0415 - need the source path
+
+    source = Path(config_module.__file__).read_text(encoding="utf-8")
+    assert "spec.target for spec in ROUTES" in source
+    assert "spec.source for spec in ROUTES" in source

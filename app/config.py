@@ -17,7 +17,7 @@ from typing import Any, Literal, NoReturn, cast
 
 from app import native
 from app.keycodes import DEFAULT_HOTKEY, MOUSE_KEYCODES, PRESET_KEYCODES
-from app.routes import pin_language, route_keys
+from app.routes import ROUTES, pin_language, route_keys
 
 APP_DIR_NAME: str = "xxl-whisper"
 
@@ -90,10 +90,15 @@ _DISFLUENCY: Mapping[str, None] = MappingProxyType(
     {"verbatim": None, "smooth": None}
 )
 
-_TRANSLATE_TARGETS: Mapping[str, None] = MappingProxyType({"en": None, "zh": None})
+#: Runtime whitelists, projected from :data:`app.routes.ROUTES`. A route added
+#: there is accepted here automatically; a hand-written copy would reject the
+#: very direction the menu just offered ("translate_target must be one of …").
+_TRANSLATE_TARGETS: Mapping[str, None] = MappingProxyType(
+    dict.fromkeys(spec.target for spec in ROUTES)
+)
 
 _TRANSLATE_SOURCES: Mapping[str, None] = MappingProxyType(
-    {"zh": None, "en": None, "ja": None}
+    dict.fromkeys(spec.source for spec in ROUTES)
 )
 
 #: Only these combinations have models behind them; anything else is a config

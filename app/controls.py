@@ -39,7 +39,7 @@ from app.downloader import (
 )
 from app.emit import is_classic_control
 from app.recorder import Recorder
-from app.routes import fallback_of
+from app.routes import fallback_of, route_short
 from app.translator import (
     ChainedTranslator,
     NmtSettings,
@@ -293,9 +293,15 @@ class Controls:
             "; recognizer must be rebuilt" if language != config.language else "",
         )
         if source == "ja":
-            self._deps.indicator.flash("已切到日→中：识别语言已设为 ja", 2500)
+            # Name the route that was actually chosen: choosing 日→英 used to
+            # flash 日→中, because the text was written per language, not per route.
+            self._deps.indicator.flash(
+                f"已切到{route_short(new_route)}：识别语言已设为 ja", 2500
+            )
         elif target == "zh" and language == "auto":
-            self._deps.indicator.flash("已切到英→中：识别语言已设为 auto", 2500)
+            self._deps.indicator.flash(
+                f"已切到{route_short(new_route)}：识别语言已设为 auto", 2500
+            )
         return True
 
     def _nmt_settings(self, model_dir: Path, pair: str) -> NmtSettings:
