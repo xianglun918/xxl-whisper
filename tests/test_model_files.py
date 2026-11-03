@@ -8,11 +8,13 @@ paper over the difference (k2-fsa ships `model.int8.onnx`; we store
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
-from app.model_files import MODEL_LAYOUT, ModelFiles
+from app.model_files import ASR_KINDS, MODEL_LAYOUT, ModelFiles
 
+from app import asr
 from app import downloader as dl
 
 
@@ -47,16 +49,49 @@ def test_an_unknown_artifact_is_a_layout_bug(tmp_path: Path) -> None:
         files.path("decoder")  # sensevoice has no decoder
 
 
-#: What each recogniser branch asks for by name. A layout that forgets one of
-#: these fails at load time inside sherpa-onnx, so it is pinned here; adding a
-#: model means adding its row to both this map and the layout.
-REQUIRED_ARTIFACTS: dict[str, set[str]] = {
-    "sensevoice": {"model", "tokens"},
-    "whisper_turbo": {"encoder", "decoder", "tokens"},
-    "funasr_nano": {"encoder_adaptor", "embedding", "llm", "tokenizer"},
-}
+def test_a_translate_route_is_not_an_asr_kind(tmp_path: Path) -> None:
+    """Translation has its own file list; the ASR layout must refuse it loudly."""
+    assert set(dl._TRANSLATE_MODELS) & ASR_KINDS == set()
+
+    with pytest.raises(KeyError):
+        ModelFiles.resolve("ja-zh", tmp_path / "ja-zh")
 
 
-def test_the_layout_declares_every_artifact_the_recogniser_asks_for() -> None:
-    for kind, required in REQUIRED_ARTIFACTS.items():
-        assert required <= set(MODEL_LAYOUT[kind]), kind
+def _artifacts_the_recogniser_asks_for() -> dict[str, set[str]]:
+    """Read ``Recognizer``'s branches and collect ``files.path("<name>")`` calls.
+
+    Parsed from the source on purpose: a hand-copied list of names would pass
+    even after the recogniser started asking for something else (that mutation
+    survived the first version of this file).
+    """
+    tree = ast.parse(Path(asr.__file__).read_text(encoding="utf-8"))
+    requested: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Match):
+            continue
+        for case in node.cases:
+            pattern = case.pattern
+            if not isinstance(pattern, ast.MatchValue):
+                continue
+            if not isinstance(pattern.value, ast.Constant):
+                continue
+            names = {
+                str(call.args[0].value)
+                for call in ast.walk(case)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "path"
+                and call.args
+                and isinstance(call.args[0], ast.Constant)
+            }
+            if names:
+                requested[str(pattern.value.value)] = names
+    return requested
+
+
+def test_the_layout_covers_what_the_recogniser_actually_asks_for() -> None:
+    requested = _artifacts_the_recogniser_asks_for()
+
+    assert set(requested) == set(MODEL_LAYOUT)
+    for kind, names in requested.items():
+        assert names <= set(MODEL_LAYOUT[kind]), kind
