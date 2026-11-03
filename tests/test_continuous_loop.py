@@ -102,6 +102,7 @@ class _Host:
     paused: bool = False
     blocks: int = 0
     confirmed: int = 0
+    delivered: int = 0
     never_started: int = 0
     stopped: int = 0
     sinks: list[queue.Queue[np.ndarray]] = field(default_factory=list)
@@ -116,6 +117,9 @@ class _Host:
     def _never_started(self) -> None:
         self.never_started += 1
 
+    def _delivered(self) -> None:
+        self.delivered += 1
+
     def _stop_sink(self) -> None:
         self.stopped += 1
 
@@ -129,6 +133,7 @@ class _Host:
             subtitles=lambda: self.subtitles,
             paused=lambda: self.paused,
             on_partial_text=self.partial_texts.append,
+            on_utterance_delivered=self._delivered,
             on_audio_confirmed=self._confirmed,
             on_audio_never_started=self._never_started,
             start_sink=self.sinks.append,
@@ -452,6 +457,7 @@ def test_decode_loop_hands_finished_sentences_to_the_emitter() -> None:
 
     assert host.emit_queue.items == ["finished"]
     assert slot.take() is not None  # the partial is the partial thread's job
+    assert host.delivered == 1  # the host was asked to flash "✓ 已上屏"
 
 
 class _StopRecognizer:

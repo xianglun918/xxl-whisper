@@ -64,13 +64,6 @@ PARTIAL_INTERVAL_S: float = 0.35
 #: How long :meth:`ContinuousSession.stop` waits for each worker to unwind.
 JOIN_TIMEOUT_S: float = 2.0
 
-#: Sticky pill shown while continuous mode is listening.
-LISTEN_TEXT: str = "● 聆听中"
-#: Confirmation flashed at each endpoint before returning to listening.
-COMMIT_TEXT: str = "✓ 已上屏"
-COMMIT_FLASH_MS: int = 900
-
-
 class EmitSink(Protocol):
     """What the session needs from the delivery side: queue one sentence."""
 
@@ -115,6 +108,9 @@ class SessionPorts:
     paused: Callable[[], bool]
     #: Hand an in-progress caption to the host (translation + provisional line).
     on_partial_text: Callable[[str], None]
+    #: One finished sentence was decoded and queued: host flashes the pill
+    #: (the session holds no user-facing copy of its own).
+    on_utterance_delivered: Callable[[], None]
     #: Audio is demonstrably flowing (the host re-renders the tray tick).
     on_audio_confirmed: Callable[[], None]
     #: Audio never started: the host stops the session, persists "off" and says so.
@@ -381,9 +377,7 @@ class ContinuousSession:
                 )
                 finished_segments += len(batch.segments)
                 if emitted and not self._ports.subtitles():
-                    self._ports.indicator.flash_listen(
-                        COMMIT_TEXT, LISTEN_TEXT, COMMIT_FLASH_MS
-                    )
+                    self._ports.on_utterance_delivered()
                 continue
             if vad_done.is_set():
                 break

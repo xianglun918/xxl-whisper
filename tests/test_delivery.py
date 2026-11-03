@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from app.delivery import COMMIT_TEXT, DeliveryPorts, UtteranceDelivery
 from app.type_batcher import TypeBatcher
 
@@ -22,9 +23,13 @@ from app import delivery as delivery_module
 class _Indicator:
     def __init__(self) -> None:
         self.flashes: list[str] = []
+        self.listen_flashes: list[tuple[str, str]] = []
 
     def flash(self, text: str, _ms: int) -> None:
         self.flashes.append(text)
+
+    def flash_listen(self, flash_text: str, listen_text: str, _ms: int) -> None:
+        self.listen_flashes.append((flash_text, listen_text))
 
 
 @dataclass(slots=True)
@@ -34,6 +39,8 @@ class _Host:
     subtitles: bool = True
     overlay_only: bool = False
     translate_mode: str = "replace"
+    #: False models "translation is off": the call happens, it just does nothing.
+    translate_runs: bool = True
     #: When False the translator "ran" but produced nothing (model error path).
     translate_succeeds: bool = True
     translations: list[str] = field(default_factory=list)
@@ -43,6 +50,8 @@ class _Host:
 
     def translate(self, text: str) -> tuple[str, bool]:
         self.translations.append(text)
+        if not self.translate_runs:
+            return "", False
         if not self.translate_succeeds:
             return "", True
         return f"T({text})", True
@@ -198,7 +207,11 @@ def test_flush_item_types_the_held_batch(monkeypatch) -> None:
     item, stop = _running(host, monkeypatch, pastes)
     try:
         item.submit("half a sentence", forced=True)
-        assert _wait_for(lambda: True)
+        # Consumed by the emitter and sitting in the batcher: no translation is
+        # owed yet (no subtitle bar), and nothing may be typed yet.
+        assert _wait_for(lambda: item.pending == 0)
+        assert pastes.texts == []
+        assert host.translations == []
         item.submit_flush()
         assert _wait_for(lambda: pastes.texts == ["T(half a sentence)"])
     finally:
@@ -249,3 +262,112 @@ def test_translation_failure_falls_back_to_the_source_text(monkeypatch) -> None:
 
     assert pastes.texts == ["原文"]
     assert host.indicator.flashes == ["翻译失败，已上屏原文"]
+
+
+def test_push_to_talk_ignores_a_leftover_force_cut_piece(monkeypatch) -> None:
+    """A held key is one utterance: it must not be glued onto earlier pieces."""
+    host = _Host(subtitles=False)
+    pastes = _Pastes()
+    item, stop = _running(host, monkeypatch, pastes)
+    try:
+        item.submit("前半句", forced=True)  # a force-cut piece from continuous mode
+        assert _wait_for(lambda: item.pending == 0)  # consumed, now batched
+        assert pastes.texts == []  # still inside the batcher
+        item.deliver_now("按住说话")
+        assert pastes.texts == ["T(按住说话)"]  # not "前半句按住说话"
+    finally:
+        stop.set()
+        item.stop()
+
+
+def test_push_to_talk_paste_failure_reaches_the_caller(monkeypatch) -> None:
+    """Push-to-talk runs on the worker thread: the error must not be swallowed.
+
+    The worker is what flashes "出错了，详见日志" and raises the tray notice; if
+    delivery ate the exception the user would speak, see nothing in the document
+    and get no feedback at all.
+    """
+    host = _Host(subtitles=False)
+    pastes = _Pastes(fail_on="T(boom)")
+    item, stop = _running(host, monkeypatch, pastes)
+    try:
+        with pytest.raises(_PasteFailureError):
+            item.deliver_now("boom")
+    finally:
+        stop.set()
+        item.stop()
+
+
+def test_stop_after_shutdown_queues_no_phantom_sentence(monkeypatch) -> None:
+    """The shutdown log counts sentences, so a control item must not inflate it."""
+    host = _Host(subtitles=False)
+    pastes = _Pastes()
+    item, stop = _running(host, monkeypatch, pastes)
+    stop.set()
+    # Wait for the emitter to actually exit first: otherwise it could still
+    # drain the very item this test is about, and both behaviours would pass.
+    assert _wait_for(lambda: item._thread is not None and not item._thread.is_alive())
+    item.stop()
+
+    assert item.pending == 0
+
+
+def test_announce_delivered_returns_to_the_listening_pill(monkeypatch) -> None:
+    """Continuous typing-only mode flashes ✓ and falls back to 「聆听中」."""
+    host = _Host(subtitles=False)
+    pastes = _Pastes()
+    item, stop = _running(host, monkeypatch, pastes)
+    try:
+        item.announce_delivered()
+    finally:
+        stop.set()
+        item.stop()
+
+    assert host.indicator.listen_flashes == [("✓ 已上屏", "● 聆听中")]
+
+
+def test_push_to_talk_with_bar_on_and_translation_off_translates_once(monkeypatch) -> None:
+    """One decision, one call: a no-op translation must not be asked twice."""
+    host = _Host(subtitles=True, translate_runs=False)
+    pastes = _Pastes()
+    item, stop = _running(host, monkeypatch, pastes)
+    try:
+        item.deliver_now("你好")
+    finally:
+        stop.set()
+        item.stop()
+
+    assert host.translations == ["你好"]  # asked once, not twice
+    assert pastes.texts == ["你好"]  # falls back to the source text
+    assert host.indicator.flashes == []  # attempted=False: no failure flash
+
+
+def test_start_is_idempotent(monkeypatch) -> None:
+    """Two starts must not leave two emitters draining one queue."""
+    host = _Host(subtitles=False)
+    pastes = _Pastes()
+    monkeypatch.setattr(delivery_module, "emit_text", pastes)
+    stop = threading.Event()
+    item = UtteranceDelivery(ports=host.ports())
+    item.start(stop)
+    first = item._thread
+    item.start(stop)
+    try:
+        assert item._thread is first
+    finally:
+        stop.set()
+        item.stop()
+
+
+def test_dropped_counts_the_oldest_sacrificed_sentence(monkeypatch) -> None:
+    """A stale sentence is dropped rather than shown late — and counted."""
+    host = _Host(subtitles=False)
+    pastes = _Pastes()
+    monkeypatch.setattr(delivery_module, "emit_text", pastes)
+    item = UtteranceDelivery(ports=host.ports(), queue_max=1)
+    item.submit("oldest")
+    item.submit("newer")
+    item.submit("newest")
+
+    assert item.pending == 1
+    assert item.dropped >= 1  # the oldest went, so "newest" is what survives

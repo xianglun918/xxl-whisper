@@ -42,6 +42,10 @@ log = logging.getLogger(__name__)
 COMMIT_TEXT: str = "✓ 已上屏"
 COMMIT_FLASH_MS: int = 900
 
+#: Sticky pill shown while continuous dictation is listening (the flash above
+#: returns to it). Both live here so the wording has exactly one home.
+LISTEN_TEXT: str = "● 聆听中"
+
 #: Bounded queue between ASR and this module: deep enough to absorb a burst,
 #: shallow enough that a stale subtitle is dropped rather than shown late.
 QUEUE_MAX: int = 64
@@ -110,7 +114,11 @@ class UtteranceDelivery:
         The host sets its shutdown flag first; this only asks for the tail to be
         flushed so a half-sentence never dies with the process.
         """
-        self.submit_flush()
+        # Once the shutdown flag is set, the loop's own tail flush types the
+        # batch; queueing a control item into a queue nobody drains again would
+        # only make the shutdown log claim a sentence is still pending.
+        if self._stop_event is None or not self._stop_event.is_set():
+            self.submit_flush()
         thread = self._thread
         self._thread = None
         if thread is not None:
@@ -130,13 +138,26 @@ class UtteranceDelivery:
         self._queue.submit_flush()
 
     def deliver_now(self, text: str) -> None:
-        """Deliver one whole sentence on the calling thread (push-to-talk)."""
+        """Deliver one whole sentence on the calling thread (push-to-talk).
+
+        Deliberately bypasses the batcher: a held key is one utterance, so a
+        force-cut piece left over from an earlier continuous session must not be
+        glued onto it. Failures propagate on purpose — this runs on the worker
+        thread, whose handler is what tells the user "出错了，详见日志".
+        """
         translated, attempted = self._subtitle_or_translate(text)
         if self._ports.overlay_only():
             self._ports.indicator.flash(COMMIT_TEXT, COMMIT_FLASH_MS)
             return
-        cached = (translated, attempted) if attempted else None
-        self._type_text(text, cached=cached)
+        # When the bar is on, the decision above already ran the translator (or
+        # decided there was nothing to translate); reuse that answer instead of
+        # asking the model a second time.
+        cached = (translated, attempted) if self._ports.subtitles() else None
+        self._type_text(text, cached=cached, raise_on_error=True)
+
+    def announce_delivered(self) -> None:
+        """Continuous, typing only: flash ✓, then fall back to the listen pill."""
+        self._ports.indicator.flash_listen(COMMIT_TEXT, LISTEN_TEXT, COMMIT_FLASH_MS)
 
     def reconfigure(self, *, window_s: float, max_chars: int) -> None:
         """Rebuild the typing batcher for a new session's merge policy."""
@@ -219,13 +240,19 @@ class UtteranceDelivery:
         return translated, attempted
 
     def _type_text(
-        self, sentence: str, *, cached: tuple[str, bool] | None = None
+        self,
+        sentence: str,
+        *,
+        cached: tuple[str, bool] | None = None,
+        raise_on_error: bool = False,
     ) -> None:
         """Translate (if needed) and paste one whole sentence into the cursor.
 
         *cached* carries a translation already computed for this very sentence
         (the subtitle path does one), so the emitter does not run the NMT model
-        twice per sentence.
+        twice per sentence. *raise_on_error* is for the push-to-talk path, which
+        runs on the worker thread: there the exception is the only way the user
+        learns that nothing was typed.
         """
         if not sentence:
             return
@@ -239,6 +266,8 @@ class UtteranceDelivery:
                 self._ports.indicator,
             )
         except Exception:  # one failed paste must not lose the rest
+            if raise_on_error:
+                raise
             log.exception("typing failed for %s", logsafe.describe_text(sentence))
 
     def _type_batch(self) -> None:

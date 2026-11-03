@@ -33,14 +33,9 @@ from app.config import (
     take_pending_migration,
     with_overlay_mode,
 )
-from app.continuous import (
-    LISTEN_TEXT,
-    ContinuousSession,
-    SessionLimits,
-    SessionPorts,
-)
+from app.continuous import ContinuousSession, SessionLimits, SessionPorts
 from app.controls import Controls, ControlsDeps
-from app.delivery import DeliveryPorts, UtteranceDelivery
+from app.delivery import LISTEN_TEXT, DeliveryPorts, UtteranceDelivery
 from app.downloader import (
     DownloadError,
     ensure_model,
@@ -1054,6 +1049,7 @@ class DictationApp:
             subtitles=self._subtitles,
             paused=lambda: self._paused,
             on_partial_text=self._offer_partial_subtitle,
+            on_utterance_delivered=self._delivery.announce_delivered,
             on_audio_confirmed=self._tray.refresh_menu,
             on_audio_never_started=self._on_audio_never_started,
             start_sink=self._start_capture_sink,
