@@ -21,6 +21,7 @@ from PIL import Image, ImageDraw
 
 import app.loopback as loopback_mod
 import app.recorder as recorder_mod
+from app import native
 from app.menu_refresh import DEFAULT_REFRESH_DELAY_S, guarded, schedule_refresh
 from app.menu_spec import (
     Entry,
@@ -71,6 +72,13 @@ def list_system_audio_devices() -> tuple[tuple[str, str], ...]:
     return tuple(
         (device.name, device.device_id) for device in loopback_mod.list_loopback_devices()
     )
+
+
+def _system_audio_hint() -> str:
+    """Tell macOS users to route audio via BlackHole (no loopback API there)."""
+    if native.IS_MACOS:
+        return "系统/会议声音：请安装 BlackHole 虚拟声卡，并在上方选为输入设备"
+    return ""
 
 
 class Tray:
@@ -150,6 +158,7 @@ class Tray:
         inputs = MenuInputs(
             microphones=list_microphone_names(),
             system_audio=list_system_audio_devices(),
+            platform_hint=_system_audio_hint(),
         )
         # The provider (not a snapshot) is what keeps ticks and labels live:
         # pystray builds the native menu once and re-asks on every open.

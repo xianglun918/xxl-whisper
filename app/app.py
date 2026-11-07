@@ -12,6 +12,7 @@ import logging
 import queue
 import threading
 import time
+import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, assert_never
@@ -68,6 +69,9 @@ from app.update_flow import UpdateFlow, UpdateFlowDeps
 log = logging.getLogger(__name__)
 
 _VK_DISABLED: int = 0
+
+#: Usage guide (the landing page doubles as the README).
+_HELP_URL: str = "https://xianglun918.github.io/xxl-whisper/"
 
 @dataclass(frozen=True, slots=True)
 class KeyTransition:
@@ -238,6 +242,7 @@ class DictationApp:
                 on_select_overlay_output=lambda mode: self._tray_click(
                     f"overlay-output:{mode}", lambda: self._queue.put(SetOverlayOutput(mode=mode))
                 ),
+                on_show_help=self._show_help,
                 on_select_system_audio=lambda device_id: self._queue.put(
                     SetSystemAudio(device_id=device_id)
                 ),
@@ -396,6 +401,14 @@ class DictationApp:
 
     def _show_diagnostics(self) -> None:
         self._controls.show_diagnostics()
+
+    def _show_help(self) -> None:
+        """Open the usage guide in the default browser; fall back to a dialog."""
+        try:
+            webbrowser.open(_HELP_URL)
+        except Exception:
+            log.exception("help: opening the guide failed")
+            native.util.show_info(f"使用说明请访问：\n{_HELP_URL}")
 
     def _show_diagnostics_deferred(self) -> None:
         """Show diagnostics after the tray menu closes.

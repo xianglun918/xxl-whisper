@@ -204,6 +204,7 @@ def tray_module(monkeypatch):
         DEFAULT_HOTKEY="caps_lock",
     )
     native.data_root = lambda: "/tmp/xxl-whisper-test"
+    native.IS_MACOS = False
     native.io = types.SimpleNamespace(
         active_monitor_work_area=lambda: (0, 0, 1920, 1080),
         exclusive_fullscreen_owner_active=lambda: False,
@@ -249,6 +250,7 @@ def _callbacks(tray, calls: list[str]):
         on_toggle_translate=record("translate"),
         on_select_translate_route=record("route"),
         on_select_overlay_output=record("output"),
+        on_show_help=record("help"),
     )
 
 
@@ -418,6 +420,7 @@ def test_menu_actions_survive_an_exception(tray_module) -> None:
             on_toggle_translate=boom,
             on_select_translate_route=boom,
             on_select_overlay_output=boom,
+            on_show_help=boom,
         ),
         lambda: _state(tray_module),
     )
