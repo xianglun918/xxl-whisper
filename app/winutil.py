@@ -116,6 +116,27 @@ def save_file_dialog() -> str | None:
     return path or None
 
 
+def open_file_dialog() -> str | None:
+    """Open a file dialog and return the chosen file, or None on cancel."""
+    import tkinter as tk  # noqa: PLC0415 — lazy so dialogs are only paid for on use
+    from tkinter import filedialog  # noqa: PLC0415
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        path = filedialog.askopenfilename(
+            parent=root,
+            title="选择要转写的音频/视频文件",
+            filetypes=[
+                ("音频/视频", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.mp4 *.mov *.mkv *.webm"),
+                ("所有文件", "*.*"),
+            ],
+        )
+    finally:
+        root.destroy()
+    return path or None
+
 
 def set_dpi_awareness() -> None:
     """Best-effort per-monitor DPI awareness so the Tk bar isn't blurry."""

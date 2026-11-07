@@ -253,6 +253,7 @@ def _callbacks(tray, calls: list[str]):
         on_show_help=record("help"),
         on_select_output_file=record("output-file"),
         on_clear_output_file=record("clear-output-file"),
+        on_transcribe_file=record("transcribe-file"),
     )
 
 
@@ -426,6 +427,7 @@ def test_menu_actions_survive_an_exception(tray_module) -> None:
             on_show_help=boom,
             on_select_output_file=boom,
             on_clear_output_file=boom,
+            on_transcribe_file=boom,
         ),
         lambda: _state(tray_module),
     )

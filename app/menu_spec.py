@@ -67,6 +67,7 @@ class TrayCallbacks:
     on_show_help: Callable[[], None]
     on_select_output_file: Callable[[], None]
     on_clear_output_file: Callable[[], None]
+    on_transcribe_file: Callable[[], None]
 
 
 class ConfigView(Protocol):
@@ -395,6 +396,7 @@ def _settings_entries(
             checked=_tick(provider, lambda state: state.autostart),
         ),
         separator(),
+        Entry(label="转写文件…", action=callbacks.on_transcribe_file),
         Entry(label="输入诊断", action=callbacks.on_show_diagnostics),
         Entry(label="检查更新", action=callbacks.on_check_update),
         Entry(label="使用说明", action=callbacks.on_show_help),

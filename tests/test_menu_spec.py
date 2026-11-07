@@ -53,6 +53,7 @@ def _callbacks() -> TrayCallbacks:
         on_show_help=noop,
         on_select_output_file=noop,
         on_clear_output_file=noop,
+        on_transcribe_file=noop,
     )
 
 
