@@ -52,7 +52,11 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # macOS has no Tk: the status bar and subtitle overlay are native AppKit
+    # (mac_indicator.py / mac_overlay.py). Exclude tkinter so an accidental
+    # reachability (e.g. a Windows-only module's `import tkinter`) never drags
+    # Tcl/Tk into the .app.
+    excludes=["tkinter"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
