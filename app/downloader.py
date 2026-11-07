@@ -52,6 +52,10 @@ _GH_TARBALL_FUNASR_NANO: str = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
     "/sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2"
 )
+_GH_TARBALL_WHISPER_TURBO: str = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
+    "/sherpa-onnx-whisper-turbo.tar.bz2"
+)
 #: Our own backup of the default model, independent of hf-mirror and k2-fsa.
 _GH_BACKUP_SENSEVOICE: str = (
     "https://github.com/xianglun918/xxl-whisper/releases/download/models"
@@ -264,6 +268,7 @@ _MODEL_FILES: dict[str, tuple[tuple[str, str, int, frozenset[str]], ...]] = {
 _MODEL_TARBALLS: dict[str, tuple[str, ...]] = {
     "sensevoice": (_GH_TARBALL_SENSEVOICE, _GH_BACKUP_SENSEVOICE),
     "funasr_nano": (_GH_TARBALL_FUNASR_NANO,),
+    "whisper_turbo": (_GH_TARBALL_WHISPER_TURBO,),
 }
 
 #: Tarball member name -> on-disk filename, where upstream tarballs use a

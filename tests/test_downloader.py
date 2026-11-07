@@ -129,6 +129,12 @@ def test_tarball_fallback_extracts_missing_files(
         assert (files.directory / dest).read_bytes() == payload
 
 
+def test_every_model_has_a_tarball_fallback() -> None:
+    """No model kind may regress to "no tarball fallback" (whisper_turbo did)."""
+    missing = [kind for kind in dl._MODEL_FILES if not dl._MODEL_TARBALLS.get(kind)]
+    assert missing == []
+
+
 def test_tarball_fallback_rejects_wrong_hash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
