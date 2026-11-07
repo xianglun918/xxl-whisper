@@ -45,6 +45,39 @@ except Exception as exc:  # noqa: BLE001 - backend init touches the display serv
     _pystray_error = exc
 
 
+def _patch_pystray_main_thread_menu() -> None:
+    """Force pystray's macOS menu update onto the main thread.
+
+    pystray 0.19.5 calls ``NSStatusItem.setMenu_`` on whatever thread asks for
+    a refresh — for us, the ``threading.Timer`` in :mod:`app.menu_refresh`.
+    macOS 27 asserts ``setMenu`` must run on the main thread
+    (``assertBarrierOnQueue``) and hard-crashes with SIGTRAP. Replacing the
+    method marshals only the ``setMenu_`` call to the main run loop (the same
+    ``NSOperationQueue`` pattern as :mod:`app.mac_indicator`); the menu tree is
+    still built on the calling thread, exactly as before.
+    """
+    if not native.IS_MACOS or _pystray is None:
+        return
+    try:
+        darwin = importlib.import_module("pystray._darwin")
+        appkit = importlib.import_module("AppKit")
+    except Exception:  # noqa: BLE001 - a missing backend must not break the tray
+        return
+
+    def _update_menu(self: Any) -> None:  # noqa: ANN401 - patched onto pystray.Icon
+        callbacks: list[Any] = []
+        nsmenu = self._create_menu(self.menu, callbacks)
+        appkit.NSOperationQueue.mainQueue().addOperationWithBlock_(
+            lambda: self._status_item.setMenu_(nsmenu)
+        )
+        self._menu_handle = (nsmenu, callbacks) if nsmenu else None
+
+    darwin.Icon._update_menu = _update_menu  # noqa: SLF001 - deliberate monkeypatch
+
+
+_patch_pystray_main_thread_menu()
+
+
 class TrayUnavailableError(RuntimeError):
     """Raised when the running system has no usable tray backend."""
 
