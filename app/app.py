@@ -145,6 +145,18 @@ class InitModel:
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class ModelLoaded:
+    """Posted by a background loader once the recognizer is built (or failed).
+
+    ``recognizer`` is None when the download or load failed; ``generation``
+    lets the worker discard a stale result after a newer load was requested.
+    """
+
+    recognizer: Recognizer | None
+    generation: int
+
+
 type WorkerMsg = (
     KeyTransition
     | SetPaused
@@ -160,6 +172,7 @@ type WorkerMsg = (
     | SetOverlayOutput
     | SetOutputFile
     | InitModel
+    | ModelLoaded
 )
 
 
@@ -199,6 +212,13 @@ class DictationApp:
         self._hold_confirm_timer: threading.Timer | None = None
         self._model_downloaded = False
         self._model_ready = False
+        #: Monotonic generation for recognizer loads; a stale background result
+        #: (an older load finishing after a newer one was requested) is ignored.
+        self._model_generation = 0
+        #: When the current recognizer load started, for the "model ready" log.
+        self._model_load_started_at = 0.0
+        #: Why the in-flight load was started: "init" / "swap" / "disfluency".
+        self._model_load_purpose = ""
 
         #: One sentence, one delivery: translate once, then subtitle and/or type.
         #: Owns the ASR→translation queue, the emitter thread and the typing
@@ -488,6 +508,8 @@ class DictationApp:
                 self._set_output_file(path)
             case InitModel():
                 self._init_model()
+            case ModelLoaded(recognizer=recognizer, generation=generation):
+                self._on_model_loaded(recognizer, generation)
             case unreachable:
                 assert_never(unreachable)
 
@@ -600,83 +622,116 @@ class DictationApp:
         self._recognizer = None
 
     def _swap_model(self, kind: str) -> None:
-        # Disarm while the worker downloads (CapsLock stays native), re-arm after.
-        # The old recognizer is released by Controls just before the new build.
+        """Commit the choice, then download + build the new model off the worker.
+
+        The hooks are disarmed and the old recognizer is dropped up front (so the
+        peak stays one model); push-to-talk shows the loading prompt until the
+        loader finishes and ``_on_model_loaded`` re-arms.
+        """
+        if not self._controls.commit_model(kind):
+            return  # no-op, or unknown kind
         if self._hook is not None:
             self._hook.set_armed(False)
         if self._mouse_hook is not None:
             self._mouse_hook.set_armed(False)
-        recognizer: Recognizer | None = None
-        try:
-            recognizer = self._controls.swap_model(kind)
-        except Exception:
-            # Re-arming the hooks used to be skipped when the swap raised, which
-            # left them disarmed for the rest of the session: push-to-talk stayed
-            # dead and the only trace was one log line. Rebuild the current model
-            # (the config was already switched) so dictation keeps working.
-            log.exception("model switch failed for %r", kind)
-            self._indicator.update("切换模型失败，正在恢复")
-            recognizer = self._rebuild_after_failed_swap()
-        finally:
-            self._set_hooks_armed()
-        if recognizer is not None:
-            self._recognizer = recognizer
-
-    def _rebuild_after_failed_swap(self) -> Recognizer | None:
-        """Try to bring a recognizer back after a failed model switch."""
-        rebuilt = self._controls.rebuild_recognizer()
-        if rebuilt is None:
-            self._indicator.update("模型不可用，请查看日志")
-        else:
-            self._indicator.flash("已恢复原模型", 1500)
-        return rebuilt
+        self._indicator.show("切换模型中…")
+        self._start_recognizer_load(kind, purpose="swap")
 
     def _set_disfluency(self, kind: str) -> None:
-        # Rebuilding the recognizer (Fun-ASR-Nano) blocks the worker; disarm the
-        # hooks first so CapsLock stays native instead of a dead key, then re-arm.
+        """Commit the disfluency choice; rebuild off-worker only when it matters.
+
+        Only Fun-ASR-Nano honours the smoothing prompt, so SenseVoice/Whisper
+        switches are a config-only no-op; the rebuild runs on a loader thread
+        so the worker keeps serving hotkey / continuous-dictation messages.
+        """
+        if not self._controls.commit_disfluency(kind):
+            return
         if self._hook is not None:
             self._hook.set_armed(False)
         if self._mouse_hook is not None:
             self._mouse_hook.set_armed(False)
-        recognizer: Recognizer | None = None
-        try:
-            recognizer = self._controls.set_disfluency(kind)
-        except Exception:
-            log.exception("disfluency switch failed for %r", kind)
-            recognizer = self._rebuild_after_failed_swap()
-        finally:
-            self._set_hooks_armed()
-        if recognizer is not None:
-            self._recognizer = recognizer
+        self._indicator.show("切换语义顺滑…")
+        self._start_recognizer_load(self._config.model, purpose="disfluency")
 
     def _init_model(self) -> None:
-        """Download (if needed) and load the recognizer on the worker thread."""
-        started = time.monotonic()
-        # Say what is happening: loading a 1 GB Fun-ASR-Nano takes seconds and
-        # used to show nothing at all, which read as "the app is dead".
+        """Kick off the recognizer download + load on a background thread.
+
+        The worker must stay responsive: downloading + loading a 1 GB model
+        takes seconds, and doing it inline here used to stall every other
+        message (持续听写 / 翻译 / 暂停…) behind it. The loader posts a
+        ``ModelLoaded`` event back to the queue when it finishes.
+        """
         if not self._model_downloaded:
             self._indicator.show("正在加载识别模型…（首次约 3–10 秒）")
-        try:
-            files = ensure_model(
-                self._config.model,
-                models_root(),
-                self._on_model_progress,
-                proxy=self._config.proxy,
+        self._start_recognizer_load(self._config.model, purpose="init")
+
+    def _start_recognizer_load(self, kind: str, *, purpose: str) -> None:
+        """Download + build the recognizer off the worker; return immediately.
+
+        Config-dependent inputs are snapshotted here (on the worker) so the
+        loader thread never reads a config that the worker is mutating.
+        """
+        generation = self._model_generation + 1
+        self._model_generation = generation
+        self._model_load_purpose = purpose
+        self._model_load_started_at = time.monotonic()
+        num_threads = self._config.num_threads
+        language = self._config.language
+        disfluency = self._config.disfluency
+        proxy = self._config.proxy
+
+        def load() -> None:
+            recognizer: Recognizer | None = None
+            try:
+                files = ensure_model(
+                    kind, models_root(), self._on_model_progress, proxy=proxy
+                )
+                recognizer = Recognizer(
+                    files=files,
+                    num_threads=num_threads,
+                    language=language,
+                    disfluency=disfluency,
+                )
+            except DownloadError as exc:
+                log.warning("model download failed: %s", exc)
+                guide = manual_download_guide(kind, models_root())
+                native.util.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
+            except Exception:
+                log.exception("recognizer load failed for %s", kind)
+            self._queue.put(ModelLoaded(recognizer=recognizer, generation=generation))
+
+        threading.Thread(target=load, daemon=True, name="recognizer-load").start()
+
+    def _on_model_loaded(self, recognizer: Recognizer | None, generation: int) -> None:
+        """Finish a recognizer load: commit it, re-arm, and run the right tail."""
+        if generation != self._model_generation:
+            log.info(
+                "model load: discarding stale result (generation %d, current %d)",
+                generation,
+                self._model_generation,
             )
-            self._recognizer = Recognizer(
-                files=files,
-                num_threads=self._config.num_threads,
-                language=self._config.language,
-                disfluency=self._config.disfluency,
-            )
-        except DownloadError as exc:
-            log.warning("model download failed: %s", exc)
-            guide = manual_download_guide(self._config.model, models_root())
-            native.util.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
+            return
+        purpose = self._model_load_purpose
+        self._recognizer = recognizer
+        if recognizer is None:
+            # A failed load must leave the app disarmed (the hotkey stays
+            # native) so a retry can succeed; re-arming now would swallow the
+            # hotkey while dictation has no model to run.
+            log.warning("model load failed (purpose=%s)", purpose)
+            self._indicator.flash("模型加载失败，请切换其他模型", 4000)
             return
         self._model_ready = True
         self._set_hooks_armed()
-        elapsed = time.monotonic() - started
+        if purpose == "init":
+            self._finish_initial_load()
+        elif purpose == "swap":
+            self._indicator.flash("模型已切换", 1200)
+        else:  # disfluency
+            self._indicator.flash("语义顺滑已切换", 1200)
+
+    def _finish_initial_load(self) -> None:
+        """Startup-only tail, run on the worker once the first model is ready."""
+        elapsed = time.monotonic() - self._model_load_started_at
         log.info(
             "model ready: %s (%.1f s, startup total %.1f s)",
             self._config.model,
@@ -685,8 +740,8 @@ class DictationApp:
         )
         if self._config.translate:
             # Lazy: the NMT model is only fetched/loaded when the user has
-            # translation on, and a failure here must never block dictation.
-            self._translator = self._controls.build_translator()
+            # translation on; load it off the worker so it never blocks dictation.
+            self._start_translator_load()
         if self._model_downloaded:
             self._indicator.flash("模型下载完成，可以开始使用了", 4000)
             self._tray.notify("模型下载完成，可以开始使用了", title="xxl-whisper")
@@ -706,21 +761,46 @@ class DictationApp:
             # deaf until the user toggled it off and on again.
             threading.Timer(1.0, self._resume_continuous).start()
 
+    def _start_translator_load(self, route: str | None = None) -> None:
+        """Load/download the translator on a background thread (non-blocking)."""
+        threading.Thread(
+            target=self._load_translator_worker,
+            args=(route,),
+            daemon=True,
+            name="translator-load",
+        ).start()
+
+    def _load_translator_worker(self, route: str | None) -> None:
+        """Background: build the translator; publish it only on success."""
+        try:
+            translator = self._controls.build_translator(
+                route=route, disable_on_failure=False
+            )
+        except Exception:
+            log.exception("translator load failed (route=%s)", route)
+            translator = None
+        if translator is None:
+            return
+        self._translator = translator
+        self._tray.refresh_menu()
+        log.info("translator ready (route=%s)", route_of(self._config))
+
     # -- translation ------------------------------------------------------------
 
     def _toggle_translate(self) -> None:
-        """Tray switch for local NMT: load the model on enable, drop it on disable."""
+        """Tray switch for local NMT: load on enable (off-worker), drop on disable."""
         enabled = self._controls.toggle_translate()
-        self._translator = self._controls.build_translator() if enabled else None
+        if enabled:
+            self._translator = None  # no stale direction may translate meanwhile
+            self._indicator.show("正在加载翻译模型…")
+            self._start_translator_load()
+        else:
+            self._translator = None
         self._tray.refresh_menu()
         self._indicator.flash(
             "离线翻译：已开启" if enabled else "离线翻译：已关闭", 2000
         )
-        log.info(
-            "translate enabled=%s translator=%s",
-            enabled,
-            type(self._translator).__name__ if self._translator is not None else "none",
-        )
+        log.info("translate enabled=%s", enabled)
 
     def _tray_click(self, name: str, action: Callable[[], None]) -> None:
         """Log a tray click before dispatching it.

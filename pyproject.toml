@@ -3,6 +3,12 @@ name = "xxl-whisper"
 version = "0.8.0b6"
 description = "Offline tray push-to-talk dictation (Windows: hold CapsLock; macOS: hold right Command). Fully offline via sherpa-onnx."
 requires-python = ">=3.12"
+# Platform UI boundary (see README「平台支持」):
+# - Windows: tkinter (CPython stdlib, NOT a pip dep) powers the Tk status pill
+#   (indicator.py) and Tk subtitle overlay (overlay.py). Bundled by build.bat's
+#   --hidden-import=tkinter.
+# - macOS: no Tk — the status bar is AppKit NSStatusItem and the subtitle
+#   overlay is native AppKit; the pyobjc-framework-* deps below cover it.
 dependencies = [
     "numpy>=2.0",
     "soundcard>=0.4.3 ; sys_platform == 'win32'",

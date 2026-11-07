@@ -32,9 +32,7 @@ from app.config import (
 from app.downloader import (
     TRANSLATE_ROUTE_MODELS,
     DownloadError,
-    ensure_model,
     ensure_translate_model,
-    manual_download_guide,
     translate_manual_guide,
 )
 from app.emit import is_classic_control
@@ -163,78 +161,59 @@ class Controls:
             log.exception("recognizer rebuild failed")
             return None
 
-    def swap_model(self, kind: str) -> Recognizer | None:
-        """Download-if-needed and build the recognizer for another model.
+    def commit_model(self, kind: str) -> bool:
+        """Validate and persist a model choice; drop the old recognizer.
 
-        Returns the new recognizer (the caller assigns it), or None when the
-        switch was a no-op or the kind is unknown. Download progress rides
-        the indicator; dictation holds queue while the worker is busy.
+        Returns True when the switch should proceed (kind differs and is known).
+        The download + build runs on a loader thread afterwards (see the app's
+        ``_start_recognizer_load``), so this method only does the fast,
+        worker-side part: persist the choice, refresh the menu, and release the
+        outgoing recognizer so the peak stays one model.
         """
         if kind == self._deps.get_config().model:
-            return None
+            return False
         match kind:
             case "sensevoice" | "funasr_nano" | "whisper_turbo":
-                kind_typed: ModelKind = kind
+                pass
             case _:
                 log.warning("unknown model kind %r", kind)
-                return None
-        log.info("switching model to %r", kind)
-        self._deps.indicator.update("下载模型中…")
-
-        def _progress(name: str, done: int, total: int) -> None:
-            pct = done / total if total else 0.0
-            self._deps.indicator.progress(pct, f"下载模型 {name}")
-
-        try:
-            ensure_model(
-                kind,
-                self._deps.models_root,
-                _progress,
-                proxy=self._deps.get_config().proxy,
-            )
-        except DownloadError as exc:
-            log.warning("model download failed: %s", exc)
-            self._deps.indicator.hide()
-            guide = manual_download_guide(kind, self._deps.models_root)
-            native.util.show_info(f"模型自动下载失败：{exc.reason}\n\n{guide}")
-            return None
+                return False
         config = self._deps.get_config()
         new_disfluency = disfluency_for_model(kind, config.disfluency)
         self._deps.set_config(
             dataclasses.replace(config, model=kind, disfluency=new_disfluency)
         )
-        # Release the outgoing model *before* allocating the new one so the two
-        # never overlap in memory (peak ~1.25 GB -> one model). The decode
+        # Release the outgoing model *before* the new one is allocated so the
+        # two never overlap in memory (peak ~1.25 GB -> one model). The decode
         # threads re-read the recognizer and skip while it is None.
         self._deps.release_recognizer()
-        recognizer = self._build_recognizer(kind_typed)
         self._deps.tray.refresh_menu()
-        self._deps.indicator.flash("模型已切换", 1200)
-        log.info("model switched to %r (disfluency=%s)", kind, new_disfluency)
-        return recognizer
+        log.info("switching model to %r (disfluency=%s)", kind, new_disfluency)
+        return True
 
-    def set_disfluency(self, kind: str) -> Recognizer | None:
-        """Select verbatim/smooth; rebuild the recognizer when it matters.
+    def commit_disfluency(self, kind: str) -> bool:
+        """Persist the disfluency choice; True when a rebuild is needed.
 
-        Only Fun-ASR-Nano honours the disfluency prompt; SenseVoice ignores it,
-        so a rebuild is only needed for the LLM-decoder model.
+        Only Fun-ASR-Nano honours the smoothing prompt, so the rebuild (and the
+        recognizer release) only happens for that model; the download + build
+        then runs on a loader thread.
         """
         config = self._deps.get_config()
         new = cast("Disfluency", kind)
         if new == config.disfluency:
-            return None
+            return False
         self._deps.set_config(dataclasses.replace(config, disfluency=new))
         self._deps.tray.refresh_menu()
         if config.model == "funasr_nano":
             log.info("disfluency -> %s: rebuilding funasr_nano recognizer", new)
             self._deps.release_recognizer()  # drop the old model before rebuilding
-            return self._build_recognizer(config.model)
+            return True
         log.warning(
             "disfluency -> %s: model=%s cannot apply smoothing (only funasr_nano)",
             new,
             config.model,
         )
-        return None
+        return False
 
     # -- translation ------------------------------------------------------------
 
@@ -403,8 +382,13 @@ class Controls:
             guide = "\n\n".join(
                 translate_manual_guide(pair, self._deps.models_root) for pair in pairs
             )
+            tail = (
+                "翻译已关闭，语音听写不受影响"
+                if disable_on_failure
+                else "翻译未就绪，可稍后重试；语音听写不受影响"
+            )
             native.util.show_info(
-                f"翻译模型不可用：{reason}\n\n{guide}\n（翻译已关闭，语音听写不受影响）"
+                f"翻译模型不可用：{reason}\n\n{guide}\n（{tail}）"
             )
             if disable_on_failure:
                 self.disable_translate()
