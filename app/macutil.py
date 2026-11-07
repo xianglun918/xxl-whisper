@@ -121,6 +121,21 @@ def show_info(message: str, title: str = "xxl-whisper") -> None:
     _osascript(_dialog_script(message, title=title, icon="note"))
 
 
+def open_file_dialog() -> str | None:
+    """Open a native open panel and return the chosen file, or None on cancel."""
+    appkit = importlib.import_module("AppKit")
+    panel = appkit.NSOpenPanel.openPanel()
+    panel.setTitle_("选择要转写的音频/视频文件")
+    panel.setCanChooseFiles_(True)
+    panel.setCanChooseDirectories_(False)
+    panel.setAllowsMultipleSelection_(False)
+    if panel.runModal() != appkit.NSModalResponseOK:
+        return None
+    urls = panel.URLs()
+    return urls[0].path() if urls else None
+
+
+
 def _permission_state() -> list[tuple[str, bool, str]]:
     """Return (label, granted, settings URL) for the checkable TCC grants."""
     app_services = importlib.import_module("ApplicationServices")

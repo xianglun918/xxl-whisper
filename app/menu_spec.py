@@ -64,6 +64,7 @@ class TrayCallbacks:
     on_toggle_translate: Callable[[], None]
     on_select_translate_route: Callable[[str], None]
     on_select_overlay_output: Callable[[str], None]
+    on_transcribe_file: Callable[[], None]
 
 
 class ConfigView(Protocol):
@@ -377,6 +378,7 @@ def _settings_entries(
             checked=_tick(provider, lambda state: state.autostart),
         ),
         separator(),
+        Entry(label="转写文件…", action=callbacks.on_transcribe_file),
         Entry(label="输入诊断", action=callbacks.on_show_diagnostics),
         Entry(label="检查更新", action=callbacks.on_check_update),
     )

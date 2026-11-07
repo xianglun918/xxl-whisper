@@ -42,6 +42,7 @@ from app.downloader import (
     ensure_vad_model,
     manual_download_guide,
 )
+from app.file_source import FileTranscribeError, ffmpeg_available, transcribe_file
 from app.hotkey_logic import (
     Action,
     Click,
@@ -238,6 +239,7 @@ class DictationApp:
                 on_select_overlay_output=lambda mode: self._tray_click(
                     f"overlay-output:{mode}", lambda: self._queue.put(SetOverlayOutput(mode=mode))
                 ),
+                on_transcribe_file=self._on_transcribe_file,
                 on_select_system_audio=lambda device_id: self._queue.put(
                     SetSystemAudio(device_id=device_id)
                 ),
@@ -879,6 +881,56 @@ class DictationApp:
             type(self._translator).__name__ if self._translator is not None else "none",
             route_of(self._config),
         )
+
+    def _on_transcribe_file(self) -> None:
+        """Pick a file and transcribe it off the worker thread.
+
+        The decode + ASR run on a dedicated thread: a long recording must never
+        stall the worker that the hotkey and continuous dictation depend on.
+        ffmpeg is only asked for here, right before the feature is used.
+        """
+        if not ffmpeg_available():
+            native.util.show_info(
+                "文件转写需要 ffmpeg（用于音频/视频解码）。\n\n"
+                "请先安装 ffmpeg：\n"
+                "• macOS：终端执行 brew install ffmpeg\n"
+                "• Windows：https://ffmpeg.org/download.html\n\n"
+                "装好后重新点击「转写文件…」即可。"
+            )
+            return
+        path = native.util.open_file_dialog()
+        if not path:
+            return
+        recognizer = self._recognizer
+        if recognizer is None:
+            self._indicator.flash("识别模型未就绪，请稍后再试", 3000)
+            return
+        self._indicator.show("转写中…")
+        threading.Thread(
+            target=self._transcribe_file_worker, args=(path, recognizer), daemon=True
+        ).start()
+
+    def _transcribe_file_worker(self, path: str, recognizer: Recognizer) -> None:
+        """Decode and transcribe one file, then put the text on the clipboard."""
+        try:
+            text = transcribe_file(path, recognizer)
+        except FileTranscribeError as exc:
+            self._indicator.hide()
+            log.warning("file transcription failed: %s", exc)
+            native.util.show_info(f"转写失败：{exc}")
+            return
+        except Exception:
+            self._indicator.hide()
+            log.exception("file transcription failed: %s", path)
+            native.util.show_info("转写失败（详见日志）")
+            return
+        self._indicator.hide()
+        if not text:
+            self._indicator.flash("未识别到语音内容", 3000)
+            return
+        native.io.set_clipboard_text(text)
+        self._tray.notify(f"转写完成（{len(text)} 字），已复制到剪贴板")
+        self._indicator.flash("转写完成", 2000)
 
     def _present(self, text: str, translated: str) -> None:
         """Push one finished utterance to the subtitle bar (no-op when off)."""

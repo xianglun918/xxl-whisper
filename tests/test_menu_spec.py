@@ -50,6 +50,7 @@ def _callbacks() -> TrayCallbacks:
         on_toggle_translate=noop,
         on_select_translate_route=noop,
         on_select_overlay_output=noop,
+        on_transcribe_file=noop,
     )
 
 
