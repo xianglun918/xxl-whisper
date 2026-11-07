@@ -64,6 +64,7 @@ class TrayCallbacks:
     on_toggle_translate: Callable[[], None]
     on_select_translate_route: Callable[[str], None]
     on_select_overlay_output: Callable[[str], None]
+    on_show_help: Callable[[], None]
 
 
 class ConfigView(Protocol):
@@ -141,6 +142,7 @@ class MenuInputs:
 
     microphones: tuple[str, ...] = ()
     system_audio: tuple[tuple[str, str], ...] = ()  # (label, device id)
+    platform_hint: str = ""  # e.g. macOS BlackHole guidance, shown under the list
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +297,9 @@ def _input_entries(
             )
             for label, device_id in inputs.system_audio
         )
+    if inputs.platform_hint:
+        entries.append(separator())
+        entries.append(Entry(text=lambda: inputs.platform_hint, enabled=False))
     return tuple(entries)
 
 
@@ -379,6 +384,7 @@ def _settings_entries(
         separator(),
         Entry(label="输入诊断", action=callbacks.on_show_diagnostics),
         Entry(label="检查更新", action=callbacks.on_check_update),
+        Entry(label="使用说明", action=callbacks.on_show_help),
     )
 
 

@@ -101,6 +101,11 @@ else:
 #: (measured open cost ~68 ms).
 RECORDER_KEEP_OPEN: bool = sys.platform == "win32"
 
+#: macOS has no loopback API, so "system audio" there means routing a virtual
+#: device (BlackHole) through the normal microphone path. The tray surfaces a
+#: hint only on macOS; Windows uses WASAPI loopback and needs no hint.
+IS_MACOS: bool = sys.platform == "darwin"
+
 #: The code the capture hook reports for Escape: 0x1B (VK_ESCAPE) on Windows,
 #: 0x35 (kVK_Escape) on macOS. Sharing the Windows constant made Esc unable to
 #: cancel a hotkey capture on macOS — and turned Esc itself into a hotkey.
