@@ -479,3 +479,62 @@ def test_ensure_translate_model_never_goes_through_the_asr_layout(
 def test_an_unknown_translate_pair_is_reported_not_crashed(tmp_path: Path) -> None:
     with pytest.raises(DownloadError):
         ensure_translate_model("xx-yy", tmp_path, progress=_fake_progress)
+
+
+def test_corrupt_right_sized_translate_file_is_re_fetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hashed file that is the right size but wrong content must be re-downloaded.
+
+    The bug this pins: the skip check only compared size, so a truncated-but-
+    padded download (right size, wrong bytes) was silently accepted and then
+    failed to load with ONNXRuntimeError INVALID_PROTOBUF.
+    """
+    correct = b"abcd"
+    sha = hashlib.sha256(correct).hexdigest()
+    monkeypatch.setitem(dl._TRANSLATE_SHA256, "test-pair", {"a.onnx": sha})
+    monkeypatch.setitem(dl._TRANSLATE_MODELS, "test-pair", ("test_model", (("a.onnx", 4),)))
+    model_dir = tmp_path / "test_model"
+    model_dir.mkdir()
+    (model_dir / "a.onnx").write_bytes(b"wxyz")  # right size, wrong content
+
+    calls: list[str] = []
+
+    def fake_download(
+        spec: dio.FileSpec, progress: dl.ProgressFn, *, proxy: str = ""
+    ) -> None:
+        calls.append(spec.url)
+        spec.dest.write_bytes(correct)
+
+    monkeypatch.setattr(dl, "_download", fake_download)
+
+    ensure_translate_model("test-pair", tmp_path, progress=_fake_progress)
+
+    assert calls, "corrupt right-sized file must not be skipped"
+    assert (model_dir / "a.onnx").read_bytes() == correct
+
+
+def test_own_translate_url_uses_asset_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hosted assets sit at the release root, not under the onnx/ subdirectory."""
+    monkeypatch.setitem(
+        dl._TRANSLATE_MODELS, "test-pair", ("test_model", (("onnx/decoder.onnx", 4),))
+    )
+    monkeypatch.setitem(dl.TRANSLATE_OWN_BASE, "test-pair", "https://example.com/r")
+    model_dir = tmp_path / "test_model"
+    model_dir.mkdir()
+
+    urls: list[str] = []
+
+    def fake_download(
+        spec: dio.FileSpec, progress: dl.ProgressFn, *, proxy: str = ""
+    ) -> None:
+        urls.append(spec.url)
+        spec.dest.write_bytes(b"abcd")
+
+    monkeypatch.setattr(dl, "_download", fake_download)
+
+    ensure_translate_model("test-pair", tmp_path, progress=_fake_progress)
+
+    assert urls == ["https://example.com/r/decoder.onnx"]
