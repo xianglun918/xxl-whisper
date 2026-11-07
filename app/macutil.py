@@ -121,6 +121,19 @@ def show_info(message: str, title: str = "xxl-whisper") -> None:
     _osascript(_dialog_script(message, title=title, icon="note"))
 
 
+def save_file_dialog() -> str | None:
+    """Open a native save panel and return the chosen path, or None on cancel."""
+    appkit = importlib.import_module("AppKit")
+    panel = appkit.NSSavePanel.savePanel()
+    panel.setTitle_("选择输出文件")
+    panel.setNameFieldStringValue_("xxl-whisper-转写.txt")
+    if panel.runModal() != appkit.NSModalResponseOK:
+        return None
+    url = panel.URL()
+    return url.path() if url is not None else None
+
+
+
 def _permission_state() -> list[tuple[str, bool, str]]:
     """Return (label, granted, settings URL) for the checkable TCC grants."""
     app_services = importlib.import_module("ApplicationServices")

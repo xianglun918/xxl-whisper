@@ -51,6 +51,8 @@ def _callbacks() -> TrayCallbacks:
         on_select_translate_route=noop,
         on_select_overlay_output=noop,
         on_show_help=noop,
+        on_select_output_file=noop,
+        on_clear_output_file=noop,
     )
 
 
@@ -78,6 +80,7 @@ _CONFIG_FIELDS = frozenset(
         "hotkey",
         "overlay_enabled",
         "overlay_output",
+        "output_file",
     }
 )
 
@@ -97,6 +100,7 @@ def _make_config(**overrides: object) -> SimpleNamespace:
         "hotkey": DEFAULT_HOTKEY,
         "overlay_enabled": True,
         "overlay_output": "both",
+        "output_file": "",
     }
     base.update(overrides)
     return SimpleNamespace(**base)

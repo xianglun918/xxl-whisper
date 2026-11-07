@@ -25,6 +25,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app import logsafe
@@ -97,6 +98,7 @@ class UtteranceDelivery:
         self._batcher = batcher if batcher is not None else TypeBatcher()
         self._stop_event: threading.Event | None = None
         self._thread: threading.Thread | None = None
+        self._file_lock = threading.Lock()
 
     # -- interface -----------------------------------------------------------
 
@@ -137,6 +139,22 @@ class UtteranceDelivery:
         """
         self._queue.submit_flush()
 
+    def _write_file(self, text: str) -> None:
+        """Append one transcribed sentence to the configured output file.
+
+        Best-effort and thread-safe: an unwritable path must never take
+        dictation down, and both the push-to-talk (worker) and continuous
+        (emitter) threads call this.
+        """
+        path = self._ports.config().output_file
+        if not path:
+            return
+        try:
+            with self._file_lock, Path(path).open("a", encoding="utf-8") as handle:
+                handle.write(text + "\n")
+        except OSError:
+            log.warning("output file write failed: %s", path)
+
     def deliver_now(self, text: str) -> None:
         """Deliver one whole sentence on the calling thread (push-to-talk).
 
@@ -145,6 +163,7 @@ class UtteranceDelivery:
         glued onto it. Failures propagate on purpose — this runs on the worker
         thread, whose handler is what tells the user "出错了，详见日志".
         """
+        self._write_file(text)
         translated, attempted = self._subtitle_or_translate(text)
         if self._ports.overlay_only():
             self._ports.indicator.flash(COMMIT_TEXT, COMMIT_FLASH_MS)
@@ -218,6 +237,7 @@ class UtteranceDelivery:
                     (translated, attempted) if ready == item.text and attempted else None
                 )
                 self._type_text(ready, cached=cached)
+        self._write_file(item.text)
         if item.endpoint_ts is not None:
             log.info(
                 "continuous: endpoint→shown %.3f s (queued %.2f s, forced=%s)",

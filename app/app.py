@@ -135,6 +135,11 @@ class SetOverlayOutput:
 
 
 @dataclass(frozen=True, slots=True)
+class SetOutputFile:
+    path: str  # "" clears the file output
+
+
+@dataclass(frozen=True, slots=True)
 class InitModel:
     pass
 
@@ -152,6 +157,7 @@ type WorkerMsg = (
     | SetTranslateRoute
     | SetSystemAudio
     | SetOverlayOutput
+    | SetOutputFile
     | InitModel
 )
 
@@ -243,6 +249,8 @@ class DictationApp:
                     f"overlay-output:{mode}", lambda: self._queue.put(SetOverlayOutput(mode=mode))
                 ),
                 on_show_help=self._show_help,
+                on_select_output_file=self._on_select_output_file,
+                on_clear_output_file=self._on_clear_output_file,
                 on_select_system_audio=lambda device_id: self._queue.put(
                     SetSystemAudio(device_id=device_id)
                 ),
@@ -474,6 +482,8 @@ class DictationApp:
                 self._controls.swap_system_audio(device_id)
             case SetOverlayOutput(mode=mode):
                 self._set_overlay_output(mode)
+            case SetOutputFile(path=path):
+                self._set_output_file(path)
             case InitModel():
                 self._init_model()
             case unreachable:
@@ -892,6 +902,27 @@ class DictationApp:
             type(self._translator).__name__ if self._translator is not None else "none",
             route_of(self._config),
         )
+
+    def _set_output_file(self, path: str) -> None:
+        """Set or clear the parallel file output for transcribed text."""
+        if path == self._config.output_file:
+            return
+        self._set_config(replace(self._config, output_file=path))
+        self._tray.refresh_menu()
+        self._indicator.flash(
+            "输出到文件：已开启" if path else "输出到文件：已关闭", 2000
+        )
+        log.info("output file=%s", path or "(off)")
+
+    def _on_select_output_file(self) -> None:
+        """Ask for a file, then hand the path to the worker to persist."""
+        path = native.util.save_file_dialog()
+        if path:
+            self._queue.put(SetOutputFile(path=path))
+
+    def _on_clear_output_file(self) -> None:
+        """Turn off the file output."""
+        self._queue.put(SetOutputFile(path=""))
 
     def _present(self, text: str, translated: str) -> None:
         """Push one finished utterance to the subtitle bar (no-op when off)."""
