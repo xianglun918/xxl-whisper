@@ -69,6 +69,7 @@ class _Host:
                 translate_mode=self.translate_mode,
                 restore_clipboard=False,
                 paste_delay_ms=0,
+                output_file="",
             ),
             subtitles=lambda: self.subtitles,
             overlay_only=lambda: self.overlay_only,

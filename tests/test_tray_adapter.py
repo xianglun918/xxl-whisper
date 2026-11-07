@@ -249,6 +249,8 @@ def _callbacks(tray, calls: list[str]):
         on_toggle_translate=record("translate"),
         on_select_translate_route=record("route"),
         on_select_overlay_output=record("output"),
+        on_select_output_file=record("output-file"),
+        on_clear_output_file=record("clear-output-file"),
     )
 
 
@@ -272,6 +274,7 @@ def _state(tray, **overrides: object):
         "hotkey": DEFAULT_HOTKEY,
         "overlay_enabled": False,
         "overlay_output": "both",
+        "output_file": "",
     }
     aliases = {
         "current_mic": "mic",
@@ -418,6 +421,8 @@ def test_menu_actions_survive_an_exception(tray_module) -> None:
             on_toggle_translate=boom,
             on_select_translate_route=boom,
             on_select_overlay_output=boom,
+            on_select_output_file=boom,
+            on_clear_output_file=boom,
         ),
         lambda: _state(tray_module),
     )

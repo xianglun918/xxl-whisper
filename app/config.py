@@ -259,6 +259,7 @@ _SCHEMA: tuple[_Field, ...] = (
     _flag("partial_subtitle", True),
     _int("partial_subtitle_ms", 800, 200, 5_000),
     _flag("overlay_click_through", True),
+    _text("output_file", ""),
 )
 
 _FIELD_NAMES: frozenset[str] = frozenset(field.name for field in _SCHEMA)
@@ -312,6 +313,7 @@ class Config:
     partial_subtitle: bool
     partial_subtitle_ms: int
     overlay_click_through: bool
+    output_file: str
 
 
 def default_config() -> Config:

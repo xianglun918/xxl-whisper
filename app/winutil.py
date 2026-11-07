@@ -95,6 +95,28 @@ def show_info(message: str, title: str = "xxl-whisper") -> None:
     user32.MessageBoxW(None, message, title, flags)
 
 
+def save_file_dialog() -> str | None:
+    """Open a save dialog and return the chosen path, or None on cancel."""
+    import tkinter as tk  # noqa: PLC0415 — lazy so dialogs are only paid for on use
+    from tkinter import filedialog  # noqa: PLC0415
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        path = filedialog.asksaveasfilename(
+            parent=root,
+            title="选择输出文件",
+            defaultextension=".txt",
+            initialfile="xxl-whisper-转写.txt",
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
+        )
+    finally:
+        root.destroy()
+    return path or None
+
+
+
 def set_dpi_awareness() -> None:
     """Best-effort per-monitor DPI awareness so the Tk bar isn't blurry."""
     try:

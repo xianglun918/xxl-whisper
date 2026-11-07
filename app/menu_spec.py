@@ -64,6 +64,8 @@ class TrayCallbacks:
     on_toggle_translate: Callable[[], None]
     on_select_translate_route: Callable[[str], None]
     on_select_overlay_output: Callable[[str], None]
+    on_select_output_file: Callable[[], None]
+    on_clear_output_file: Callable[[], None]
 
 
 class ConfigView(Protocol):
@@ -106,6 +108,9 @@ class ConfigView(Protocol):
 
     @property
     def overlay_output(self) -> str: ...
+
+    @property
+    def output_file(self) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +340,14 @@ def _output_entries(provider: StateProvider, callbacks: TrayCallbacks) -> tuple[
     )
     entries.append(separator())
     entries.append(Entry(text=lambda: output_hint(provider()), enabled=False))
+    entries.append(separator())
+    entries.append(
+        Entry(
+            text=lambda: output_file_label(provider()),
+            action=callbacks.on_select_output_file,
+        )
+    )
+    entries.append(Entry(label="取消输出到文件", action=callbacks.on_clear_output_file))
     return tuple(entries)
 
 
@@ -437,6 +450,15 @@ def output_hint(state: TrayState) -> str:
     if state.config.overlay_enabled and not state.config.translate:
         return "提示：字幕当前显示原文（翻译未开）"
     return "提示：字幕边说边出，打字按整句输出"
+
+
+def output_file_label(state: TrayState) -> str:
+    """Show the configured output file, or that it is off."""
+    path = state.config.output_file
+    if not path:
+        return "输出到文件：关"
+    name = path.replace("\\", "/").rsplit("/", 1)[-1]
+    return f"输出到文件：{name}"
 
 
 def translate_hint(state: TrayState) -> str:
