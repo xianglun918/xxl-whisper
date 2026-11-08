@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-from app.download_io import DownloadError, FileSpec, ProgressFn, verify_sha256
+from app.download_io import DownloadError, FileSpec, ProgressFn, sha256_of, verify_sha256
 from app.download_io import download as _download
 from app.model_files import ModelFiles
 from app.routes import ROUTES
@@ -166,6 +166,21 @@ TRANSLATE_OWN_API: dict[str, dict[str, str]] = {
 
 TRANSLATE_OWN_BASE: dict[str, str] = {
     "ja-zh": "https://github.com/xianglun918/xxl-whisper/releases/download/mt-ja-zh-v1",
+}
+
+#: Recorded SHA256 per hosted file, keyed by pair and relative path. Only the
+#: project-hosted direct model records hashes today (the Xenova pairs are served
+#: by ModelScope/hf-mirror and verified by size); a corrupt-but-right-sized
+#: download of a hashed file is detected and re-fetched instead of loading.
+_TRANSLATE_SHA256: dict[str, dict[str, str]] = {
+    "ja-zh": {
+        "onnx/encoder_model_int8.onnx": "9dfef4bd53595d49d69b49f4728522be67920a859dd76b43167078d1bf0aab56",  # noqa: E501
+        "onnx/decoder_model_int8.onnx": "01beae301f353ddbe51d4319602d8ee416899cf555fa7fe024d4d1c635fa4eab",  # noqa: E501
+        "tokenizer.json": "1c7cb95786081b4094df7a3daccde8ed22fc7e4999c111190a30d86daf6a84f4",
+        "source.spm": "25103859c8bbbe317e69b07551c55c53dc7943eebf078c56fbf5bc7f96d63289",
+        "target.spm": "fe81460cde65383464718c26789ff8c5d818719c3f2c2c3cd36f42532579c56e",
+        "config.json": "21a517cd130d367a38522e87063313b928cec88f0b2bacf26919cfed782e011f",
+    },
 }
 
 #: Model keys per route, in hop order, projected from :data:`app.routes.ROUTES`.
@@ -367,13 +382,14 @@ def ensure_translate_model(
     failures: list[str] = []
     for relative, size in files:
         dest = model_dir / relative
-        if dest.exists() and dest.stat().st_size == size:
+        sha = _TRANSLATE_SHA256.get(pair, {}).get(relative)
+        if dest.exists() and dest.stat().st_size == size and (not sha or sha256_of(dest) == sha):
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         last_error: DownloadError | None = None
         attempts: list[tuple[str, tuple[tuple[str, str], ...]]] = []
         if own:
-            attempts.append((f"{own}/{relative}", ()))
+            attempts.append((f"{own}/{Path(relative).name}", ()))
             asset_id = TRANSLATE_OWN_API.get(pair, {}).get(relative)
             if asset_id:
                 attempts.append(
@@ -394,7 +410,7 @@ def ensure_translate_model(
                         url=url,
                         dest=dest,
                         expected_size=size,
-                        expected_sha256=frozenset(),
+                        expected_sha256=frozenset({sha}) if sha else frozenset(),
                         headers=headers,
                     ),
                     progress,
@@ -470,7 +486,7 @@ def translate_manual_guide(pair: str, models_root: Path) -> str:
     for relative, _size in files:
         if own:
             # Files we host ourselves have no upstream mirror to offer.
-            lines.append(f"{relative}  <-  {own}/{relative}")
+            lines.append(f"{relative}  <-  {own}/{Path(relative).name}")
             continue
         ms = _TRANSLATE_BASE_URLS[0].format(repo=f"Xenova/{name}")
         hf = _TRANSLATE_BASE_URLS[1].format(repo=f"Xenova/{name}")
