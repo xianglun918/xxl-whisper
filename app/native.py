@@ -73,12 +73,12 @@ if sys.platform == "win32":
     from app import winutil as util
 elif sys.platform == "darwin":
     from app import mac_indicator as indicator
+    from app import mac_overlay as overlay
     from app import machotkey as hotkey
     from app import macio as io
     from app import macmousehook as mousehook
     from app import macuia as uia
     from app import macutil as util
-    from app import overlay
 else:
     # Unsupported platform (Linux CI, headless dev boxes): importing must still
     # succeed so the platform-independent core (config, filtering, batching,

@@ -1,5 +1,11 @@
 """Bottom-of-screen subtitle overlay for translation output (上屏字幕).
 
+**Windows-only Tk overlay.** On macOS the same :class:`Overlay` facade is
+provided by :mod:`app.mac_overlay` (native AppKit), so the macOS path never
+imports ``tkinter``. This module still owns the shared, platform-independent
+logic (:class:`OverlayModel`, :class:`OverlayStyle`, :func:`build_style`),
+which :mod:`app.mac_overlay` reuses.
+
 This is the second output channel next to cursor injection: instead of (or in
 addition to) typing the text into the focused app, each finished utterance is
 pushed to a borderless, click-through, always-on-top bar pinned near the bottom

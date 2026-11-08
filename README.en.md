@@ -26,6 +26,26 @@ A dual-platform (Windows/macOS) offline voice dictation tool: hold the hotkey (C
 - Continuous dictation: always-on and key-free — a VAD splits sentences and inserts each one as you speak, ignoring silence and noise
 - The indicator never steals focus and auto-hides in exclusive fullscreen; silent update checks on launch
 
+## Platform support
+
+| Capability | Windows (primary) | macOS (personal use) |
+|---|---|---|
+| Hold-hotkey dictation | ✅ | ✅ |
+| Status indicator | ✅ Tk pill | ✅ native AppKit status bar |
+| Subtitle overlay | ✅ Tk window | ✅ native AppKit window (no Tk) |
+| System-audio input | ✅ WASAPI loopback, no driver | ⚠️ requires the [BlackHole](https://existential.audio/blackhole/) virtual device |
+| Offline translation | ✅ | ✅ |
+| Continuous dictation | ✅ | ✅ |
+| File transcription | ✅ needs `ffmpeg` | ✅ needs `ffmpeg` |
+
+**Dependency boundary**: Tk (`tkinter`) is Windows-only (status pill + subtitle overlay). macOS uses AppKit throughout (`NSStatusItem` status bar + native subtitle window) and **does not depend on Tk**; the macOS bundle ships no Tk, the Windows bundle ships it.
+
+**Known limitations**
+
+- Transcribing system/meeting audio on macOS: there is no loopback API — install [BlackHole](https://existential.audio/blackhole/) and select it as the input device.
+- File transcription: depends on `ffmpeg` (a feature-time, not required, dependency); it is detected and prompted for only when that feature is used.
+- macOS: Apple silicon (arm64) and macOS 15+ only.
+
 ## Documentation
 
 | | |
